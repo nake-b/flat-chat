@@ -1,0 +1,16 @@
+{
+  "name": "kleinanzeigen-scraper",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "kleinanzeigenscraper.js",
+  "scripts": {
+    "start": "node kleinanzeigenscraper.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "puppeteer": "^24.42.0"
+  }
+}
