@@ -46,9 +46,9 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - Backend owns the DB schema via Alembic migrations
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
-## compound-docs/
+## agent-compound-docs/
 
-Architecture decisions and guides live in `compound-docs/`. When making significant architectural decisions, document them there with what was chosen, what was rejected, and why. Read existing docs before proposing changes to areas they cover.
+Architecture decisions and guides live in `agent-compound-docs/`. When making significant architectural decisions, document them there with what was chosen, what was rejected, and why. Read existing docs before proposing changes to areas they cover.
 
 ## MVP Scope
 
