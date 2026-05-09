@@ -6,22 +6,29 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
+const {
+  DEFAULT_USER_AGENT,
+  DEFAULT_TIMEOUT_MS,
+  sleep,
+  acceptConsent,
+  preparePage,
+  dumpDebugArtifacts,
+  detectChallenge,
+} = require('./lib');
 
 const SEARCH_URL =
   process.env.SEARCH_URL ||
   'https://www.wg-gesucht.de/en/1-zimmer-wohnungen-und-wohnungen-in-Berlin.8.1+2.1.0.html?categories%5B%5D=1&categories%5B%5D=2&rent_types%5B%5D=2&rent_range=0%2C0&min_rent=0&offer_filter=1&city_id=8&sort_order=0&noDeact=1';
 const ORIGIN = 'https://www.wg-gesucht.de';
 const LISTING_SOURCE = 'wg-gesucht';
-const USER_AGENT =
-  process.env.USER_AGENT ||
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const USER_AGENT = process.env.USER_AGENT || DEFAULT_USER_AGENT;
 
 const OUTPUT_FILE = path.resolve(process.env.OUTPUT_FILE || path.join(__dirname, 'wggesucht.json'));
 const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
 const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '1500', 10);
-const PAGE_TIMEOUT = 30_000;
+const PAGE_TIMEOUT = DEFAULT_TIMEOUT_MS;
 
 function printBanner() {
   console.log('');
@@ -33,10 +40,6 @@ function printBanner() {
   console.log(`Headless:      ${HEADLESS}`);
   console.log(`Output:        ${OUTPUT_FILE}`);
   console.log('');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function absoluteUrl(href) {
@@ -57,108 +60,6 @@ function buildSearchUrl(pageNumber) {
   const u = new URL(SEARCH_URL);
   u.pathname = u.pathname.replace(/\.(\d+)\.html$/, `.${idx}.html`);
   return u.toString();
-}
-
-async function clickIfPresent(page, selectors) {
-  for (const selector of selectors) {
-    const element = await page.$(selector);
-    if (element) {
-      try {
-        await element.click({ delay: 30 });
-        return true;
-      } catch {
-        // try next selector
-      }
-    }
-  }
-  return false;
-}
-
-// wg-gesucht uses ConsentManager.net (#cmpbox).
-async function acceptConsent(page) {
-  const selectors = [
-    '#cmpwelcomebtnyes',
-    '.cmpboxbtnyes',
-    '.cmpboxbtn[role="button"]',
-    '#cmpbntyestxt',
-    'button[aria-label*="accept" i]',
-    'button[aria-label*="Akzeptieren"]',
-  ];
-
-  if (await clickIfPresent(page, selectors)) {
-    await sleep(400);
-    return true;
-  }
-
-  for (const frame of page.frames()) {
-    if (frame === page.mainFrame()) continue;
-    try {
-      const clicked = await frame.evaluate(() => {
-        const candidates = [...document.querySelectorAll('button, a[role="button"], div[role="button"]')];
-        const target = candidates.find((node) =>
-          /alle akzeptieren|akzeptieren|einverstanden|zustimmen|accept all|i agree/i.test(
-            (node.innerText || node.textContent || '').trim()
-          )
-        );
-        if (!target) return false;
-        target.click();
-        return true;
-      });
-      if (clicked) {
-        await sleep(400);
-        return true;
-      }
-    } catch {
-      // ignore inaccessible frames
-    }
-  }
-
-  return false;
-}
-
-async function preparePage(page) {
-  page.setDefaultTimeout(PAGE_TIMEOUT);
-  await page.setUserAgent(USER_AGENT);
-  await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6' });
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    window.chrome = window.chrome || { runtime: {} };
-  });
-}
-
-async function dumpDebugArtifacts(page, label) {
-  const baseDir = path.dirname(OUTPUT_FILE);
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const htmlPath = path.join(baseDir, `wggesucht-debug-${label}-${stamp}.html`);
-  const pngPath = path.join(baseDir, `wggesucht-debug-${label}-${stamp}.png`);
-  try {
-    const html = await page.content();
-    await fs.writeFile(htmlPath, html);
-    console.warn(`  debug HTML saved: ${htmlPath}`);
-  } catch (error) {
-    console.warn(`  debug HTML capture failed: ${error.message}`);
-  }
-  try {
-    await page.screenshot({ path: pngPath, fullPage: true });
-    console.warn(`  debug screenshot saved: ${pngPath}`);
-  } catch (error) {
-    console.warn(`  debug screenshot failed: ${error.message}`);
-  }
-}
-
-// Cloudflare interstitials replace the listing markup; bail early if we hit one.
-async function detectChallenge(page) {
-  return page.evaluate(() => {
-    const title = (document.title || '').toLowerCase();
-    if (title.includes('just a moment') || title.includes('attention required')) return 'cloudflare_challenge';
-    if (document.querySelector('#challenge-running, #cf-please-wait, .cf-browser-verification')) {
-      return 'cloudflare_challenge';
-    }
-    if (document.querySelector('iframe[src*="hcaptcha"], iframe[src*="recaptcha"]')) return 'captcha';
-    return null;
-  });
 }
 
 async function scrapeCards(page) {
@@ -326,14 +227,14 @@ async function collectCards(page) {
       await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
     } catch (error) {
       console.warn(`  navigation failed: ${error.message}`);
-      await dumpDebugArtifacts(page, `search-page-${pageNumber}-nav`);
+      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-nav`);
       break;
     }
 
     const challenge = await detectChallenge(page);
     if (challenge) {
       console.warn(`  challenge detected (${challenge}); aborting`);
-      await dumpDebugArtifacts(page, `search-page-${pageNumber}-${challenge}`);
+      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-${challenge}`);
       break;
     }
 
@@ -346,7 +247,7 @@ async function collectCards(page) {
       await page.waitForSelector('div.wgg_card.offer_list_item', { timeout: PAGE_TIMEOUT });
     } catch {
       console.warn('  no listings detected on this page; stopping pagination');
-      await dumpDebugArtifacts(page, `search-page-${pageNumber}-empty`);
+      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-empty`);
       break;
     }
 
@@ -378,6 +279,8 @@ async function collectCards(page) {
       if (MAX_LISTINGS != null && allRows.length >= MAX_LISTINGS) break;
     }
     console.log(`  new unique rows: ${added} (total: ${allRows.length})`);
+
+    await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(allRows, null, 2)}\n`);
 
     if (MAX_LISTINGS != null && allRows.length >= MAX_LISTINGS) break;
     if (cards.length === 0) {
@@ -416,7 +319,7 @@ async function main() {
 
   try {
     const searchPage = await browser.newPage();
-    await preparePage(searchPage);
+    await preparePage(searchPage, { userAgent: USER_AGENT, timeoutMs: PAGE_TIMEOUT });
 
     const { allRows, stats } = await collectCards(searchPage);
 

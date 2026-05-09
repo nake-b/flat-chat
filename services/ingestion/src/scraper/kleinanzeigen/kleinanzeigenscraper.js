@@ -14,6 +14,7 @@ const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
 const DETAIL_DELAY_MS = Number.parseInt(process.env.DETAIL_DELAY_MS || '600', 10);
+const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '15000', 10);
 const PAGE_TIMEOUT = 30_000;
 
 function printBanner() {
@@ -23,6 +24,7 @@ function printBanner() {
   console.log(`Source:        ${SEARCH_URL}`);
   console.log(`Target pages:  ${MAX_PAGES}`);
   console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
+  console.log(`Page delay:    ${PAGE_DELAY_MS}ms`);
   console.log(`Headless:      ${HEADLESS}`);
   console.log(`Output:        ${OUTPUT_FILE}`);
   console.log('');
@@ -137,25 +139,16 @@ async function acceptConsent(page) {
 
 async function scrapeCards(page) {
   return page.$$eval(
-    'article.aditem, li.ad-listitem article.aditem, #srchrslt-adtable article',
+    'article[data-adid]',
     (nodes) => {
       const clean = (text) => (text || '').replace(/\s+/g, ' ').trim();
       const collectImages = (root) => {
         const sources = new Set();
         for (const img of root.querySelectorAll('img')) {
-          const candidates = [
-            img.getAttribute('src'),
-            img.getAttribute('data-imgsrc'),
-            img.getAttribute('data-src'),
-            img.getAttribute('data-image'),
-          ];
-          for (const candidate of candidates) {
-            if (candidate) sources.add(candidate);
+          for (const attr of ['src', 'srcset', 'data-imgsrc', 'data-src', 'data-image']) {
+            const val = img.getAttribute(attr);
+            if (val) sources.add(val);
           }
-        }
-        for (const node of root.querySelectorAll('[data-imgsrc]')) {
-          const value = node.getAttribute('data-imgsrc');
-          if (value) sources.add(value);
         }
         return [...sources];
       };
@@ -166,18 +159,67 @@ async function scrapeCards(page) {
         }
         return attrs;
       };
+      const parseLdJson = (root) => {
+        const scripts = root.querySelectorAll('script[type="application/ld+json"]');
+        const results = [];
+        for (const s of scripts) {
+          try { results.push(JSON.parse(s.textContent || '')); } catch { /* skip */ }
+        }
+        return results;
+      };
+
+      // detect layout variant: old BEM (.aditem) vs new Tailwind (li[data-clickable])
+      const isOldLayout = nodes.length > 0 && nodes[0].classList.contains('aditem');
+
       const seenHrefs = new Set();
 
       return nodes
         .map((node, index) => {
           const dataAdId = node.getAttribute('data-adid') || null;
           const dataHref = node.getAttribute('data-href') || null;
-          const titleAnchor =
-            node.querySelector('h2.text-module-begin a.ellipsis') ||
-            node.querySelector('h2.text-module-begin a') ||
-            node.querySelector('a.ellipsis') ||
-            node.querySelector('h2 a') ||
-            node.querySelector('a[href*="/s-anzeige/"]');
+
+          let titleAnchor, priceText, locationText, detailsText, descText, sellerName, tags;
+
+          if (isOldLayout) {
+            // --- old BEM layout ---
+            titleAnchor =
+              node.querySelector('h2.text-module-begin a.ellipsis') ||
+              node.querySelector('h2.text-module-begin a') ||
+              node.querySelector('a.ellipsis') ||
+              node.querySelector('h2 a') ||
+              node.querySelector('a[href*="/s-anzeige/"]');
+
+            const priceEl =
+              node.querySelector('.aditem-main--middle--price-shipping--price') ||
+              node.querySelector('p.aditem-main--middle--price') ||
+              node.querySelector('[class*="price"]');
+            priceText = clean(priceEl?.textContent) || null;
+
+            locationText = clean(node.querySelector('.aditem-main--top--left')?.textContent) || null;
+            detailsText = clean(node.querySelector('.aditem-main--top--right')?.textContent) || null;
+            descText = clean(node.querySelector('.aditem-main--middle--description')?.textContent) || null;
+
+            const tagListEl = node.querySelector('.simpletag-list, .aditem-main--bottom');
+            tags = tagListEl ? [clean(tagListEl.textContent)].filter(Boolean) : [];
+            sellerName = null;
+          } else {
+            // --- new Tailwind layout ---
+            titleAnchor =
+              node.querySelector('h3 a[href*="/s-anzeige/"]') ||
+              node.querySelector('a[href*="/s-anzeige/"]');
+
+            priceText = clean(node.querySelector('p.text-secondary.text-title3')?.textContent) || null;
+
+            const locIcon = node.querySelector('svg[data-title="locationOutline"]');
+            locationText = clean(locIcon?.parentElement?.querySelector('span')?.textContent) || null;
+
+            detailsText = clean(node.querySelector('p.font-strong.text-onSurfaceSubdued')?.textContent) || null;
+            descText = clean(node.querySelector('p.text-onSurfaceSubdued.text-bodyRegular')?.textContent) || null;
+            sellerName = clean(node.querySelector('span.text-bodyRegularStrong.text-onSurfaceSubdued')?.textContent) || null;
+
+            const tagEls = node.querySelectorAll('span.rounded-xsmall.text-bodySmall.text-onSurfaceSubdued');
+            tags = [...tagEls].map((el) => clean(el.textContent)).filter(Boolean);
+          }
 
           const titleText = clean(titleAnchor?.textContent);
           const href = titleAnchor?.getAttribute('href') || dataHref;
@@ -185,29 +227,20 @@ async function scrapeCards(page) {
           if (seenHrefs.has(href)) return null;
           seenHrefs.add(href);
 
-          const priceEl =
-            node.querySelector('.aditem-main--middle--price-shipping--price') ||
-            node.querySelector('p.aditem-main--middle--price') ||
-            node.querySelector('[class*="price"]');
-          const topLeftEl = node.querySelector('.aditem-main--top--left');
-          const topRightEl = node.querySelector('.aditem-main--top--right');
-          const descEl = node.querySelector('.aditem-main--middle--description');
-          const tagListEl = node.querySelector('.simpletag-list, .aditem-main--bottom');
-
           return {
             card_index: index,
             external_id: dataAdId,
             href,
             title: titleText || null,
-            price_text: clean(priceEl?.textContent) || null,
-            location_text: clean(topLeftEl?.textContent) || null,
-            date_text: clean(topRightEl?.textContent) || null,
-            description_text: clean(descEl?.textContent) || null,
-            tags_text: clean(tagListEl?.textContent) || null,
+            price_text: priceText,
+            location_text: locationText,
+            details_text: detailsText,
+            description_text: descText,
+            tags,
+            seller_name: sellerName,
             images: collectImages(node),
+            ld_json: parseLdJson(node),
             data_attributes: collectDataAttrs(node),
-            card_text: clean(node.textContent) || null,
-            card_html_length: (node.outerHTML || '').length,
           };
         })
         .filter(Boolean);
@@ -367,6 +400,20 @@ async function dumpDebugArtifacts(page, label) {
   }
 }
 
+async function saveRows(allCards) {
+  const rows = allCards.map((card) =>
+    buildBronzeRow({
+      card,
+      detail: null,
+      finalUrl: null,
+      detailStatus: 'cards_only',
+      extractionNotes: [],
+    })
+  );
+  await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(rows, null, 2)}\n`);
+  return rows;
+}
+
 async function collectCards(page) {
   const allCards = [];
   const seenKeys = new Set();
@@ -387,7 +434,7 @@ async function collectCards(page) {
     stats.pagesVisited += 1;
 
     try {
-      await page.waitForSelector('article.aditem, .ad-listitem', { timeout: PAGE_TIMEOUT });
+      await page.waitForSelector('article[data-adid]', { timeout: PAGE_TIMEOUT });
     } catch {
       console.warn('  no listings detected on this page; stopping pagination');
       await dumpDebugArtifacts(page, `search-page-${pageNumber}`);
@@ -410,7 +457,15 @@ async function collectCards(page) {
     }
     console.log(`  new unique cards: ${added} (total: ${allCards.length})`);
 
+    await saveRows(allCards);
+    console.log(`  saved ${allCards.length} cards to ${OUTPUT_FILE}`);
+
     if (MAX_LISTINGS != null && allCards.length >= MAX_LISTINGS) break;
+
+    if (pageNumber < MAX_PAGES && PAGE_DELAY_MS > 0) {
+      console.log(`  backing off ${PAGE_DELAY_MS}ms before next page...`);
+      await sleep(PAGE_DELAY_MS);
+    }
   }
 
   return { allCards, stats };
@@ -512,65 +567,12 @@ async function main() {
     const { allCards, stats } = await collectCards(searchPage);
 
     console.log('');
-    console.log(`Collected ${allCards.length} unique cards across ${stats.pagesVisited} page(s).`);
-
-    const cardsToVisit = MAX_LISTINGS != null ? allCards.slice(0, MAX_LISTINGS) : allCards;
-    console.log(`Visiting ${cardsToVisit.length} detail page(s)...`);
-
-    const detailPage = await browser.newPage();
-    await preparePage(detailPage);
-
-    const rows = [];
-    for (let i = 0; i < cardsToVisit.length; i += 1) {
-      const card = cardsToVisit[i];
-      const listingUrl = absoluteUrl(card.href);
-      const label = (card.title || listingUrl || '').slice(0, 90);
-      console.log(`  [${i + 1}/${cardsToVisit.length}] ${label}`);
-
-      let detailResult;
-      if (!listingUrl) {
-        detailResult = {
-          detail: null,
-          finalUrl: null,
-          status: 'skipped_no_url',
-          notes: ['no href on card'],
-        };
-      } else {
-        detailResult = await visitDetail(detailPage, listingUrl);
-        if (DETAIL_DELAY_MS > 0 && i < cardsToVisit.length - 1) {
-          await sleep(DETAIL_DELAY_MS);
-        }
-      }
-
-      rows.push(
-        buildBronzeRow({
-          card,
-          detail: detailResult.detail,
-          finalUrl: detailResult.finalUrl,
-          detailStatus: detailResult.status,
-          extractionNotes: detailResult.notes,
-        })
-      );
-    }
-
-    await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(rows, null, 2)}\n`);
-
-    console.log('');
-    console.log('Scrape complete');
+    console.log('Scrape complete (cards only)');
     console.log(`Search pages visited: ${stats.pagesVisited}`);
     console.log(`Cards observed:       ${stats.cardsSeen}`);
     console.log(`Unique cards:         ${allCards.length}`);
-    console.log(`Bronze rows written:  ${rows.length}`);
     console.log(`File:                 ${OUTPUT_FILE}`);
     console.log('');
-
-    const preview = rows.slice(0, 10).map((row) => ({
-      external_id: row.external_id,
-      title: (row.raw_payload.card?.title || '').slice(0, 60),
-      price: row.raw_payload.card?.price_text || null,
-      detail: row.scrape_metadata.detail_scrape_status,
-    }));
-    if (preview.length) console.table(preview);
   } finally {
     await browser.close();
   }

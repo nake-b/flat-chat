@@ -1,0 +1,550 @@
+// Phase 2: visit each card's detail page and capture the full apartment info
+// (address, price breakdown, descriptions, amenities, gallery, geo, lister).
+// Output is one record per listing in bronze-loader format
+// (services/ingestion/src/bronze/loader.py); the scraped detail lives under
+// the `dump` key. The user runs the loader separately.
+
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const puppeteer = require('puppeteer');
+const {
+  DEFAULT_USER_AGENT,
+  DEFAULT_TIMEOUT_MS,
+  sleep,
+  acceptConsent,
+  preparePage,
+  dumpDebugArtifacts,
+  detectChallenge,
+} = require('./lib');
+
+const ORIGIN = 'https://www.wg-gesucht.de';
+const LISTING_SOURCE = 'wg-gesucht';
+const USER_AGENT = process.env.USER_AGENT || DEFAULT_USER_AGENT;
+
+const INPUT_FILE = path.resolve(process.env.INPUT_FILE || path.join(__dirname, 'wggesucht.json'));
+const OUTPUT_FILE = path.resolve(process.env.OUTPUT_FILE || path.join(__dirname, 'wggesucht-detail.json'));
+const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
+const HEADLESS = process.env.HEADLESS !== 'false';
+const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '8000', 10);
+const PAGE_TIMEOUT = DEFAULT_TIMEOUT_MS;
+const RESUME = process.env.RESUME !== 'false';
+
+function printBanner(targets, alreadyHave) {
+  console.log('');
+  console.log('wg-gesucht.de scraper (detail pages)');
+  console.log('====================================');
+  console.log(`Input:         ${INPUT_FILE}`);
+  console.log(`Output:        ${OUTPUT_FILE}`);
+  console.log(`Resume:        ${RESUME} (${alreadyHave} already scraped)`);
+  console.log(`To visit:      ${targets.length}`);
+  console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
+  console.log(`Page delay:    ${PAGE_DELAY_MS}ms`);
+  console.log(`Headless:      ${HEADLESS}`);
+  console.log('');
+}
+
+async function readJsonIfExists(filePath) {
+  try {
+    const text = await fs.readFile(filePath, 'utf8');
+    return JSON.parse(text);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function loadCards() {
+  const text = await fs.readFile(INPUT_FILE, 'utf8');
+  const rows = JSON.parse(text);
+  if (!Array.isArray(rows)) {
+    throw new Error(`Input file is not a JSON array: ${INPUT_FILE}`);
+  }
+  return rows;
+}
+
+function detailUrl(card) {
+  return card.canonicalUrl || card.url || (card.id ? `${ORIGIN}/${card.id}.html` : null);
+}
+
+function buildTargets(cards, existingIds) {
+  const targets = [];
+  for (const card of cards) {
+    const url = detailUrl(card);
+    if (!url || card.id == null) continue;
+    if (existingIds.has(String(card.id))) continue;
+    targets.push({ id: card.id, url, card });
+    if (MAX_LISTINGS != null && targets.length >= MAX_LISTINGS) break;
+  }
+  return targets;
+}
+
+// Browser-side scrape — runs entirely in the page context.
+// Returns a plain object; everything that fails returns null/[] without throwing.
+async function scrapeDetail(page, expectedId, canonicalUrl) {
+  return page.evaluate(
+    (expectedIdArg, canonicalUrlArg) => {
+      const clean = (text) => (text || '').replace(/\s+/g, ' ').trim();
+
+      const parseGermanNumber = (value) => {
+        if (value == null) return null;
+        const s = String(value);
+        if (!/[\d,.]/.test(s)) return null;
+        const normalized = s.replace(/[^\d,.]/g, '').replace(/\./g, '').replace(',', '.');
+        if (!normalized) return null;
+        const n = Number.parseFloat(normalized);
+        return Number.isNaN(n) ? null : n;
+      };
+
+      const findSectionByTitle = (titles) => {
+        const headings = [...document.querySelectorAll('h2.section_panel_title, h2.headline-detailed-view-panel-title')];
+        const heading = headings.find((h) => {
+          const text = clean(h.textContent).toLowerCase();
+          return titles.some((t) => text.includes(t.toLowerCase()));
+        });
+        if (!heading) return null;
+        return heading.closest('div.panel, div.section_panel, section') || heading.parentElement;
+      };
+
+      const labelValueMap = (section) => {
+        const map = {};
+        if (!section) return map;
+        section.querySelectorAll('.row, .col-sm-6, .col-xs-12').forEach((row) => {
+          const labelEl = row.querySelector('.section_panel_detail');
+          const valueEl = row.querySelector('.section_panel_value');
+          if (!labelEl || !valueEl) return;
+          const label = clean(labelEl.textContent);
+          const value = clean(valueEl.textContent);
+          if (label) map[label] = value;
+        });
+        return map;
+      };
+
+      const findValue = (map, ...patterns) => {
+        for (const pattern of patterns) {
+          const re = new RegExp(pattern, 'i');
+          for (const [label, value] of Object.entries(map)) {
+            if (re.test(label)) return value;
+          }
+        }
+        return null;
+      };
+
+      const result = {
+        externalId: expectedIdArg,
+        canonicalUrl: canonicalUrlArg,
+        url: window.location.href,
+      };
+
+      // ---- Title ----------------------------------------------------------
+      result.title =
+        clean(document.querySelector('h1.detailed-view-title span')?.textContent) ||
+        clean(document.querySelector('h1.headline-detailed-view-title')?.textContent) ||
+        clean(document.querySelector('h1')?.textContent) ||
+        null;
+
+      // ---- Address --------------------------------------------------------
+      result.address = (() => {
+        const section = findSectionByTitle(['Address', 'Adresse']);
+        if (!section) return null;
+        const detail = section.querySelector('.section_panel_detail');
+        if (!detail) return null;
+        const raw = clean(detail.textContent);
+        // The address tends to live as two lines separated by a <br/>:
+        // line 1 = street (and house number, if disclosed)
+        // line 2 = "<postal> Berlin <district>"
+        const html = detail.innerHTML.replace(/<br\s*\/?>/gi, '\n');
+        const tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        const lines = (tmp.innerText || tmp.textContent || '')
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const street = lines[0] || null;
+        const cityLine = lines[1] || '';
+        const m = cityLine.match(/^(\d{5})\s+([A-Za-zÄÖÜäöüß.\- ]+?)(?:\s+(.+))?$/);
+        return {
+          street,
+          postalCode: m ? m[1] : null,
+          city: m ? m[2].trim() : null,
+          district: m ? (m[3] || null) : null,
+          raw,
+        };
+      })();
+
+      // ---- Price breakdown -----------------------------------------------
+      // The "Kaltmiete" / "Cold rent" line on the German live page is labeled
+      // simply "Miete:" — match it via an explicit exact-prefix pattern that
+      // doesn't bleed into "Warmmiete" / "Gesamtmiete".
+      result.price = (() => {
+        const section = findSectionByTitle(['Costs', 'Kosten', 'Price', 'Preis']);
+        const raw = labelValueMap(section);
+        return {
+          kaltmieteEur: parseGermanNumber(
+            findValue(raw, 'Kaltmiete', 'Base rent', 'Cold rent', 'Net rent', '^\\s*Miete\\s*:?\\s*$')
+          ),
+          nebenkostenEur: parseGermanNumber(findValue(raw, 'Nebenkosten', 'Utilities', 'Additional')),
+          heizkostenEur: parseGermanNumber(findValue(raw, 'Heizkosten', 'Heating')),
+          sonstigeEur: parseGermanNumber(findValue(raw, 'Sonstige', 'Miscellaneous', 'Other costs')),
+          warmmieteEur: parseGermanNumber(findValue(raw, 'Warmmiete', 'Total rent', 'Final rent', 'Gesamtmiete')),
+          kautionEur: parseGermanNumber(findValue(raw, 'Kaution', 'Deposit')),
+          ablseEur: parseGermanNumber(findValue(raw, 'Ablöse', 'Existing equipment', 'Abstand')),
+          provisionEur: parseGermanNumber(findValue(raw, 'Provision', 'Commission')),
+          raw,
+        };
+      })();
+
+      // ---- Key facts (size, rooms, final rent) ---------------------------
+      const keyFacts = {};
+      document.querySelectorAll('.key_fact_detail').forEach((el) => {
+        const label = clean(el.textContent);
+        const valueEl =
+          el.parentElement?.querySelector('.key_fact_value') ||
+          el.nextElementSibling;
+        const value = clean(valueEl?.textContent);
+        if (label) keyFacts[label] = value;
+      });
+      result.keyFacts = keyFacts;
+      result.areaSqm = (() => {
+        for (const [label, value] of Object.entries(keyFacts)) {
+          if (/size|größe|wohnfl/i.test(label)) return parseGermanNumber(value);
+        }
+        return null;
+      })();
+      result.rooms = (() => {
+        for (const [label, value] of Object.entries(keyFacts)) {
+          if (/rooms|zimmer/i.test(label)) return parseGermanNumber(value);
+        }
+        return null;
+      })();
+      // If the price section didn't yield a Warmmiete (common on the German
+      // page where the breakdown shows "Miete + Nebenkosten + Sonstige" but
+      // no total), pull the total from the key-facts strip ("Gesamtmiete" /
+      // "Final rent").
+      if (result.price.warmmieteEur == null) {
+        for (const [label, value] of Object.entries(keyFacts)) {
+          if (/gesamtmiete|final rent|total rent/i.test(label)) {
+            result.price.warmmieteEur = parseGermanNumber(value);
+            break;
+          }
+        }
+      }
+
+      // ---- Availability --------------------------------------------------
+      result.availability = (() => {
+        const section = findSectionByTitle(['Availability', 'Verfügbarkeit', 'Frei ab', 'Date']);
+        const raw = labelValueMap(section);
+        return {
+          from: findValue(raw, 'Frei ab', 'From', 'Available from', 'Move'),
+          until: findValue(raw, 'Frei bis', 'Until', 'Available until'),
+          minStayMonths: parseGermanNumber(findValue(raw, 'Mindestmietdauer', 'min')),
+          maxStayMonths: parseGermanNumber(findValue(raw, 'Maximale Mietdauer', 'max')),
+          raw,
+        };
+      })();
+
+      // ---- Descriptions (tabbed freitext) --------------------------------
+      // `data-text` carries a CSS selector ("#freitext_0") not a bare id,
+      // so resolve it via querySelector.
+      result.descriptions = (() => {
+        const tabs = [...document.querySelectorAll('.section_panel_tab[data-text]')];
+        if (tabs.length > 0) {
+          return tabs
+            .map((tab) => {
+              const tabName = clean(tab.querySelector('h2, h3')?.textContent) || clean(tab.textContent);
+              const targetSelector = tab.getAttribute('data-text');
+              let target = null;
+              try {
+                target = targetSelector ? document.querySelector(targetSelector) : null;
+              } catch {
+                target = null;
+              }
+              const text = target ? clean(target.innerText || target.textContent) : null;
+              return { tab: tabName || null, text: text || null };
+            })
+            .filter((d) => d.text);
+        }
+        const blocks = [
+          ...document.querySelectorAll('#ad_description_text, .section_freetext, [id^="freitext_"]'),
+        ];
+        return blocks
+          .map((block) => ({ tab: null, text: clean(block.innerText || block.textContent) }))
+          .filter((d) => d.text);
+      })();
+
+      // ---- Amenities (icon grid in "Further details") --------------------
+      result.amenities = [...document.querySelectorAll('.utility_icons .text-center')]
+        .map((node) => {
+          const iconEl = node.querySelector('span[class*="mdi-"]');
+          const iconClass = iconEl
+            ? [...iconEl.classList].find((c) => c.startsWith('mdi-') && c !== 'mdi') || null
+            : null;
+          const label = clean(node.innerText || node.textContent);
+          return { icon: iconClass, label };
+        })
+        .filter((a) => a.label);
+
+      // ---- Images: prefer the inline JS gallery payload ------------------
+      result.images = (() => {
+        try {
+          const gallery = window.image_gallery;
+          if (gallery && Array.isArray(gallery.images)) {
+            return gallery.images.map((img) => ({
+              large: img.large || null,
+              sized: img.sized || null,
+              thumb: img.thumb || null,
+              position: img.position ?? null,
+            }));
+          }
+        } catch {
+          // fall through
+        }
+        return [...document.querySelectorAll('#gallery_slides .sp-slide img.sp-image, .sp-slide img')]
+          .map((img) => ({
+            large: img.getAttribute('data-large') || img.getAttribute('data-src') || img.src || null,
+            sized: img.getAttribute('data-medium') || null,
+            thumb: img.getAttribute('data-small') || null,
+            position: null,
+          }))
+          .filter((i) => i.large || i.sized || i.thumb);
+      })();
+
+      // ---- Geo: regex-extract from the inline map_config script payload --
+      // wg-gesucht initialises the map via `map_config = { markers: [{lat,lng,...}], ... }`
+      // inside a non-window-scoped <script>, so `window.map_config` is undefined.
+      // Parse the lat/lng pair directly out of the page source.
+      result.geo = (() => {
+        const html = document.documentElement.outerHTML;
+        const m = html.match(/"lat"\s*:\s*(-?\d+\.\d+)\s*,\s*"lng"\s*:\s*(-?\d+\.\d+)/);
+        if (m) return { lat: Number(m[1]), lng: Number(m[2]) };
+        return null;
+      })();
+
+      // ---- Lister info ---------------------------------------------------
+      result.lister = (() => {
+        const candidates = [
+          ...document.querySelectorAll('.user_profile_info, .panel.rhs_contact_information, .contact_box_sticky'),
+        ];
+        const visible = candidates.find((n) => n.offsetParent !== null);
+        const node = visible || candidates[0] || null;
+        if (!node) return null;
+
+        const name =
+          clean(node.querySelector('.text-bold, .user_name, .user_profile_link, a[href*="/user/"]')?.textContent) ||
+          null;
+
+        const memberSinceEl = [...node.querySelectorAll('p, span, div')].find((n) =>
+          /Member since|Mitglied seit|Im Forum seit/i.test(n.textContent || '')
+        );
+        const memberSince = memberSinceEl ? clean(memberSinceEl.textContent) : null;
+
+        const verified = !!node.querySelector(
+          '.mdi-check-circle-outline, [class*="verified" i], img[alt*="verified" i], img[alt*="verifiziert" i]'
+        );
+
+        // "Online: 3 hours" is rendered in the availability/contact strip on
+        // the live page — grab the value via a label-based search across the
+        // whole document rather than only inside the lister box.
+        const online = (() => {
+          const labelEl = [...document.querySelectorAll('span.section_panel_detail, b, span')].find((n) =>
+            /^\s*Online\s*:?\s*$/i.test((n.textContent || '').trim())
+          );
+          if (!labelEl) return null;
+          const valueEl =
+            labelEl.parentElement?.querySelector('.section_panel_value') ||
+            labelEl.nextElementSibling;
+          return valueEl ? clean(valueEl.textContent) : null;
+        })();
+
+        // Heuristic: company suffix in the name, a premium/company badge,
+        // or text mentioning "Wohnungsverwaltung"/"Hausverwaltung" → agency.
+        const nameLooksAgency = name && /\b(GmbH|AG|UG|KG|OHG|Ltd|Inc|Wohnungsverwaltung|Hausverwaltung|Immobilien|Verwaltung|Vermietung|Rentals?)\b/i.test(name);
+        const badgeLooksAgency = !!node.querySelector(
+          'img[alt*="premium" i], img[alt*="company" i], .company_logo, [class*="agency" i]'
+        );
+        const type = nameLooksAgency || badgeLooksAgency ? 'agency' : 'private';
+
+        return { name, type, memberSince, verified, online };
+      })();
+
+      // ---- Tags / chips --------------------------------------------------
+      result.tags = (() => {
+        const found = new Set();
+        const selectors = [
+          '.detail-categories li',
+          '.noprint .label',
+          '.label.label-info',
+          '.tag',
+          '.badge',
+        ];
+        for (const sel of selectors) {
+          document.querySelectorAll(sel).forEach((n) => {
+            const text = clean(n.innerText || n.textContent);
+            if (text && text.length < 80) found.add(text);
+          });
+        }
+        return [...found];
+      })();
+
+      // ---- Ad ID sanity check --------------------------------------------
+      const adIdEl = document.querySelector('[data-ad_id]');
+      result.scrapedAdId = adIdEl ? adIdEl.getAttribute('data-ad_id') : null;
+
+      // ---- Catch-all: every other section's label/value rows -------------
+      result.extra = (() => {
+        const skip = new Set(
+          ['Address', 'Adresse', 'Costs', 'Kosten', 'Price', 'Preis', 'Availability', 'Verfügbarkeit', 'Frei ab', 'Date'].map(
+            (s) => s.toLowerCase()
+          )
+        );
+        const panels = {};
+        document.querySelectorAll('h2.section_panel_title, h2.headline-detailed-view-panel-title').forEach((h) => {
+          const title = clean(h.textContent);
+          if (!title) return;
+          if ([...skip].some((s) => title.toLowerCase().includes(s))) return;
+          const parent = h.closest('div.panel, div.section_panel, section') || h.parentElement;
+          const map = labelValueMap(parent);
+          if (Object.keys(map).length > 0) panels[title] = map;
+        });
+        return panels;
+      })();
+
+      return result;
+    },
+    expectedId,
+    canonicalUrl
+  );
+}
+
+async function buildOutputRow(card, detail, scrapedAt) {
+  return {
+    listing_source: LISTING_SOURCE,
+    id: card.id,
+    scrapeUrl: detail?.url || detail?.canonicalUrl || card.canonicalUrl || card.url,
+    scrapedAt,
+    dump: {
+      card,
+      ...detail,
+    },
+  };
+}
+
+async function run() {
+  const cards = await loadCards();
+
+  const existingRows = RESUME ? (await readJsonIfExists(OUTPUT_FILE)) || [] : [];
+  const existingIds = new Set(existingRows.map((r) => String(r.id)));
+
+  const targets = buildTargets(cards, existingIds);
+  printBanner(targets, existingIds.size);
+
+  if (targets.length === 0) {
+    console.log('Nothing to do — all listings already scraped (RESUME=true).');
+    return;
+  }
+
+  const launchOptions = {
+    headless: HEADLESS,
+    defaultViewport: { width: 1365, height: 900 },
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--lang=de-DE,de',
+    ],
+  };
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  console.log('Launching browser...');
+  const browser = await puppeteer.launch(launchOptions);
+
+  const collected = existingRows.slice();
+  const stats = { ok: 0, errors: 0 };
+
+  try {
+    const page = await browser.newPage();
+    await preparePage(page, { userAgent: USER_AGENT, timeoutMs: PAGE_TIMEOUT });
+
+    let consentTried = false;
+
+    for (let i = 0; i < targets.length; i += 1) {
+      const target = targets[i];
+      const label = `[${i + 1}/${targets.length}] id=${target.id}`;
+      console.log(`\n${label} ${target.url}`);
+
+      try {
+        await page.goto(target.url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+      } catch (error) {
+        console.warn(`  navigation failed: ${error.message}`);
+        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-nav`);
+        stats.errors += 1;
+        continue;
+      }
+
+      if (!consentTried) {
+        await acceptConsent(page);
+        consentTried = true;
+      }
+
+      const challenge = await detectChallenge(page);
+      if (challenge) {
+        console.warn(`  challenge detected (${challenge}); aborting run`);
+        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-${challenge}`);
+        break;
+      }
+
+      try {
+        await page.waitForSelector('h1.detailed-view-title, h1.headline-detailed-view-title, #basic_ad_details', {
+          timeout: PAGE_TIMEOUT,
+        });
+      } catch {
+        console.warn('  detail markers not found — page may have a different layout');
+        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-no-markers`);
+        stats.errors += 1;
+        continue;
+      }
+
+      let detail;
+      try {
+        detail = await scrapeDetail(page, String(target.id), target.url);
+      } catch (error) {
+        console.warn(`  scrape failed: ${error.message}`);
+        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-scrape-err`);
+        stats.errors += 1;
+        continue;
+      }
+
+      const row = await buildOutputRow(target.card, detail, new Date().toISOString());
+      collected.push(row);
+      stats.ok += 1;
+
+      await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(collected, null, 2)}\n`);
+
+      console.log(
+        `  ok — title="${(detail.title || '').slice(0, 60)}" street="${detail.address?.street || ''}" ` +
+          `kalt=${detail.price?.kaltmieteEur ?? '–'} warm=${detail.price?.warmmieteEur ?? '–'} ` +
+          `area=${detail.areaSqm ?? '–'} imgs=${detail.images?.length ?? 0}`
+      );
+
+      if (i < targets.length - 1 && PAGE_DELAY_MS > 0) {
+        await sleep(PAGE_DELAY_MS);
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+
+  console.log('');
+  console.log('Detail scrape complete');
+  console.log(`OK:                ${stats.ok}`);
+  console.log(`Errors skipped:    ${stats.errors}`);
+  console.log(`Total in output:   ${collected.length}`);
+  console.log(`File:              ${OUTPUT_FILE}`);
+  console.log('');
+}
+
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

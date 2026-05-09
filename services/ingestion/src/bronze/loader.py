@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
