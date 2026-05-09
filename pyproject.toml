@@ -1,0 +1,17 @@
+[project]
+name = "flat-chat"
+version = "0.1.0"
+description = "Berlin Apartment AI Assistant — workspace root"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["services/backend", "services/ingestion"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11",
+    "ty>=0.0.1a7",
+    "pytest>=8.0",
+]
