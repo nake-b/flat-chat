@@ -1,0 +1,25 @@
+set dotenv-load
+
+default:
+    @just --list
+
+lint:
+    uv run ruff check src/
+
+format:
+    uv run ruff format src/
+
+typecheck:
+    uv run ty check src/
+
+test *args:
+    uv run pytest {{ args }}
+
+fix:
+    uv run ruff check --fix src/
+    uv run ruff format src/
+
+check: lint typecheck test
+
+dev:
+    uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
