@@ -7,10 +7,12 @@
   "type": "commonjs",
   "main": "kleinanzeigenscraper.js",
   "scripts": {
-    "start": "node kleinanzeigenscraper.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "scrape:cards": "node kleinanzeigenscraper.js",
+    "scrape:details": "node kleinanzeigendetailscraper.js",
+    "start": "node kleinanzeigenscraper.js"
   },
   "dependencies": {
-    "puppeteer": "^24.42.0"
+    "puppeteer": "^24.42.0",
+    "scraper-lib": "file:../_lib"
   }
 }

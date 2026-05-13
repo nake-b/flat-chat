@@ -7,10 +7,12 @@
   "type": "commonjs",
   "main": "wggesuchtscraper.js",
   "scripts": {
-    "start": "node wggesuchtscraper.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "scrape:cards": "node wggesuchtscraper.js",
+    "scrape:details": "node wggesuchtdetailscraper.js",
+    "start": "node wggesuchtscraper.js"
   },
   "dependencies": {
-    "puppeteer": "^24.42.0"
+    "puppeteer": "^24.42.0",
+    "scraper-lib": "file:../_lib"
   }
 }

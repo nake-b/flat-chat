@@ -1,12 +1,12 @@
-// Phase 2: visit each card's detail page and capture the full apartment info
-// (price breakdown, rooms, description, amenities, geo, seller, images).
-// Output is one record per listing in bronze-loader format
-// (services/ingestion/src/bronze/loader.py); the scraped detail lives under
-// the `dump` key. The user runs the loader separately.
+// Phase 2: visit each pending card from iron_cards and write a detail-tier
+// record straight into raw_listings (bronze). Once a listing is successfully
+// captured we set iron_cards.detail_scraped_at so the next run resumes
+// naturally on whatever remains.
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
+const db = require('scraper-lib');
 
 const ORIGIN = 'https://www.kleinanzeigen.de';
 const LISTING_SOURCE = 'kleinanzeigen';
@@ -14,11 +14,9 @@ const USER_AGENT =
   process.env.USER_AGENT ||
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const INPUT_FILE = path.resolve(process.env.INPUT_FILE || path.join(__dirname, 'kleinanzeigen.json'));
-const OUTPUT_FILE = path.resolve(process.env.OUTPUT_FILE || path.join(__dirname, 'kleinanzeigen-detail.json'));
+const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
-const RESUME = process.env.RESUME !== 'false';
 const PAGE_TIMEOUT = 30_000;
 
 // Stealth timing
@@ -40,33 +38,19 @@ function randomDelay() {
   return sleep(ms);
 }
 
-async function readJsonIfExists(filePath) {
-  try {
-    const text = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(text);
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function loadCards() {
-  const text = await fs.readFile(INPUT_FILE, 'utf8');
-  const rows = JSON.parse(text);
-  if (!Array.isArray(rows)) {
-    throw new Error(`Input file is not a JSON array: ${INPUT_FILE}`);
-  }
-  return rows;
-}
-
-function buildTargets(cards, existingIds) {
+function buildTargetsFromIron(rows) {
   const targets = [];
-  for (const row of cards) {
-    const url = row.listing_url;
+  for (const row of rows) {
+    const url = row.detail_url;
     const id = row.external_id;
     if (!url || id == null) continue;
-    if (existingIds.has(String(id))) continue;
-    targets.push({ id: String(id), url, card: row.raw_payload?.card || row });
+    const cardData = row.data?.raw_payload?.card || row.data || null;
+    targets.push({
+      id: String(id),
+      url,
+      card: cardData,
+      ironCardId: row.id,
+    });
     if (MAX_LISTINGS != null && targets.length >= MAX_LISTINGS) break;
   }
   return targets;
@@ -187,13 +171,12 @@ async function detectChallenge(page) {
   });
 }
 
-function printBanner(targets, alreadyHave) {
+function printBanner(targets) {
   console.log('');
   console.log('kleinanzeigen.de scraper (detail pages)');
   console.log('=======================================');
-  console.log(`Input:         ${INPUT_FILE}`);
-  console.log(`Output:        ${OUTPUT_FILE}`);
-  console.log(`Resume:        ${RESUME} (${alreadyHave} already scraped)`);
+  console.log(`Input:         iron_cards (source=${LISTING_SOURCE}, detail_scraped_at IS NULL)`);
+  console.log(`Output:        raw_listings table (source=${LISTING_SOURCE})`);
   console.log(`To visit:      ${targets.length}`);
   console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
   console.log(`Delay:         ${MIN_DELAY_MS}–${MAX_DELAY_MS}ms`);
@@ -397,16 +380,14 @@ function buildOutputRow(target, detail, scrapedAt) {
 // ---------------------------------------------------------------------------
 
 async function run() {
-  const cards = await loadCards();
-
-  const existingRows = RESUME ? (await readJsonIfExists(OUTPUT_FILE)) || [] : [];
-  const existingIds = new Set(existingRows.map((r) => String(r.id)));
-
-  const targets = buildTargets(cards, existingIds);
-  printBanner(targets, existingIds.size);
+  const pool = db.getPool();
+  const pendingRows = await db.fetchPendingIronCards(pool, LISTING_SOURCE);
+  const targets = buildTargetsFromIron(pendingRows);
+  printBanner(targets);
 
   if (targets.length === 0) {
-    console.log('Nothing to do — all listings already scraped (RESUME=true).');
+    console.log('Nothing to do — no pending iron cards.');
+    await db.closePool();
     return;
   }
 
@@ -427,7 +408,6 @@ async function run() {
   console.log('Launching browser...');
   const browser = await puppeteer.launch(launchOptions);
 
-  const collected = existingRows.slice();
   const stats = { ok: 0, errors: 0 };
 
   try {
@@ -451,7 +431,7 @@ async function run() {
         await page.goto(target.url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
       } catch (error) {
         console.warn(`  navigation failed: ${error.message}`);
-        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-nav`);
+        await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-nav`);
         stats.errors += 1;
         continue;
       }
@@ -464,7 +444,7 @@ async function run() {
       const challenge = await detectChallenge(page);
       if (challenge) {
         console.warn(`  challenge detected (${challenge}); aborting run`);
-        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-${challenge}`);
+        await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-${challenge}`);
         break;
       }
 
@@ -474,7 +454,7 @@ async function run() {
         });
       } catch {
         console.warn('  detail markers not found — page may have a different layout');
-        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-no-markers`);
+        await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-no-markers`);
         stats.errors += 1;
         continue;
       }
@@ -484,17 +464,29 @@ async function run() {
         detail = await scrapeDetail(page, target.id, target.url);
       } catch (error) {
         console.warn(`  scrape failed: ${error.message}`);
-        await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `detail-${target.id}-scrape-err`);
+        await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-scrape-err`);
         stats.errors += 1;
         continue;
       }
 
       const row = buildOutputRow(target, detail, new Date().toISOString());
-      collected.push(row);
       stats.ok += 1;
 
-      // Incremental save after each successful scrape
-      await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(collected, null, 2)}\n`);
+      try {
+        await db.upsertRawListing(pool, {
+          sourceName: LISTING_SOURCE,
+          externalId: target.id,
+          sourceUrl: row.scrapeUrl,
+          data: row,
+          scrapedAt: row.scrapedAt,
+          ironCardId: target.ironCardId,
+        });
+        await db.markIronCardDetailed(pool, target.ironCardId);
+      } catch (error) {
+        console.warn(`  db write failed: ${error.message}`);
+        stats.errors += 1;
+        continue;
+      }
 
       console.log(
         `  ok — title="${(detail.title || '').slice(0, 60)}" ` +
@@ -509,14 +501,14 @@ async function run() {
     }
   } finally {
     await browser.close();
+    await db.closePool();
   }
 
   console.log('');
   console.log('Detail scrape complete');
   console.log(`OK:                ${stats.ok}`);
   console.log(`Errors skipped:    ${stats.errors}`);
-  console.log(`Total in output:   ${collected.length}`);
-  console.log(`File:              ${OUTPUT_FILE}`);
+  console.log(`Output:            raw_listings table (source=${LISTING_SOURCE})`);
   console.log('');
 }
 

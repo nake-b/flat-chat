@@ -1,0 +1,11 @@
+{
+  "name": "scraper-lib",
+  "version": "1.0.0",
+  "private": true,
+  "main": "db.js",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^16.4",
+    "pg": "^8.11"
+  }
+}

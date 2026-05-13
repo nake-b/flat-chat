@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
+const db = require('scraper-lib');
 
 const SEARCH_URL = 'https://www.kleinanzeigen.de/s-wohnung-mieten/berlin/c203l3331+wohnung_mieten.swap_s:nein';
 const ORIGIN = 'https://www.kleinanzeigen.de';
@@ -9,7 +10,7 @@ const USER_AGENT =
   process.env.USER_AGENT ||
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const OUTPUT_FILE = path.resolve(process.env.OUTPUT_FILE || path.join(__dirname, 'kleinanzeigen.json'));
+const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
@@ -26,7 +27,7 @@ function printBanner() {
   console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
   console.log(`Page delay:    ${PAGE_DELAY_MS}ms`);
   console.log(`Headless:      ${HEADLESS}`);
-  console.log(`Output:        ${OUTPUT_FILE}`);
+  console.log(`Output:        iron_cards table (source=${LISTING_SOURCE})`);
   console.log('');
 }
 
@@ -381,7 +382,7 @@ async function preparePage(page) {
 }
 
 async function dumpDebugArtifacts(page, label) {
-  const baseDir = path.dirname(OUTPUT_FILE);
+  const baseDir = DEBUG_DIR;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const htmlPath = path.join(baseDir, `kleinanzeigen-debug-${label}-${stamp}.html`);
   const pngPath = path.join(baseDir, `kleinanzeigen-debug-${label}-${stamp}.png`);
@@ -400,7 +401,9 @@ async function dumpDebugArtifacts(page, label) {
   }
 }
 
-async function saveRows(allCards) {
+// Upsert each card row into the iron_cards table. Returns the rows we wrote
+// (the same shape as the on-disk JSON used to take) so callers can log/preview.
+async function persistCardsToIron(pool, allCards) {
   const rows = allCards.map((card) =>
     buildBronzeRow({
       card,
@@ -410,11 +413,21 @@ async function saveRows(allCards) {
       extractionNotes: [],
     })
   );
-  await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(rows, null, 2)}\n`);
+  for (const row of rows) {
+    if (!row.external_id || !row.listing_url) continue;
+    await db.upsertIronCard(pool, {
+      sourceName: row.listing_source,
+      externalId: row.external_id,
+      detailUrl: row.listing_url,
+      sourceUrl: row.source_url,
+      data: row,
+      scrapedAt: row.scraped_at,
+    });
+  }
   return rows;
 }
 
-async function collectCards(page) {
+async function collectCards(page, pool) {
   const allCards = [];
   const seenKeys = new Set();
   const stats = { pagesVisited: 0, cardsSeen: 0 };
@@ -457,8 +470,8 @@ async function collectCards(page) {
     }
     console.log(`  new unique cards: ${added} (total: ${allCards.length})`);
 
-    await saveRows(allCards);
-    console.log(`  saved ${allCards.length} cards to ${OUTPUT_FILE}`);
+    await persistCardsToIron(pool, allCards);
+    console.log(`  upserted ${allCards.length} cards into iron_cards`);
 
     if (MAX_LISTINGS != null && allCards.length >= MAX_LISTINGS) break;
 
@@ -560,21 +573,24 @@ async function main() {
   console.log('Launching browser...');
   const browser = await puppeteer.launch(launchOptions);
 
+  const pool = db.getPool();
+
   try {
     const searchPage = await browser.newPage();
     await preparePage(searchPage);
 
-    const { allCards, stats } = await collectCards(searchPage);
+    const { allCards, stats } = await collectCards(searchPage, pool);
 
     console.log('');
     console.log('Scrape complete (cards only)');
     console.log(`Search pages visited: ${stats.pagesVisited}`);
     console.log(`Cards observed:       ${stats.cardsSeen}`);
     console.log(`Unique cards:         ${allCards.length}`);
-    console.log(`File:                 ${OUTPUT_FILE}`);
+    console.log(`Output:               iron_cards table (source=${LISTING_SOURCE})`);
     console.log('');
   } finally {
     await browser.close();
+    await db.closePool();
   }
 }
 

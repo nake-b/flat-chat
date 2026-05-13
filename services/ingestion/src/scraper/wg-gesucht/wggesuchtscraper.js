@@ -3,9 +3,9 @@
 // as both `rentEur` and `warmRentEur`. Phase 2 will visit detail pages to
 // split into Kaltmiete / Nebenkosten / Heizkosten.
 
-const fs = require('node:fs/promises');
 const path = require('node:path');
 const puppeteer = require('puppeteer');
+const db = require('scraper-lib');
 const {
   DEFAULT_USER_AGENT,
   DEFAULT_TIMEOUT_MS,
@@ -23,7 +23,7 @@ const ORIGIN = 'https://www.wg-gesucht.de';
 const LISTING_SOURCE = 'wg-gesucht';
 const USER_AGENT = process.env.USER_AGENT || DEFAULT_USER_AGENT;
 
-const OUTPUT_FILE = path.resolve(process.env.OUTPUT_FILE || path.join(__dirname, 'wggesucht.json'));
+const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
@@ -38,7 +38,7 @@ function printBanner() {
   console.log(`Target pages:  ${MAX_PAGES}`);
   console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
   console.log(`Headless:      ${HEADLESS}`);
-  console.log(`Output:        ${OUTPUT_FILE}`);
+  console.log(`Output:        iron_cards table (source=${LISTING_SOURCE})`);
   console.log('');
 }
 
@@ -214,7 +214,22 @@ function buildRow(card, pageNumber, scrapeUrl, scrapedAt) {
   };
 }
 
-async function collectCards(page) {
+async function persistRowsToIron(pool, rows) {
+  for (const row of rows) {
+    if (row.id == null) continue;
+    const detailUrl = row.canonicalUrl || row.url || `${ORIGIN}/${row.id}.html`;
+    await db.upsertIronCard(pool, {
+      sourceName: row.listing_source,
+      externalId: row.id,
+      detailUrl,
+      sourceUrl: row.scrapeUrl,
+      data: row,
+      scrapedAt: row.scrapedAt,
+    });
+  }
+}
+
+async function collectCards(page, pool) {
   const allRows = [];
   const seenIds = new Set();
   const stats = { pagesVisited: 0, cardsSeen: 0, duplicates: 0, skipped: 0 };
@@ -227,14 +242,14 @@ async function collectCards(page) {
       await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
     } catch (error) {
       console.warn(`  navigation failed: ${error.message}`);
-      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-nav`);
+      await dumpDebugArtifacts(page, DEBUG_DIR, `search-page-${pageNumber}-nav`);
       break;
     }
 
     const challenge = await detectChallenge(page);
     if (challenge) {
       console.warn(`  challenge detected (${challenge}); aborting`);
-      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-${challenge}`);
+      await dumpDebugArtifacts(page, DEBUG_DIR, `search-page-${pageNumber}-${challenge}`);
       break;
     }
 
@@ -247,7 +262,7 @@ async function collectCards(page) {
       await page.waitForSelector('div.wgg_card.offer_list_item', { timeout: PAGE_TIMEOUT });
     } catch {
       console.warn('  no listings detected on this page; stopping pagination');
-      await dumpDebugArtifacts(page, path.dirname(OUTPUT_FILE), `search-page-${pageNumber}-empty`);
+      await dumpDebugArtifacts(page, DEBUG_DIR, `search-page-${pageNumber}-empty`);
       break;
     }
 
@@ -280,7 +295,8 @@ async function collectCards(page) {
     }
     console.log(`  new unique rows: ${added} (total: ${allRows.length})`);
 
-    await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(allRows, null, 2)}\n`);
+    await persistRowsToIron(pool, allRows);
+    console.log(`  upserted ${allRows.length} rows into iron_cards`);
 
     if (MAX_LISTINGS != null && allRows.length >= MAX_LISTINGS) break;
     if (cards.length === 0) {
@@ -317,13 +333,15 @@ async function main() {
   console.log('Launching browser...');
   const browser = await puppeteer.launch(launchOptions);
 
+  const pool = db.getPool();
+
   try {
     const searchPage = await browser.newPage();
     await preparePage(searchPage, { userAgent: USER_AGENT, timeoutMs: PAGE_TIMEOUT });
 
-    const { allRows, stats } = await collectCards(searchPage);
+    const { allRows, stats } = await collectCards(searchPage, pool);
 
-    await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(allRows, null, 2)}\n`);
+    await persistRowsToIron(pool, allRows);
 
     console.log('');
     console.log('Scrape complete');
@@ -332,7 +350,7 @@ async function main() {
     console.log(`Duplicates skipped:   ${stats.duplicates}`);
     console.log(`Errors skipped:       ${stats.skipped}`);
     console.log(`Rows written:         ${allRows.length}`);
-    console.log(`File:                 ${OUTPUT_FILE}`);
+    console.log(`Output:               iron_cards table (source=${LISTING_SOURCE})`);
     console.log('');
 
     const preview = allRows.slice(0, 10).map((row) => ({
@@ -346,6 +364,7 @@ async function main() {
     if (preview.length) console.table(preview);
   } finally {
     await browser.close();
+    await db.closePool();
   }
 }
 
