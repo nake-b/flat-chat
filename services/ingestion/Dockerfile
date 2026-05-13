@@ -3,4 +3,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 COPY . .
 RUN uv sync --no-dev
-CMD ["uv", "run", "python", "src/main.py"]
+ENV PYTHONPATH=/app/src
+# Default to running silver. Each tier can be invoked individually via:
+#   docker compose run --rm ingestion python -m iron.loader <path>
+#   docker compose run --rm ingestion python -m bronze.loader <path>
+#   docker compose run --rm ingestion python -m silver.run
+CMD ["uv", "run", "python", "-m", "silver.run"]

@@ -35,3 +35,9 @@ flat-chat/
 | Backend        | FastAPI, SQLAlchemy, Alembic      |
 | Database       | PostgreSQL + pgvector             |
 | Infrastructure | Docker, Docker Compose, Nginx     |
+
+## Data Pipeline
+
+Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver.
+
+See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and the cursor-resume semantics.
