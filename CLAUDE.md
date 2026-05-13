@@ -13,16 +13,24 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 - **Database:** PostgreSQL + pgvector (vector search, structured and geo data)
 - **Infrastructure:** Nginx (reverse proxy), Docker, Docker Compose
 - **Python:** 3.14 (uv + pyproject.toml for dependency management)
-- **LLM/Search:** TBD
+- **LLM Gateway:** LiteLLM (provider abstraction, BYOK, custom endpoints)
 
 ## Project Structure
 
 ```
-services/frontend/     → React + Vite chat UI, served by Nginx as static files
-services/backend/      → FastAPI app, src/app/ package layout
-services/ingestion/    → Batch data ingestion, triggered by cron (not a long-running service)
-nginx/                 → Reverse proxy config (routes / → frontend, /api/ → backend)
-compound-docs/         → Architecture decisions and deployment guide
+services/frontend/          → React + Vite chat UI, served by Nginx as static files
+services/backend/           → FastAPI app, domain-isolated layered architecture
+  src/flat_chat/
+    main.py                 → FastAPI app, router registration
+    core/                   → Config (Pydantic Settings), database (engine, sessions)
+    api/                    → Thin FastAPI routers (HTTP concerns only)
+    llm/                    → LLM gateway (completions, embeddings, BYOK)
+    chat/                   → Chat domain (service, schemas, agent — future)
+    search/                 → Search domain (service, models, schemas — future)
+    users/                  → Users domain (sessions, bookmarks — future)
+services/ingestion/         → Batch data ingestion, triggered by cron
+nginx/                      → Reverse proxy config (routes / → frontend, /api/ → backend)
+agent-compound-docs/        → Architecture decisions and deployment guide
 ```
 
 ## Running the Project
@@ -44,6 +52,9 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - Only Nginx exposes a port (80) — all other services are internal
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
 - Backend owns the DB schema via Alembic migrations
+- Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
+- Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
+- LLM gateway uses LiteLLM — supports OpenRouter, OpenAI, Anthropic, custom endpoints via model prefix
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
 ## agent-compound-docs/

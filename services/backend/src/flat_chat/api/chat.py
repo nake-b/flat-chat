@@ -3,7 +3,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import ConversationResponse, MessageCreate, MessageResponse
+from flat_chat.chat.schemas import ConversationResponse, MessageCreate, MessageResponse
+from flat_chat.chat.service import ChatService
 
 router = APIRouter()
 
@@ -18,9 +19,14 @@ def create_conversation():
 
 
 @router.post("/{conversation_id}/messages", response_model=MessageResponse)
-def send_message(conversation_id: str, body: MessageCreate):
+async def send_message(conversation_id: str, body: MessageCreate):
     if conversation_id not in conversations:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    history = conversations[conversation_id]
+
+    svc = ChatService()
+    assistant_content = await svc.send_message(body.content, history)
 
     user_msg = {
         "id": str(uuid4()),
@@ -28,15 +34,13 @@ def send_message(conversation_id: str, body: MessageCreate):
         "content": body.content,
         "created_at": datetime.now(UTC),
     }
-    conversations[conversation_id].append(user_msg)
-
     assistant_msg = {
         "id": str(uuid4()),
         "role": "assistant",
-        "content": f"I heard you say: '{body.content}'. I'm a dummy bot for now!",
+        "content": assistant_content,
         "created_at": datetime.now(UTC),
     }
-    conversations[conversation_id].append(assistant_msg)
+    conversations[conversation_id].extend([user_msg, assistant_msg])
 
     return MessageResponse(**assistant_msg)
 

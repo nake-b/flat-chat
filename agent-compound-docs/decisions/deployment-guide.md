@@ -23,7 +23,7 @@ This starts Nginx (port 80), frontend, backend, and PostgreSQL. The frontend is 
 ```bash
 cd services/backend
 uv sync
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **Frontend:**
