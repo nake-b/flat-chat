@@ -6,12 +6,15 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://flat_chat:flat_chat@localhost:5432/flat_chat"
 
-    llm_model: str = "openrouter/openrouter/free"
+    llm_model: str = "google/gemma-4-31b-it:free"
     llm_api_key: str = ""
-    llm_temperature: float = 0.7
-    llm_max_tokens: int = 1024
-    llm_num_retries: int = 5
-    llm_retry_after: int = 5
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+
+    jina_api_key: str = ""
+    jina_base_url: str = "https://api.jina.ai/v1"
+
+    phoenix_enabled: bool = False
+    phoenix_endpoint: str = "http://localhost:6006/v1/traces"
 
 
 settings = Settings()

@@ -9,11 +9,11 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 ## Tech Stack
 
 - **Frontend:** React, Vite, TypeScript
-- **Backend:** FastAPI, SQLAlchemy, Alembic
-- **Database:** PostgreSQL + pgvector (vector search, structured and geo data)
+- **Backend:** FastAPI, SQLAlchemy, Pydantic AI
+- **Database:** PostgreSQL + pgvector + PostGIS (vector search, structured and geo data)
 - **Infrastructure:** Nginx (reverse proxy), Docker, Docker Compose
 - **Python:** 3.14 (uv + pyproject.toml for dependency management)
-- **LLM Gateway:** LiteLLM (provider abstraction, BYOK, custom endpoints)
+- **LLM:** Pydantic AI (native OpenRouter/Anthropic/Ollama support, agent tools, retries)
 
 ## Project Structure
 
@@ -24,9 +24,8 @@ services/backend/           → FastAPI app, domain-isolated layered architectur
     main.py                 → FastAPI app, router registration
     core/                   → Config (Pydantic Settings), database (engine, sessions)
     api/                    → Thin FastAPI routers (HTTP concerns only)
-    llm/                    → LLM gateway (completions, embeddings, BYOK)
-    chat/                   → Chat domain (service, schemas, agent — future)
-    search/                 → Search domain (service, models, schemas — future)
+    chat/                   → Chat domain (agent, service, schemas, tools)
+    search/                 → Search domain (service, models, schemas)
     users/                  → Users domain (sessions, bookmarks — future)
 services/ingestion/         → Batch data ingestion, triggered by cron
 nginx/                      → Reverse proxy config (routes / → frontend, /api/ → backend)
@@ -51,15 +50,18 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - Nginx is a separate Docker Compose service (not embedded in the frontend container)
 - Only Nginx exposes a port (80) — all other services are internal
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
-- Backend owns the DB schema via Alembic migrations
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
-- LLM gateway uses LiteLLM — supports OpenRouter, OpenAI, Anthropic, custom endpoints via model prefix
+- LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `@agent.tool` for tools, `RunContext[ChatDeps]` for dependency injection
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
 ## agent-compound-docs/
 
 Architecture decisions and guides live in `agent-compound-docs/`. When making significant architectural decisions, document them there with what was chosen, what was rejected, and why. Read existing docs before proposing changes to areas they cover.
+
+## Architecture diagram
+
+The architecture lives in `architecture.drawio` (source of truth, edit in draw.io Desktop or app.diagrams.net) and `architecture.png` (rendered output, regenerated via `./render.sh` which calls draw.io Desktop's CLI). **If asked to update or redo the diagram, edit the existing .drawio — do not start from scratch.** Layout, conventions, and the list of things the diagram must convey are documented in `agent-compound-docs/decisions/architecture-diagram.md` — read it first.
 
 ## MVP Scope
 
@@ -70,3 +72,258 @@ Architecture decisions and guides live in `agent-compound-docs/`. When making si
 ## Out of Scope
 
 - Cities other than Berlin
+
+## Pydantic AI Patterns
+
+Install: `pip install "pydantic-ai"` (or `pip install "pydantic-ai[web]"` for FastAPI/AGUIAdapter support).
+
+### Agent Definition
+
+```python
+from pydantic_ai import Agent, RunContext
+
+# Use instructions= (canonical), not system_prompt=
+agent = Agent(
+    'openai:gpt-4o',
+    deps_type=MyDeps,
+    output_type=MyOutput,
+    instructions="You are a helpful assistant.",  # static instructions
+    retries=3,                                     # tool call/validation retries
+)
+
+# Dynamic instructions via decorator — multiple stack in order
+@agent.instructions
+def add_context(ctx: RunContext[MyDeps]) -> str:
+    return f"User: {ctx.deps.user_name}. Today: {date.today()}."
+
+@agent.instructions
+def add_rules() -> str:
+    return "Always respond in German."
+```
+
+### Model Configuration
+
+```python
+# Native provider prefixes — no LiteLLM needed
+agent = Agent('openai:gpt-4o')
+agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('openrouter:anthropic/claude-sonnet-4-5')
+agent = Agent('ollama:llama3.2')
+agent = Agent('groq:llama-3.3-70b-versatile')
+agent = Agent('mistral:mistral-large-latest')
+
+# BYOK — construct model per-call
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterProvider
+model = OpenRouterModel('anthropic/claude-sonnet-4-5',
+                        provider=OpenRouterProvider(api_key=user_api_key))
+result = await agent.run(prompt, model=model)
+
+# FallbackModel for provider failover
+from pydantic_ai.models.fallback import FallbackModel
+model = FallbackModel('anthropic:claude-sonnet-4-5', 'openai:gpt-4o')
+
+# Per-call overrides
+from pydantic_ai.settings import ModelSettings
+result = await agent.run(prompt, model_settings=ModelSettings(
+    temperature=0.2, max_tokens=2000, timeout=30.0
+))
+```
+
+### Dependencies
+
+```python
+from dataclasses import dataclass
+from pydantic_ai import Agent, RunContext
+
+@dataclass
+class MyDeps:
+    db: AsyncSession
+    user_id: str
+    http_client: httpx.AsyncClient
+
+agent = Agent('openai:gpt-4o', deps_type=MyDeps)
+
+# Access in tools and instructions via ctx.deps
+@agent.tool
+async def get_user_info(ctx: RunContext[MyDeps]) -> str:
+    user = await ctx.deps.db.get(User, ctx.deps.user_id)
+    return f"{user.name}, {user.email}"
+
+# Deps are mutable — tools can modify ctx.deps and later tools see changes
+result = await agent.run("Hello", deps=MyDeps(db=db, user_id="123", http_client=client))
+```
+
+### Tools
+
+```python
+# @agent.tool — needs RunContext (access to deps)
+@agent.tool
+async def search_apartments(ctx: RunContext[MyDeps], query: str, max_price: int) -> str:
+    """Search apartments matching criteria.
+
+    Args:
+        query: Natural language search query.
+        max_price: Maximum monthly rent in euros.
+    """
+    # Parameters extracted from signature + docstring -> JSON schema for LLM
+    results = await ctx.deps.db.execute(...)
+    return str(results)
+
+# @agent.tool_plain — standalone, no RunContext
+@agent.tool_plain
+def calculate_commute(origin: str, destination: str) -> str:
+    """Calculate commute time between two Berlin addresses."""
+    return "25 minutes by U-Bahn"
+
+# Flat parameters preferred over nested objects for better LLM compatibility
+
+# ModelRetry for retry with guidance
+from pydantic_ai import ModelRetry
+
+@agent.tool(retries=3)
+async def lookup_address(ctx: RunContext[MyDeps], address: str) -> str:
+    """Look up a Berlin address."""
+    if not address.endswith(", Berlin"):
+        raise ModelRetry("Address must include ', Berlin' suffix")
+    return f"Found: {address}"
+
+# ToolReturn for separating return_value, content, and metadata
+from pydantic_ai import ToolReturn, BinaryContent
+
+@agent.tool_plain
+def capture_map(lat: float, lng: float) -> ToolReturn:
+    """Capture a map screenshot at coordinates."""
+    screenshot = BinaryContent(data=b'\x89PNG...', media_type='image/png')
+    return ToolReturn(
+        return_value=f"Map captured at ({lat}, {lng})",  # -> LLM as tool result
+        content=["Map view:", screenshot],                # -> LLM as user message (images, etc.)
+        metadata={"lat": lat, "lng": lng},                # -> app only, not sent to LLM
+    )
+```
+
+### Retries
+
+```python
+# Agent-level retries for tool calls and output validation
+agent = Agent('openai:gpt-4o', retries=3)
+
+# Output-specific retries
+agent = Agent('openai:gpt-4o', output_type=MyModel, output_retries=5)
+
+# Per-tool retries
+@agent.tool(retries=3)
+async def flaky_tool(ctx: RunContext[MyDeps], query: str) -> str: ...
+
+# ModelRetry inside tools — message goes back to LLM as guidance
+raise ModelRetry("Invalid format. Use ISO 8601 dates like 2024-01-15.")
+```
+
+### Structured Output
+
+```python
+from pydantic import BaseModel
+
+class ApartmentResult(BaseModel):
+    address: str
+    price: int
+    rooms: float
+    summary: str
+
+# Single type
+agent = Agent('openai:gpt-4o', output_type=ApartmentResult)
+
+# Union types — LLM picks the right one
+class SearchResult(BaseModel): ...
+class Clarification(BaseModel): ...
+agent = Agent('openai:gpt-4o', output_type=SearchResult | Clarification)
+
+# Validation failures trigger retries automatically
+```
+
+### Message History
+
+```python
+# After a run, get messages
+result = await agent.run("Find apartments in Kreuzberg", deps=deps)
+messages = result.all_messages()       # list[ModelMessage] — full conversation
+new_msgs = result.new_messages()       # list[ModelMessage] — only this run
+
+# Serialize to JSON bytes
+json_bytes = result.all_messages_json()  # bytes
+json_new = result.new_messages_json()    # bytes
+
+# Deserialize
+from pydantic_ai import ModelMessagesTypeAdapter
+messages = ModelMessagesTypeAdapter.validate_json(json_bytes)
+messages = ModelMessagesTypeAdapter.validate_python(raw_list)
+
+# Continue conversation — pass history to next run
+result2 = await agent.run("Under 1000 euros", deps=deps, message_history=messages)
+```
+
+### Embeddings
+
+```python
+from pydantic_ai.embeddings import Embedder
+
+embedder = Embedder('openai:text-embedding-3-small')
+vectors = await embedder.embed(['apartment in Kreuzberg', 'Wohnung mit Balkon'])
+# vectors: list of float lists
+
+# OpenAI-compatible providers
+embedder = Embedder('openai:model-name', base_url='https://custom-endpoint.example.com/v1')
+```
+
+### Streaming
+
+```python
+async with agent.run_stream("Find apartments") as stream:
+    async for event in stream:
+        # DeltaThinkingPart for Claude thinking indicators
+        print(event)
+```
+
+### FastAPI Integration (AGUIAdapter)
+
+```python
+from pydantic_ai.agui import AGUIAdapter
+
+# One-liner SSE streaming endpoint — handles SSE, thinking, tool calls
+@app.post("/api/chat")
+async def chat(request: Request):
+    return AGUIAdapter.dispatch_request(request, agent=agent)
+```
+
+### Testing
+
+```python
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.function import FunctionModel, AgentInfo
+
+# Simple mock — returns canned response
+with agent.override(model=TestModel(custom_output_text='Hello!')):
+    result = await agent.run("test")
+    assert result.output == "Hello!"
+
+# Custom logic — full control over model behavior
+async def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart("custom response")])
+
+with agent.override(model=FunctionModel(my_model)):
+    result = await agent.run("test")
+
+# TestModel runs all registered tools by default, then returns result
+```
+
+### Usage Limits
+
+```python
+from pydantic_ai.usage import UsageLimits
+
+limits = UsageLimits(
+    request_limit=10,         # max LLM requests per run
+    tool_calls_limit=5,       # max total tool calls
+    total_tokens_limit=8000,  # max tokens (prompt + completion)
+)
+result = await agent.run(prompt, usage_limits=limits)
+```

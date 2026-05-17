@@ -42,20 +42,23 @@ just fix          # auto-fix lint issues + format
 
 ```
 src/flat_chat/
-├── main.py              # FastAPI app, middleware, router registration
+├── main.py              # FastAPI app, lifespan, router registration
 ├── core/
 │   ├── config.py        # Pydantic Settings (env vars)
-│   └── database.py      # SQLAlchemy engine, session, Base
+│   ├── database.py      # SQLAlchemy engine, session, Base
+│   └── observability.py # Phoenix/OpenTelemetry setup
 ├── api/
 │   └── chat.py          # Thin FastAPI router for conversations
-├── llm/
-│   └── gateway.py       # LLM gateway (LiteLLM, BYOK, retries)
 ├── chat/
+│   ├── agent.py         # Pydantic AI agent, deps, run_agent()
 │   ├── service.py       # Chat business logic
-│   └── schemas.py       # Pydantic request/response models
-├── search/              # Search domain (future)
+│   ├── schemas.py       # Pydantic request/response models
+│   └── tools.py         # Agent tools (search, details, pagination)
+├── search/
+│   ├── models.py        # Listing SQLAlchemy model
+│   ├── schemas.py       # SearchFilters model
+│   └── service.py       # SearchService (SQL + vector + geo)
 └── users/               # User domain (future)
-alembic/                 # Database migrations
 tests/                   # Test suite (pytest)
 ```
 
@@ -66,9 +69,10 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | Variable            | Description                  | Default                                                    |
 |---------------------|------------------------------|------------------------------------------------------------|
 | `DATABASE_URL`      | PostgreSQL connection string | `postgresql://flat_chat:flat_chat@localhost:5432/flat_chat` |
-| `LLM_MODEL`        | LiteLLM model string         | `openrouter/openrouter/free`                               |
-| `OPENROUTER_API_KEY`| OpenRouter API key           | —                                                          |
-| `OPENAI_API_KEY`    | OpenAI API key (optional)    | —                                                          |
-| `ANTHROPIC_API_KEY` | Anthropic API key (optional) | —                                                          |
-| `LLM_NUM_RETRIES`  | Retry count for LLM calls    | `5`                                                        |
-| `LLM_RETRY_AFTER`  | Min seconds between retries  | `5`                                                        |
+| `LLM_MODEL`        | Model name (OpenRouter)       | `google/gemma-4-31b-it:free`                               |
+| `LLM_API_KEY`      | OpenRouter API key            | —                                                          |
+| `LLM_BASE_URL`     | LLM provider base URL         | `https://openrouter.ai/api/v1`                             |
+| `JINA_API_KEY`     | Jina embeddings API key       | —                                                          |
+| `JINA_BASE_URL`    | Jina API base URL             | `https://api.jina.ai/v1`                                   |
+| `PHOENIX_ENABLED`  | Enable Phoenix observability  | `false`                                                    |
+| `PHOENIX_ENDPOINT` | Phoenix OTLP endpoint         | `http://localhost:6006/v1/traces`                           |

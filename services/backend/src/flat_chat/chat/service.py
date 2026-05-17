@@ -1,24 +1,25 @@
 import logging
 
-from flat_chat.llm.gateway import get_completion
+from pydantic_ai.messages import ModelMessage
+from sqlalchemy.orm import Session
+
+from flat_chat.chat.agent import AgentResult, ChatDeps, run_agent
+from flat_chat.search.service import SearchService
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    async def send_message(
-        self, content: str, history: list[dict]
-    ) -> str:
-        messages = [
-            {"role": m["role"], "content": m["content"]} for m in history
-        ]
-        messages.append({"role": "user", "content": content})
+    def __init__(self, db: Session):
+        self.db = db
 
+    async def send_message(
+        self, content: str, message_history: list[ModelMessage]
+    ) -> AgentResult:
+        search_service = SearchService(db=self.db)
+        deps = ChatDeps(db=self.db, search_service=search_service)
         try:
-            return await get_completion(messages)
+            return await run_agent(content, message_history, deps)
         except Exception:
             logger.exception("LLM call failed")
-            return (
-                "I'm sorry, I'm having trouble responding right now. "
-                "Please try again in a moment."
-            )
+            raise
