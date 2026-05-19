@@ -5,12 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from flat_chat.api import chat
+from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import setup_observability
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_observability()
+    app.state.embedder = build_jina_embedder()
     yield
 
 

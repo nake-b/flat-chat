@@ -121,8 +121,9 @@ class SearchFilters(BaseModel):
 - Add property or hybrid to populate geometry from lat/lon
 
 ### Create: `search/service.py`
-- `SearchService.__init__(self, db: Session, jina_api_key: str, jina_base_url: str)`
-- Owns a Pydantic AI `Embedder` instance: `Embedder('openai:jina-embeddings-v3', base_url=jina_base_url, api_key=jina_api_key)`
+- `SearchService.__init__(self, db: Session, embedder: Embedder | None = None)`
+- The `Embedder` is built once at app startup (in `main.py` lifespan via `build_jina_embedder()` from `core/embedder.py`), stashed on `app.state.embedder`, and injected through FastAPI `Depends(get_embedder)` → `ChatService` → `SearchService`. SearchService doesn't construct it.
+- The embedder is wrapped in a `JinaTaskEmbedder(WrapperEmbeddingModel)` that auto-injects Jina v3's task LoRA based on `input_type` — `embed_query()` → `task=retrieval.query`, `embed_documents()` → `task=retrieval.passage`. Callers never touch `extra_body`.
 - `async def search(self, filters: SearchFilters) -> pd.DataFrame`
   1. `select(Listing)` → apply WHERE clauses
   2. Districts: `Listing.district.ilike(f"%{d}%")` with OR
@@ -226,7 +227,7 @@ Note: no separate `refine_results` — the agent just calls `search_apartments` 
 
 ## Key Decisions
 
-1. **Pydantic AI `Embedder`** with Jina via OpenAI-compatible endpoint — no raw httpx
+1. **Pydantic AI `Embedder`** with Jina via OpenAI-compatible endpoint — no raw httpx. Task LoRA (`retrieval.query` / `retrieval.passage`) auto-injected via a `WrapperEmbeddingModel`; embedder built once at app startup and passed through DI.
 2. **GeoAlchemy2** for proper spatial column + queries
 3. **pandas DataFrame** for result set — easy filtering, slicing, pagination
 4. **`instructions=`** not `system_prompt=` — canonical Pydantic AI pattern
