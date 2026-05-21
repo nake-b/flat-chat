@@ -5,8 +5,10 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
-RUN printf 'server {\n    listen 80;\n    root /usr/share/nginx/html;\n    location / {\n        try_files $uri $uri/ /index.html;\n    }\n}\n' > /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+# Lightweight image that copies built files to the shared volume on startup.
+# The build output is baked in at /build/dist (not on the volume mount point),
+# then copied to /app/dist (the volume) every time the container starts —
+# so rebuilds always produce fresh files.
+FROM alpine:3.20
+COPY --from=build /app/dist /build/dist
+CMD ["sh", "-c", "cp -r /build/dist/. /app/dist/ && echo 'Frontend files ready' && sleep infinity"]
