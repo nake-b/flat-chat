@@ -1,14 +1,14 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
-    database_url: str = "postgresql://flat_chat:flat_chat@localhost:5432/flat_chat"
+    database_url: str = Field(...)
 
-    llm_model: str = "google/gemma-4-31b-it:free"
-    llm_api_key: str = ""
-    llm_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_api_key: str = ""
+    openrouter_model: str = Field(...)
 
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"

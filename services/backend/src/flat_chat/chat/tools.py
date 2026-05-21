@@ -1,12 +1,12 @@
-from __future__ import annotations
+from pydantic_ai import FunctionToolset, RunContext
 
-from pydantic_ai import RunContext
+from flat_chat.chat.state import ChatDeps, ResultSet
+from flat_chat.search.schemas import SearchParams, SortBy
 
-from flat_chat.chat.agent import ChatDeps, ResultSet, agent
-from flat_chat.search.schemas import SearchFilters
+toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 
 
-@agent.tool
+@toolset.tool
 async def search_apartments(
     ctx: RunContext[ChatDeps],
     query: str | None = None,
@@ -21,28 +21,36 @@ async def search_apartments(
     near_lat: float | None = None,
     near_lon: float | None = None,
     radius_km: float = 2.0,
-    sort_by: str = "relevance",
-    limit: int = 10,
+    sort_by: SortBy = "relevance",
 ) -> str:
-    """Search for apartments in Berlin.
+    """Search for apartments in Berlin. Replaces the current result set.
 
     Args:
-        query: Natural language search query for semantic matching.
+        query: Natural language query for semantic matching. Optional.
         price_warm_max: Maximum warm rent in euros.
         rooms_min: Minimum number of rooms.
         rooms_max: Maximum number of rooms.
         area_sqm_min: Minimum area in square meters.
-        districts: Berlin districts to search in.
+        districts: Berlin district or neighborhood names to restrict to.
+            Substring match — both Bezirke ("Mitte", "Friedrichshain-Kreuzberg",
+            "Pankow", "Charlottenburg-Wilmersdorf", "Spandau", "Steglitz-Zehlendorf",
+            "Tempelhof-Schöneberg", "Neukölln", "Treptow-Köpenick",
+            "Marzahn-Hellersdorf", "Lichtenberg", "Reinickendorf") and Ortsteile
+            ("Kreuzberg", "Prenzlauer Berg", "Wedding", "Schöneberg", ...) work.
         floor_min: Minimum floor number.
-        listing_type: Type of listing (e.g. "WG", "Wohnung").
-        has_images: Only return listings with images.
+        listing_type: Optional raw listing-type filter (data is not yet
+            normalized — values vary by source, e.g. "Etagenwohnung",
+            "1 Room Flat"). Leave unset unless the user explicitly names one.
+        has_images: If true, exclude listings without images. Default (None)
+            returns all listings — leave unset unless the user explicitly asks
+            for photos only.
         near_lat: Latitude for proximity search.
         near_lon: Longitude for proximity search.
-        radius_km: Search radius in km (default 2.0, used with near_lat/near_lon).
-        sort_by: Sort order — "relevance", "price", or "area".
-        limit: Maximum number of results (default 10).
+        radius_km: Search radius in km (used with near_lat/near_lon).
+        sort_by: "relevance" (requires query — otherwise falls back to recent),
+            "price", "area", or "recent".
     """
-    filters = SearchFilters(
+    params = SearchParams(
         query=query,
         price_warm_max=price_warm_max,
         rooms_min=rooms_min,
@@ -56,139 +64,56 @@ async def search_apartments(
         near_lon=near_lon,
         radius_km=radius_km,
         sort_by=sort_by,
-        limit=limit,
     )
 
-    df = await ctx.deps.search_service.search(filters)
-    ctx.deps.result_set = ResultSet(df=df, filters=filters, total=len(df))
-
-    if df.empty:
-        return (
-            "No apartments found matching those criteria. "
-            "Try broadening your search."
+    # Surface soft-fallback signals to the LLM via ResultSet.notes — these
+    # also flow back to the user. The service silently degrades, so this is
+    # the user-facing voice for those degradations.
+    notes: list[str] = []
+    if params.query and ctx.deps.search_service.embedder is None:
+        notes.append(
+            "Semantic ranking unavailable (no embedder configured) — results "
+            "filtered by metadata only and sorted by recency instead of relevance."
+        )
+    elif params.sort_by == "relevance" and not params.query:
+        notes.append(
+            "Sort=relevance requires a query — results sorted by recency instead."
         )
 
-    price_range = ""
-    prices = df["price_warm_eur"].dropna()
-    if not prices.empty:
-        price_range = f" Price range: €{prices.min():.0f}–€{prices.max():.0f}."
-
-    districts_found = df["district"].dropna().unique().tolist()
-    district_str = ", ".join(districts_found[:5]) if districts_found else "various"
-
-    top_listings = []
-    for i, row in df.head(5).iterrows():
-        parts = []
-        if row.get("title"):
-            parts.append(row["title"])
-        if row.get("price_warm_eur"):
-            parts.append(f"€{row['price_warm_eur']:.0f}")
-        if row.get("rooms"):
-            parts.append(f"{row['rooms']}rm")
-        if row.get("district"):
-            parts.append(row["district"])
-        top_listings.append(f"  {int(i) + 1}. {' | '.join(parts)}")
-
-    summary = (
-        f"Found {len(df)} apartments.{price_range} "
-        f"Districts: {district_str}.\n"
-        f"Top results:\n" + "\n".join(top_listings)
-    )
-    return summary
+    df = await ctx.deps.search_service.search(params)
+    ctx.deps.session.result_set = ResultSet(df=df, params=params, notes=notes)
+    return ctx.deps.session.result_set.summary()
 
 
-@agent.tool
+@toolset.tool
 async def get_result_details(
     ctx: RunContext[ChatDeps],
     indices: list[int],
 ) -> str:
-    """Show details for specific listings from current results.
+    """Show full details for specific listings from the current result set.
 
     Args:
-        indices: List of result positions (1-based) to show details for.
+        indices: 1-based positions referring to the most recent search/page output.
     """
-    if not ctx.deps.result_set:
-        return "No active search results. Run a search first."
-
-    df = ctx.deps.result_set.df
-    details = []
-    for idx in indices:
-        pos = idx - 1
-        if pos < 0 or pos >= len(df):
-            details.append(f"#{idx}: Invalid index (results are 1–{len(df)})")
-            continue
-
-        row = df.iloc[pos]
-        lines = [f"--- Listing #{idx} ---"]
-        if row.get("title"):
-            lines.append(f"Title: {row['title']}")
-        if row.get("price_warm_eur"):
-            lines.append(f"Warm rent: €{row['price_warm_eur']:.0f}/month")
-        if row.get("price_cold_eur"):
-            lines.append(f"Cold rent: €{row['price_cold_eur']:.0f}/month")
-        if row.get("rooms"):
-            lines.append(f"Rooms: {row['rooms']}")
-        if row.get("area_sqm"):
-            lines.append(f"Area: {row['area_sqm']:.0f} m²")
-        if row.get("floor") is not None:
-            lines.append(f"Floor: {row['floor']}")
-        if row.get("district"):
-            lines.append(f"District: {row['district']}")
-        if row.get("address"):
-            lines.append(f"Address: {row['address']}")
-        if row.get("available_from"):
-            lines.append(f"Available from: {row['available_from']}")
-        if row.get("listing_type"):
-            lines.append(f"Type: {row['listing_type']}")
-        if row.get("source_url"):
-            lines.append(f"URL: {row['source_url']}")
-        details.append("\n".join(lines))
-
-    return "\n\n".join(details)
+    rs = ctx.deps.session.result_set
+    if rs is None:
+        return "No active search results. Run search_apartments first."
+    return rs.detail(indices)
 
 
-@agent.tool
+@toolset.tool
 async def get_result_page(
     ctx: RunContext[ChatDeps],
     page: int = 1,
-    page_size: int = 5,
+    page_size: int = 10,
 ) -> str:
-    """Show a page of results from the current search.
+    """Show a compact page of the current result set.
 
     Args:
-        page: Page number (1-based).
-        page_size: Number of results per page (default 5).
+        page: 1-based page number.
+        page_size: Listings per page (default 10).
     """
-    if not ctx.deps.result_set:
-        return "No active search results. Run a search first."
-
-    df = ctx.deps.result_set.df
-    total = len(df)
-    start = (page - 1) * page_size
-    end = min(start + page_size, total)
-
-    if start >= total:
-        total_pages = (total - 1) // page_size + 1
-        return (
-            f"Page {page} is out of range. "
-            f"There are {total} results ({total_pages} pages)."
-        )
-
-    page_df = df.iloc[start:end]
-    lines = [f"Results {start + 1}–{end} of {total}:"]
-    for i, (_, row) in enumerate(page_df.iterrows()):
-        num = start + i + 1
-        parts = []
-        if row.get("title"):
-            parts.append(row["title"])
-        if row.get("price_warm_eur"):
-            parts.append(f"€{row['price_warm_eur']:.0f}")
-        if row.get("rooms"):
-            parts.append(f"{row['rooms']}rm")
-        if row.get("area_sqm"):
-            parts.append(f"{row['area_sqm']:.0f}m²")
-        if row.get("district"):
-            parts.append(row["district"])
-        lines.append(f"  {num}. {' | '.join(parts)}")
-
-    return "\n".join(lines)
+    rs = ctx.deps.session.result_set
+    if rs is None:
+        return "No active search results. Run search_apartments first."
+    return rs.page(page, page_size)

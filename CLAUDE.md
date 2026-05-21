@@ -24,11 +24,20 @@ services/backend/           → FastAPI app, domain-isolated layered architectur
     main.py                 → FastAPI app, router registration
     core/                   → Config (Pydantic Settings), database (engine, sessions)
     api/                    → Thin FastAPI routers (HTTP concerns only)
-    chat/                   → Chat domain (agent, service, schemas, tools)
-    search/                 → Search domain (service, models, schemas)
+    chat/                   → Chat domain
+                              agent.py    — Agent(toolsets=[toolset]), INSTRUCTIONS, run_agent()
+                              tools.py    — FunctionToolset[ChatDeps]() + @toolset.tool
+                              state.py    — ChatSession, ResultSet (central formatting), ChatDeps
+                              sessions.py — SessionStore Protocol + InMemorySessionStore
+                              service.py  — ChatService orchestration
+                              schemas.py  — API request/response models
+                              providers/  — chat-model dispatch (single provider seam)
+                                __init__.py  — build_chat_model(settings)
+                                openrouter.py
+    search/                 → Search domain (service, models, schemas — SearchParams)
     users/                  → Users domain (sessions, bookmarks — future)
 services/ingestion/         → Batch data ingestion, triggered by cron
-nginx/                      → Reverse proxy config (routes / → frontend, /api/ → backend)
+nginx/                      → Reverse proxy config (serves static files at /, proxies /api/ → backend)
 agent-compound-docs/        → Architecture decisions and deployment guide
 ```
 
@@ -44,6 +53,7 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - All API routes are prefixed with `/api/`
 - Chat uses an app-level REST API (not OpenAI-style): `POST /api/conversations`, `POST /api/conversations/{id}/messages`
 - The frontend uses relative URLs (`/api/...`) — works via both Vite dev proxy and Nginx
+- Nginx only proxies `/api/conversations` and `/api/health` to the backend — no wildcard `/api/` exposure
 
 ## Architecture Notes
 
@@ -52,7 +62,12 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
-- LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `@agent.tool` for tools, `RunContext[ChatDeps]` for dependency injection
+- LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `FunctionToolset[ChatDeps]` for tools (no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection
+- Conversation state lives in `ChatSession` (history + active `ResultSet`), held by a `SessionStore` Protocol — `InMemorySessionStore` today, swap for DB-backed later
+- `ResultSet` (in `chat/state.py`) owns every listing-formatting concern shown to the LLM — `summary` (prose top-N), `page` (CSV bulk), `detail` (prose full fields), `describe_for_instructions` (one-line state). Every list-style response ends with an explicit navigation footer. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
+- All cross-layer wiring goes through FastAPI `Depends` (`core/dependencies.py`) — no module-level singletons in the request path other than the session store
+- LLM provider selection lives in `chat/providers/__init__.py:build_chat_model()` — the single provider seam. Add a provider by appending an `if settings.<provider>_api_key:` branch. When multiple keys are set, returns a `FallbackModel` chain (dev: multiple free providers; prod: usually one paid provider → no chain)
+- Phoenix observability runs as a compose service in dev (UI at `http://localhost:6006`). `core/observability.py` wires `OpenInferenceSpanProcessor` + `Agent.instrument_all()` so every agent run / model request / tool call emits OTel spans. Enable per-env via `PHOENIX_ENABLED` (defaults to true in dev compose; off everywhere else)
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
 ## agent-compound-docs/
@@ -62,6 +77,8 @@ Architecture decisions and guides live in `agent-compound-docs/`. When making si
 ## Architecture diagram
 
 The architecture lives in `architecture.drawio` (source of truth, edit in draw.io Desktop or app.diagrams.net) and `architecture.png` (rendered output, regenerated via `./render.sh` which calls draw.io Desktop's CLI). **If asked to update or redo the diagram, edit the existing .drawio — do not start from scratch.** Layout, conventions, and the list of things the diagram must convey are documented in `agent-compound-docs/decisions/architecture-diagram.md` — read it first.
+
+The .drawio file is ~900KB due to embedded SVG icons. **Read `agent-compound-docs/decisions/editing-drawio-programmatically.md` before editing** — it documents how to parse, modify, strip images for MCP preview, and verify horizontal line alignment via Python scripts.
 
 ## MVP Scope
 
@@ -88,7 +105,7 @@ agent = Agent(
     deps_type=MyDeps,
     output_type=MyOutput,
     instructions="You are a helpful assistant.",  # static instructions
-    retries=3,                                     # tool call/validation retries
+    tool_retries=3,                                # default retries for tool calls (use output_retries= for output validation)
 )
 
 # Dynamic instructions via decorator — multiple stack in order
@@ -155,6 +172,27 @@ result = await agent.run("Hello", deps=MyDeps(db=db, user_id="123", http_client=
 
 ### Tools
 
+This project uses `FunctionToolset` so tools live in their own module without
+ever importing the `agent` object — kills the `agent.py ↔ tools.py` cycle.
+
+```python
+# chat/tools.py
+from pydantic_ai import FunctionToolset, RunContext
+from flat_chat.chat.state import ChatDeps
+
+toolset: FunctionToolset[ChatDeps] = FunctionToolset()
+
+@toolset.tool
+async def search_apartments(ctx: RunContext[ChatDeps], query: str) -> str: ...
+
+# chat/agent.py
+from flat_chat.chat.tools import toolset
+agent = Agent(deps_type=ChatDeps, toolsets=[toolset], instructions=...)
+```
+
+Below is the older `@agent.tool` form — still valid for standalone agents,
+but use `FunctionToolset` when tools live in a separate module:
+
 ```python
 # @agent.tool — needs RunContext (access to deps)
 @agent.tool
@@ -204,8 +242,9 @@ def capture_map(lat: float, lng: float) -> ToolReturn:
 ### Retries
 
 ```python
-# Agent-level retries for tool calls and output validation
-agent = Agent('openai:gpt-4o', retries=3)
+# Agent-level retries — tool_retries= caps tool calls, output_retries= caps output validation
+# (retries= is a deprecated alias that cascades to both)
+agent = Agent('openai:gpt-4o', tool_retries=3)
 
 # Output-specific retries
 agent = Agent('openai:gpt-4o', output_type=MyModel, output_retries=5)

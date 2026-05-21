@@ -3,7 +3,16 @@ from datetime import datetime
 
 from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import TIMESTAMP, Float, Integer, Numeric, Text, UniqueConstraint
+from sqlalchemy import (
+    TIMESTAMP,
+    Float,
+    Index,
+    Integer,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,7 +21,26 @@ from flat_chat.core.database import Base
 
 class Listing(Base):
     __tablename__ = "listings"
-    __table_args__ = (UniqueConstraint("source", "source_listing_id"),)
+    __table_args__ = (
+        UniqueConstraint("source", "source_listing_id"),
+        # HNSW ANN index for cosine-distance ORDER BY on description_embedding.
+        # m/ef_construction are pgvector defaults; tune once data volume warrants.
+        Index(
+            "listings_description_embedding_hnsw_idx",
+            "description_embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"description_embedding": "vector_cosine_ops"},
+        ),
+        # Functional GiST so ST_DWithin queries that cast to ::geography
+        # (radius in meters) can hit an index. GeoAlchemy2 already auto-creates
+        # a plain GiST on the geometry column itself.
+        Index(
+            "listings_location_geog_idx",
+            text("(location::geography)"),
+            postgresql_using="gist",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

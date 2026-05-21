@@ -622,6 +622,9 @@ dependencies = [
     { name = "fastapi" },
     { name = "geoalchemy2" },
     { name = "httpx" },
+    { name = "openinference-instrumentation-pydantic-ai" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "pandas" },
     { name = "pgvector" },
     { name = "psycopg2-binary" },
@@ -633,9 +636,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "openinference-instrumentation-pydantic-ai" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-sdk" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -646,6 +646,9 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "geoalchemy2", specifier = ">=0.17" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "openinference-instrumentation-pydantic-ai" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
@@ -657,9 +660,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "openinference-instrumentation-pydantic-ai" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-sdk" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.11" },
     { name = "ty", specifier = ">=0.0.1a7" },

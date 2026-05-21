@@ -66,13 +66,12 @@ tests/                   # Test suite (pytest)
 
 Values are read from environment variables (set via root `.env` or Docker Compose).
 
-| Variable            | Description                  | Default                                                    |
-|---------------------|------------------------------|------------------------------------------------------------|
-| `DATABASE_URL`      | PostgreSQL connection string | `postgresql://flat_chat:flat_chat@localhost:5432/flat_chat` |
-| `LLM_MODEL`        | Model name (OpenRouter)       | `google/gemma-4-31b-it:free`                               |
-| `LLM_API_KEY`      | OpenRouter API key            | —                                                          |
-| `LLM_BASE_URL`     | LLM provider base URL         | `https://openrouter.ai/api/v1`                             |
-| `JINA_API_KEY`     | Jina embeddings API key       | —                                                          |
-| `JINA_BASE_URL`    | Jina API base URL             | `https://api.jina.ai/v1`                                   |
-| `PHOENIX_ENABLED`  | Enable Phoenix observability  | `false`                                                    |
-| `PHOENIX_ENDPOINT` | Phoenix OTLP endpoint         | `http://localhost:6006/v1/traces`                           |
+| Variable             | Description                                                                                                                                       | Default                            |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
+| `DATABASE_URL`       | PostgreSQL connection string                                                                                                                      | — (required)                       |
+| `OPENROUTER_API_KEY` | OpenRouter API key                                                                                                                                | —                                  |
+| `OPENROUTER_MODEL`   | Model slug (`org/model:tag`) or preset (`@preset/<slug>`). Presets configured at [openrouter.ai/settings/presets](https://openrouter.ai/settings/presets) | — (required)                       |
+| `JINA_API_KEY`       | Jina embeddings API key (optional — empty disables semantic search)                                                                                | —                                  |
+| `JINA_BASE_URL`      | Jina API base URL                                                                                                                                 | `https://api.jina.ai/v1`           |
+| `PHOENIX_ENABLED`    | Enable Phoenix observability                                                                                                                      | `false`                            |
+| `PHOENIX_ENDPOINT`   | Phoenix OTLP endpoint                                                                                                                             | `http://localhost:6006/v1/traces`  |
