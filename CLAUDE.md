@@ -80,6 +80,27 @@ The architecture lives in `architecture.drawio` (source of truth, edit in draw.i
 
 The .drawio file is ~900KB due to embedded SVG icons. **Read `agent-compound-docs/decisions/editing-drawio-programmatically.md` before editing** — it documents how to parse, modify, strip images for MCP preview, and verify horizontal line alignment via Python scripts.
 
+## Keeping docs and env in sync
+
+Drift between these files causes painful onboarding and stale review feedback. When you change anything in one of the buckets below, update the rest in the same change.
+
+**Env vars** — when adding, renaming, removing, or changing a default:
+- `services/backend/src/flat_chat/core/config.py` — the Pydantic Settings field (required fields use `Field(...)`)
+- `.env.example` — placeholder value + one-line intent
+- `docker-compose.yml` — the `environment:` block of the relevant service
+- `services/backend/README.md` — the config table
+
+(The user's `.env` is their own — never write to it. If a *required* var is missing there, flag it instead of guessing.)
+
+**Architecture or surface area** — when adding/removing a module, route, dependency, or service:
+- `CLAUDE.md` — `Project Structure`, `Architecture Notes`
+- `README.md` (root) — tech stack, project structure
+- `services/backend/README.md` — project layout, API endpoints
+- `architecture.drawio` (then `./render.sh` to regenerate `architecture.png`)
+- `agent-compound-docs/decisions/` — if it's a significant choice, capture what was rejected and why
+
+When you finish a change, do a quick sweep: grep for the old name / removed file across the project so nothing references it stale.
+
 ## MVP Scope
 
 - User describes apartment requirements to chatbot
