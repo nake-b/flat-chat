@@ -5,39 +5,64 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 ## Quick Start
 
 ```bash
-cp .env.example .env    # first time only
+cp .env.example .env    # then fill in OPENROUTER_API_KEY, OPENROUTER_MODEL, JINA_API_KEY
 docker compose up --build
 ```
 
-Open [http://localhost](http://localhost).
+Open [http://localhost](http://localhost). First launch takes a couple of minutes (image builds).
+
+Manual data ingestion (cron-triggered in prod):
+
+```bash
+docker compose --profile ingestion run --rm ingestion
+```
 
 ## Architecture
 
 ![Architecture](architecture.png)
+
+Source: [`architecture.drawio`](architecture.drawio) — edit in draw.io Desktop or app.diagrams.net, then run `./render.sh` to regenerate the PNG.
 
 ## Project Structure
 
 ```
 flat-chat/
 ├── docker-compose.yml          # Orchestrates all services
-├── nginx/                      # Reverse proxy config
+├── nginx/                      # Reverse proxy — only port 80 exposed to host
 ├── services/
-│   ├── frontend/               # React + Vite + TypeScript
-│   ├── backend/                # FastAPI + SQLAlchemy + Alembic
-│   └── ingestion/              # Data ingestion (cron-triggered)
+│   ├── frontend/               # React + Vite + TypeScript (built into shared volume)
+│   ├── backend/                # FastAPI + Pydantic AI agent + SearchService — see services/backend/README.md
+│   ├── ingestion/              # Cron-triggered data ingestion (scrapers + iron/bronze/silver loaders)
+│   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
+└── agent-compound-docs/        # Architecture decisions, plans, design conversations
 ```
 
 ## Tech Stack
 
-| Layer          | Technology                        |
-|----------------|-----------------------------------|
-| Frontend       | React, Vite, TypeScript           |
-| Backend        | FastAPI, SQLAlchemy, Alembic      |
-| Database       | PostgreSQL + pgvector             |
-| Infrastructure | Docker, Docker Compose, Nginx     |
+| Layer            | Technology                                                        |
+|------------------|-------------------------------------------------------------------|
+| Frontend         | React, Vite, TypeScript                                           |
+| Backend          | FastAPI, SQLAlchemy, Alembic, Pydantic AI                         |
+| LLM              | Pydantic AI agent → OpenRouter (presets for server-side fallback) |
+| Embeddings       | Jina v3 (`retrieval.query` task LoRA)                             |
+| Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)           |
+| Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006` |
+| Infrastructure   | Docker, Docker Compose, Nginx                                     |
 
 ## Data Pipeline
 
-Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver.
+Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver. The silver `listings` table is what the search service queries.
 
-See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and the cursor-resume semantics.
+See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and cursor-resume semantics.
+
+## Where to look next
+
+- **[`CLAUDE.md`](CLAUDE.md)** — project-wide conventions, architecture notes, Pydantic AI patterns.
+- **[`services/backend/README.md`](services/backend/README.md)** — backend dev workflow, API reference, config table.
+- **[`agent-compound-docs/decisions/`](agent-compound-docs/decisions/)** — what we chose and why (agent framework, LLM tool result design, deployment, …).
+
+## MVP Scope
+
+- User describes apartment requirements to the chatbot.
+- Iterative refinement through conversation.
+- Berlin only.

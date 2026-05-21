@@ -1,5 +1,6 @@
 import uuid
 
+from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
@@ -11,11 +12,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from flat_chat.core.database import Base
 
 
 class IronCard(Base):
@@ -95,6 +97,23 @@ class Listing(Base):
         Index("ix_listings_wbs_required", "wbs_required"),
         Index("ix_listings_lat_lon", "latitude", "longitude"),
         Index("ix_listings_postal_code", "postal_code"),
+        # HNSW ANN index for cosine-distance ORDER BY on embedding.
+        # m/ef_construction are pgvector defaults; tune once data volume warrants.
+        Index(
+            "listings_embedding_hnsw_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        # Functional GiST so ST_DWithin queries that cast to ::geography
+        # (radius in meters) can hit an index. GeoAlchemy2 already auto-creates
+        # a plain GiST on the geometry column itself.
+        Index(
+            "listings_location_geog_idx",
+            text("(location::geography)"),
+            postgresql_using="gist",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -135,6 +154,9 @@ class Listing(Base):
     city: Mapped[str | None] = mapped_column(String(100))
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
+    # PostGIS Point in WGS84 — kept in sync with latitude/longitude at
+    # silver-transform time (and via the 0002 backfill for existing rows).
+    location = mapped_column(Geometry("POINT", srid=4326), nullable=True)
 
     # Building / availability
     floor: Mapped[int | None] = mapped_column(Integer)
@@ -175,8 +197,8 @@ class Listing(Base):
     images: Mapped[list | None] = mapped_column(JSONB)
     key_facts: Mapped[dict | None] = mapped_column(JSONB)
 
-    # Embedding — populated by a later migration (dim TBD)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector())
+    # Embedding — Jina v3, 1024 dims. Locked in revision 0002.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
 
     # Timestamps
     scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
