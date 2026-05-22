@@ -6,10 +6,16 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
-    "alembic>=1.13",
     "psycopg2-binary>=2.9",
+    "pgvector>=0.3",
     "pydantic-settings>=2.7",
-    "litellm>=1.30",
+    "pydantic-ai",
+    "pandas>=2.0",
+    "geoalchemy2>=0.17",
+    "httpx>=0.28",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
+    "openinference-instrumentation-pydantic-ai",
 ]
 
 [dependency-groups]
@@ -17,7 +23,6 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a7",
     "pytest>=8.0",
-    "httpx>=0.28",
 ]
 
 [build-system]
@@ -41,6 +46,7 @@ select = [
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
 ]
+ignore = ["B008"]  # Depends() in defaults is idiomatic FastAPI
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

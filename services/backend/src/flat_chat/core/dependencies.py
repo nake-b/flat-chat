@@ -1,0 +1,33 @@
+from fastapi import Depends
+from pydantic_ai import Embedder
+from sqlalchemy.orm import Session
+
+from flat_chat.chat.sessions import InMemorySessionStore, SessionStore
+from flat_chat.core.database import get_db
+from flat_chat.core.embedder import get_embedder
+from flat_chat.search.service import SearchService
+
+# Process-lifetime singleton — survives across requests, dies with the worker.
+# Swap for a Postgres-backed store when persistence lands.
+_session_store: SessionStore = InMemorySessionStore()
+
+
+def get_session_store() -> SessionStore:
+    return _session_store
+
+
+def get_search_service(
+    db: Session = Depends(get_db),
+    embedder: Embedder | None = Depends(get_embedder),
+) -> SearchService:
+    return SearchService(db, embedder)
+
+
+def get_chat_service(
+    db: Session = Depends(get_db),
+    search_service: SearchService = Depends(get_search_service),
+    store: SessionStore = Depends(get_session_store),
+):
+    from flat_chat.chat.service import ChatService
+
+    return ChatService(db=db, search_service=search_service, store=store)
