@@ -15,6 +15,10 @@ from flat_chat.search.schemas import SearchParams
 
 logger = logging.getLogger(__name__)
 
+# Pandas-facing column names returned to the agent / formatting layer.
+# These are intentionally distinct from the DB column names — see _ORM_ATTR
+# below — so that the schema (owned by ingestion) and the LLM-facing data
+# model can evolve independently.
 RESULT_COLUMNS = [
     "id",
     "title",
@@ -32,6 +36,15 @@ RESULT_COLUMNS = [
     "longitude",
 ]
 
+# Pandas column -> ORM attribute name on Listing. Only entries that differ.
+# Identity columns (title, rooms, district, …) omitted.
+_ORM_ATTR = {
+    "price_warm_eur": "warm_rent_eur",
+    "price_cold_eur": "cold_rent_eur",
+    "listing_type": "apartment_type",
+    "source_url": "listing_url",
+}
+
 
 class SearchService:
     def __init__(self, db: Session, embedder: Embedder | None = None):
@@ -42,7 +55,7 @@ class SearchService:
         stmt = select(Listing)
 
         if params.price_warm_max is not None:
-            stmt = stmt.where(Listing.price_warm_eur <= params.price_warm_max)
+            stmt = stmt.where(Listing.warm_rent_eur <= params.price_warm_max)
 
         if params.rooms_min is not None:
             stmt = stmt.where(Listing.rooms >= params.rooms_min)
@@ -57,7 +70,7 @@ class SearchService:
             stmt = stmt.where(Listing.floor >= params.floor_min)
 
         if params.listing_type is not None:
-            stmt = stmt.where(Listing.listing_type == params.listing_type)
+            stmt = stmt.where(Listing.apartment_type == params.listing_type)
 
         if params.districts:
             district_clauses = [
@@ -104,17 +117,17 @@ class SearchService:
 
         if params.query and self.embedder:
             embedding = await self._embed(params.query)
-            distance = Listing.description_embedding.cosine_distance(
+            distance = Listing.embedding.cosine_distance(
                 cast(embedding, Vector(1024))
             )
             stmt = stmt.add_columns(distance.label("similarity_score"))
             stmt = stmt.order_by(distance)
         elif sort_by_effective == "price":
-            stmt = stmt.order_by(Listing.price_warm_eur.asc().nulls_last())
+            stmt = stmt.order_by(Listing.warm_rent_eur.asc().nulls_last())
         elif sort_by_effective == "area":
             stmt = stmt.order_by(Listing.area_sqm.desc().nulls_last())
         else:
-            stmt = stmt.order_by(Listing.created_at.desc())
+            stmt = stmt.order_by(Listing.ingested_at.desc())
 
         stmt = stmt.limit(params.limit)
 
@@ -128,7 +141,9 @@ class SearchService:
         records = []
         for row in rows:
             listing = row[0]
-            record = {col: getattr(listing, col) for col in RESULT_COLUMNS}
+            record = {
+                col: getattr(listing, _ORM_ATTR.get(col, col)) for col in RESULT_COLUMNS
+            }
             score = round(1 - float(row[1]), 4) if has_score else None
             record["similarity_score"] = score
             records.append(record)

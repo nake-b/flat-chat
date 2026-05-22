@@ -32,7 +32,7 @@ flat-chat/
 ├── services/
 │   ├── frontend/               # React + Vite + TypeScript (built into shared volume)
 │   ├── backend/                # FastAPI + Pydantic AI agent + SearchService — see services/backend/README.md
-│   ├── ingestion/              # Cron-triggered data ingestion
+│   ├── ingestion/              # Cron-triggered data ingestion (scrapers + iron/bronze/silver loaders)
 │   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
 └── agent-compound-docs/        # Architecture decisions, plans, design conversations
 ```
@@ -42,12 +42,18 @@ flat-chat/
 | Layer            | Technology                                                        |
 |------------------|-------------------------------------------------------------------|
 | Frontend         | React, Vite, TypeScript                                           |
-| Backend          | FastAPI, SQLAlchemy, Pydantic AI                                  |
+| Backend          | FastAPI, SQLAlchemy, Alembic, Pydantic AI                         |
 | LLM              | Pydantic AI agent → OpenRouter (presets for server-side fallback) |
 | Embeddings       | Jina v3 (`retrieval.query` task LoRA)                             |
 | Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)           |
 | Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006` |
 | Infrastructure   | Docker, Docker Compose, Nginx                                     |
+
+## Data Pipeline
+
+Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver. The silver `listings` table is what the search service queries.
+
+See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and cursor-resume semantics.
 
 ## Where to look next
 

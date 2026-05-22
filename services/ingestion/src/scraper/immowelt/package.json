@@ -1,0 +1,15 @@
+{
+  "name": "immowelt-scraper",
+  "version": "1.0.0",
+  "description": "Bronze scraper for Immowelt Berlin apartment rentals",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "immoweltscraper.js",
+  "scripts": {
+    "start": "node immoweltscraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.42.0"
+  }
+}

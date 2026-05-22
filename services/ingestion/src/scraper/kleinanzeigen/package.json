@@ -1,0 +1,18 @@
+{
+  "name": "kleinanzeigen-scraper",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "kleinanzeigenscraper.js",
+  "scripts": {
+    "scrape:cards": "node kleinanzeigenscraper.js",
+    "scrape:details": "node kleinanzeigendetailscraper.js",
+    "start": "node kleinanzeigenscraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.42.0",
+    "scraper-lib": "file:../_lib"
+  }
+}
