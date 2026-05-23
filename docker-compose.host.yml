@@ -1,10 +1,13 @@
-# Overlay that puts Postgres behind a Tailscale sidecar so teammates can query
-# the host's DB over the tailnet. Only the *host* machine should load this file —
-# teammates running the stack locally use the base docker-compose.yml only.
+# Host-only overlay. Adds a Tailscale sidecar and routes the host's existing
+# Postgres through it, so teammates can pull fresh data from `flat-chat-db` on
+# the tailnet (see scripts/refresh-db.sh).
 #
-# Host usage:
-#   docker compose -f docker-compose.yml -f docker-compose.tailnet.yml up
-#   (or set COMPOSE_FILE=docker-compose.yml:docker-compose.tailnet.yml in .env)
+# Teammates DO NOT load this file — their `docker compose up` brings up a
+# completely local stack with their own Postgres on the docker bridge.
+#
+# Host usage — set in your .env, then `docker compose up` auto-loads both:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml
+#   TS_AUTHKEY=tskey-auth-...
 #
 # See agent-compound-docs/decisions/shared-dev-database.md.
 
@@ -28,9 +31,8 @@ services:
     restart: unless-stopped
 
   postgres:
-    # Postgres joins the tailscale container's network namespace, so it listens
-    # on the tailnet interface instead of the docker bridge. The tailscale
-    # service is aliased as "postgres" above, so backend/ingestion don't change.
+    # Join the tailscale container's network namespace so Postgres listens on
+    # the tailnet interface. The base file's ports: are cleared with !reset.
     network_mode: "service:tailscale"
     ports: !reset []
     depends_on:
