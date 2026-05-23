@@ -53,10 +53,30 @@ services:
     ports:
       - "6006:6006"
 
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: flat-chat-db
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?TS_AUTHKEY must be set — generate at https://login.tailscale.com/admin/settings/keys (tag:flat-chat-db)}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_EXTRA_ARGS=--advertise-tags=tag:flat-chat-db
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      default:
+        aliases:
+          - postgres
+    restart: unless-stopped
+
   postgres:
     build: services/postgres/
-    ports:
-      - "5432:5432"
+    network_mode: "service:tailscale"
+    depends_on:
+      tailscale:
+        condition: service_started
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -82,3 +102,4 @@ services:
 volumes:
   postgres_data:
   frontend_dist:
+  tailscale_state:
