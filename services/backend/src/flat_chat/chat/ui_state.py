@@ -2,12 +2,18 @@
 
 `ResultSet` (in `state.py`) owns LLM-facing prose/CSV/detail formatting; the
 agent reads from it. `UiState` is the parallel projection the React frontend
-reads via AG-UI shared state — typed apartments with lat/lng, the currently
-expanded card id, and a rolling tool-call log used for inline pills.
+reads via AG-UI shared state — typed apartments with lat/lng and the currently
+expanded card id.
 
 The two projections share source data (the DataFrame from
 `SearchService.search()`) but never collapse into one: the LLM never sees
 `UiState`, the UI never sees `ResultSet`.
+
+Status-pill copy is NOT mirrored here. The frontend derives lifecycle labels
+directly from AG-UI tool-call events via a tool-name → label registry
+(`services/frontend/src/state/toolStatus.ts`). Keeping that string-building
+on the frontend means adding a new tool is one registry line, with zero
+backend churn — and tools stay pure data mutators.
 """
 
 from __future__ import annotations
@@ -64,9 +70,6 @@ class UiState(BaseModel):
 
     active_id: str | None = None
     """The id of the card currently expanded into detail view, if any."""
-
-    tool_logs: list[str] = Field(default_factory=list)
-    """Rolling lifecycle entries for inline tool-call pills ("Searching …")."""
 
 
 def _opt_float(val: object) -> float | None:

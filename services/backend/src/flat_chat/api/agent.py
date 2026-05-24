@@ -9,10 +9,11 @@ from flat_chat.core.dependencies import get_chat_service
 router = APIRouter()
 
 
-# Reply shape for CopilotKit's runtime discovery probe. Sent in response to
-# both `GET /api/agent/info` and `POST /api/agent` with `{method:"info"}`.
-# Returning a healthy "no managed agents" body silences the dev-console
-# auto-open and the "runtime info request failed" red banner.
+# Reply shape for CopilotKit's runtime discovery probe. Served from
+# `GET /api/agent/info`. Returning a healthy "no managed agents" body
+# silences the dev-console auto-open and the "runtime info request failed"
+# red banner. The POST route deliberately does NOT short-circuit
+# `{method:"info"}` — see the note on `run_agent` below.
 _RUNTIME_INFO: dict[str, object] = {
     "agents": [],
     "actions": [],
@@ -44,19 +45,19 @@ async def run_agent(
     SSE events back: text deltas, tool-call lifecycle, and JSON-Patch state
     deltas that mutate the frontend's mirrored `UiState` slice.
 
-    CopilotKit also POSTs `{method: "info"}` to this same URL at boot for
-    runtime discovery — short-circuit that before handing the request to the
-    AG-UI adapter (which would otherwise 422 on the missing AG-UI fields).
+    Note on CopilotKit's runtime-discovery probe: at boot the client POSTs
+    `{"method":"info"}` to this URL to ask the runtime what agents exist.
+    We deliberately do NOT short-circuit that here — returning a synthetic
+    `agents` list would make CopilotKit route messages via the runtime
+    client, bypassing the `agents__unsafe_dev_only` HttpAgent we wired on
+    the React side. The probe is allowed to flow into the AG-UI adapter
+    and 422 (now translated by `ChatService` instead of crashing with a
+    500); CopilotKit logs a warning and falls back to the self-managed
+    agent. The visible dev-console nag is suppressed by the
+    `<cpk-web-inspector>` hider in `main.tsx`. The GET probe routes above
+    (`/api/agent/info`, `/api/agent/threads`) cover the runtime queries
+    that CopilotKit issues over GET.
     """
-    # NOTE on CopilotKit's runtime-discovery probe: at boot the client POSTs
-    # `{"method":"info"}` to this URL to ask the runtime what agents exist.
-    # We deliberately *don't* short-circuit that here — returning a synthetic
-    # `agents` list makes CopilotKit route messages to it via the runtime
-    # client, bypassing the `agents__unsafe_dev_only` HttpAgent we wired on
-    # the React side. Letting the probe 422 is harmless: CopilotKit logs a
-    # warning, then falls back to the self-managed agent. The visible
-    # dev-console nag is suppressed by the `<cpk-web-inspector>` hider in
-    # `main.tsx`.
     try:
         response = await chat.dispatch_agent_request(request)
     except SessionNotFoundError as exc:

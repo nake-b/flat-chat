@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useUiState } from "../hooks/useUiState";
 import { useHover } from "../hooks/useHover";
-import type { UiApartment } from "../state/UiState";
+import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -86,12 +86,7 @@ export function CardStrip() {
             index={idx + 1}
             hovered={hoverId === a.id}
             onHoverChange={(hover) => setHover(hover ? a.id : null)}
-            onClick={() =>
-              setState({
-                ...(state ?? { results: [], tool_logs: [] }),
-                active_id: a.id,
-              })
-            }
+            onClick={() => setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: a.id }))}
           />
         ))}
       </div>
@@ -112,6 +107,8 @@ function ApartmentCard({
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
+  const isBlank =
+    apt.title == null && apt.address == null && apt.price_warm_eur == null;
   return (
     <button
       type="button"
@@ -122,47 +119,65 @@ function ApartmentCard({
       onMouseLeave={() => onHoverChange(false)}
       onClick={onClick}
     >
-      <div className="flex h-full flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] tabular-nums uppercase tracking-widest text-ink-ghost">
-            {String(index).padStart(2, "0")}
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
-            {apt.district ?? "Berlin"}
-          </span>
-        </div>
-        <div className="line-clamp-2 font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
-          {apt.title ?? "(untitled)"}
-        </div>
-        {apt.address ? (
-          <div className="line-clamp-1 font-sans text-[11.5px] leading-snug text-ink-soft">
-            {apt.address}
+      {isBlank ? (
+        <div className="flex h-full flex-col justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] tabular-nums uppercase tracking-widest text-ink-ghost">
+              {String(index).padStart(2, "0")}
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+              {apt.district ?? "Berlin"}
+            </span>
           </div>
-        ) : null}
+          <div className="flex flex-1 items-center justify-center font-mono text-[11px] uppercase tracking-widest text-ink-ghost">
+            (no details)
+          </div>
+        </div>
+      ) : (
+        <div className="flex h-full flex-col justify-between gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] tabular-nums uppercase tracking-widest text-ink-ghost">
+                {String(index).padStart(2, "0")}
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+                {apt.district ?? "Berlin"}
+              </span>
+            </div>
+            <div className="line-clamp-2 min-h-[3em] font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
+              {apt.title ?? "(untitled)"}
+            </div>
+            {apt.address ? (
+              <div className="line-clamp-1 font-sans text-[11.5px] leading-snug text-ink-soft">
+                {apt.address}
+              </div>
+            ) : null}
+          </div>
 
-        <div className="mt-auto flex items-end justify-between border-t border-paper-rule pt-1.5">
-          <div className="flex flex-col">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
-              warm
-            </span>
-            <span className="font-mono text-lg font-medium tabular-nums tracking-tight text-ink">
-              {apt.price_warm_eur != null
-                ? `€${Math.round(apt.price_warm_eur).toLocaleString("de-DE")}`
-                : "€—"}
-            </span>
-          </div>
-          <div className="flex flex-col items-end">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
-              rm · m²
-            </span>
-            <span className="font-mono text-sm tabular-nums text-ink-soft">
-              {apt.rooms != null ? `${apt.rooms.toString().replace(/\.0$/, "")}` : "—"}
-              <span className="px-1 text-ink-ghost">·</span>
-              {apt.area_sqm != null ? `${Math.round(apt.area_sqm)}` : "—"}
-            </span>
+          <div className="flex items-end justify-between border-t border-paper-rule pt-1.5">
+            <div className="flex flex-col">
+              <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
+                warm
+              </span>
+              <span className="font-mono text-lg font-medium tabular-nums tracking-tight text-ink">
+                {apt.price_warm_eur != null
+                  ? `€${Math.round(apt.price_warm_eur).toLocaleString("de-DE")}`
+                  : "€—"}
+              </span>
+            </div>
+            <div className="flex flex-col items-end">
+              <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
+                rm · m²
+              </span>
+              <span className="font-mono text-sm tabular-nums text-ink-soft">
+                {apt.rooms != null ? `${apt.rooms.toString().replace(/\.0$/, "")}` : "—"}
+                <span className="px-1 text-ink-ghost">·</span>
+                {apt.area_sqm != null ? `${Math.round(apt.area_sqm)}` : "—"}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </button>
   );
 }

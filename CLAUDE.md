@@ -13,7 +13,7 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 - **Database:** PostgreSQL + pgvector + PostGIS (vector search, structured and geo data)
 - **Infrastructure:** Nginx (reverse proxy), Docker, Docker Compose
 - **Python:** 3.14 (uv + pyproject.toml for dependency management)
-- **LLM:** Pydantic AI (native OpenRouter/Anthropic/Ollama support, agent tools, retries)
+- **LLM:** Pydantic AI (native Anthropic provider with prompt caching, agent tools, retries)
 
 ## Project Structure
 
@@ -44,7 +44,6 @@ services/backend/           → FastAPI app, domain-isolated layered architectur
                               providers/  — chat-model dispatch (single provider seam)
                                 __init__.py  — build_chat_model() orchestrator (key-presence only)
                                 anthropic.py — direct Anthropic + prompt caching
-                                openrouter.py — OpenRouter + body-error retry subclass
     search/                 → Search domain (service, models, schemas — SearchParams)
     users/                  → Users domain (sessions, bookmarks — future)
 services/ingestion/         → Batch data ingestion, triggered by cron
@@ -78,11 +77,12 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `FunctionToolset[ChatDeps]` for tools (no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection
 - Conversation state lives in `ChatSession` (history + `ResultSet` + `UiState`), held by a `SessionStore` Protocol — `InMemorySessionStore` today, swap for DB-backed later
 - `ResultSet` (in `chat/state.py`) owns every listing-formatting concern shown to the LLM — `summary` (prose top-N), `page` (CSV bulk), `detail` (prose full fields), `describe_for_instructions` (one-line state). Every list-style response ends with an explicit navigation footer. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
-- `UiState` (in `chat/ui_state.py`) is the parallel frontend mirror — a Pydantic model of typed apartments + `active_id` + `tool_logs`. `ChatDeps` exposes it as a `state: UiState` dataclass field so it satisfies the Pydantic AI `StateHandler` protocol; `AGUIAdapter` sets it per request from the AG-UI envelope. Tools mutate both `ResultSet` (LLM-facing prose) and `state` (UI-facing structured data) on every call.
+- `UiState` (in `chat/ui_state.py`) is the parallel frontend mirror — a Pydantic model of typed apartments + `active_id`. `ChatDeps` exposes it as a `state: UiState` dataclass field so it satisfies the Pydantic AI `StateHandler` protocol; `AGUIAdapter` sets it per request from the AG-UI envelope. Tools mutate both `ResultSet` (LLM-facing prose) and `state` (UI-facing structured data) on every call.
+- Status-pill copy ("Searching Kreuzberg…", "Found 12 listings…", "Thinking…") is NOT mirrored in `UiState`. The frontend derives lifecycle labels directly from AG-UI tool-call events via a tool-name → label registry (`services/frontend/src/state/toolStatus.ts`) consumed by `useCopilotAction` per backend tool; the Thinking phase is rendered via `useCoAgentStateRender` and suppresses itself while any tool pill is executing. See `agent-compound-docs/decisions/frontend-stack.md` §Status-pill lifecycle.
 - **State events are not auto-emitted** by Pydantic AI's AG-UI adapter — `deps.state` mutations alone are invisible to the frontend. To push state to the UI, tools must return `ToolReturn(return_value=…, metadata=[StateSnapshotEvent(snapshot=state.model_dump())])`. The adapter yields any `BaseEvent` in `ToolReturn.metadata` into the SSE stream alongside the regular `TOOL_CALL_RESULT`. See the `_return_with_state` helper in `chat/tools.py` and `agent-compound-docs/decisions/frontend-stack.md`.
 - All cross-layer wiring goes through FastAPI `Depends` (`core/dependencies.py`) — no module-level singletons in the request path other than the session store
-- LLM provider selection lives in `chat/providers/__init__.py:build_chat_model()` — the single provider seam. The orchestrator only checks key presence; each `build_<provider>_model()` builder owns its own validation and any provider-specific model settings (e.g. Anthropic cache breakpoints live in `providers/anthropic.py`, not on the Agent). When multiple keys are set, returns a `FallbackModel` chain — Anthropic preferred so prompt caching applies, OpenRouter as failover. See the docstring in `providers/__init__.py` for the four-layer rule and the "add a provider" recipe
-- Phoenix observability runs as a compose service in dev (UI at `http://localhost:6006`, SQLite persisted to the `phoenix_data` volume). `core/observability.py` uses `phoenix.otel.register(batch=True)` for the OTel pipeline (BatchSpanProcessor + OTLP/HTTP exporter), then attaches `OpenInferenceSpanProcessor` explicitly (the package ships only a SpanProcessor, no Instrumentor — `auto_instrument` can't find it), and calls `Agent.instrument_all()` for Pydantic AI's native span emission. Per-conversation grouping comes from `with using_session(session_id)` around the agent run in `chat/service.py`. Enable per-env via `PHOENIX_ENABLED` (defaults to true in dev compose; off everywhere else)
+- LLM provider selection lives in `chat/providers/__init__.py:build_chat_model()` — the single provider seam. Today there is exactly one provider: Anthropic-direct (chosen for native prompt caching). The orchestrator only checks key presence; the builder (`providers/anthropic.py`) owns its own validation and provider-specific model settings (cache breakpoints live there, not on the Agent). See the docstring in `providers/__init__.py` for the four-layer rule and the "add a provider" recipe
+- Phoenix observability runs as a compose service in dev (UI at `http://localhost:6006`, SQLite persisted to the `phoenix_data` volume). `core/observability.py` builds the OTel pipeline explicitly — a `TracerProvider` with two span processors attached via `add_span_processor()`: `OpenInferenceSpanProcessor` (enrichment — tags Pydantic AI's native spans with `llm.*` / `tool.*` attributes so Phoenix renders them as chat UI) and `BatchSpanProcessor(HTTPSpanExporter(...))` (transport — batches and flushes over OTLP/HTTP to the Phoenix collector). The provider is registered globally via `trace.set_tracer_provider()`, then `Agent.instrument_all()` enables Pydantic AI's native span emission. The explicit-pipeline approach replaces `phoenix.otel.register()` because the latter's default exporter gets silently dropped the first time `add_span_processor` runs. Per-conversation grouping comes from `with using_session(session_id)` around the agent run in `chat/service.py`. Enable per-env via `PHOENIX_ENABLED` (defaults to true in dev compose; off everywhere else)
 - **No side effects at module import.** Process-wide setup (observability, connection pools, HTTPX clients, model warm-up) goes in the FastAPI `lifespan` context manager in `main.py`, with a paired teardown after `yield` if the resource needs flushing/closing. Module-level calls on import are surprising for tests and scripts that import `flat_chat.main` for non-serving purposes
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
@@ -172,20 +172,16 @@ def add_rules() -> str:
 # Native provider prefixes — no LiteLLM needed
 agent = Agent('openai:gpt-4o')
 agent = Agent('anthropic:claude-sonnet-4-5')
-agent = Agent('openrouter:anthropic/claude-sonnet-4-5')
 agent = Agent('ollama:llama3.2')
 agent = Agent('groq:llama-3.3-70b-versatile')
 agent = Agent('mistral:mistral-large-latest')
 
 # BYOK — construct model per-call
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterProvider
-model = OpenRouterModel('anthropic/claude-sonnet-4-5',
-                        provider=OpenRouterProvider(api_key=user_api_key))
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+model = AnthropicModel('claude-sonnet-4-5',
+                       provider=AnthropicProvider(api_key=user_api_key))
 result = await agent.run(prompt, model=model)
-
-# FallbackModel for provider failover
-from pydantic_ai.models.fallback import FallbackModel
-model = FallbackModel('anthropic:claude-sonnet-4-5', 'openai:gpt-4o')
 
 # Per-call overrides
 from pydantic_ai.settings import ModelSettings

@@ -19,13 +19,11 @@ export interface UiApartment {
 export interface UiState {
   results: UiApartment[];
   active_id: string | null;
-  tool_logs: string[];
 }
 
-export const EMPTY_UI_STATE: UiState = {
+export const EMPTY_UI_STATE: UiState = Object.freeze({
   results: [],
   active_id: null,
-  tool_logs: [],
-};
+}) as UiState;
 
 export const AGENT_NAME = "berlin-agent";

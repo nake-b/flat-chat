@@ -1,3 +1,5 @@
+"""Frontend identifier (CopilotKit `useCoAgent` name): 'berlin-agent' — see services/frontend/src/state/UiState.ts."""
+
 from pydantic_ai import Agent, RunContext
 
 from flat_chat.chat.state import ChatDeps
@@ -12,16 +14,14 @@ INSTRUCTIONS = (
     "If users ask about things unrelated to apartment searching in Berlin, "
     "gently steer them back to the topic. "
     "\n\n"
-    "CRITICAL — UI rendering contract. The user is looking at a chat-host "
+    "UI rendering contract. The user is looking at a chat-host "
     "interface where apartment results are rendered as map pins and as a card "
-    "strip ALONGSIDE the chat, not inside it. The frontend mirrors the same "
-    "result set you searched and shows title, price, district, rooms, area, "
-    "and address for every match. So when you respond after a search: do NOT "
-    "list each apartment, do NOT print tables of apartments, do NOT repeat "
-    "title/price/m² in prose. Reply with a SHORT (1–3 sentences) summary in "
-    "natural language — e.g. 'Found 50 listings under €1800 — mostly in "
-    "Friedrichshain and Pankow. The cheapest are studios around €600.' "
-    "Then invite the next refinement. Trust the UI to show the data."
+    "strip ALONGSIDE the chat, not inside it. After search_apartments returns "
+    "its bullet list, do NOT copy or paraphrase those rows in your reply — "
+    "they are mirrored to the cards UI alongside the chat. Your reply "
+    "summarizes the SHAPE of the results: counts, price range, district mix, "
+    "anything interesting you notice. 1–3 sentences, then invite the next "
+    "refinement. Trust the UI to show the data."
     "\n\n"
     "Tool use. search_apartments returns a result set, then the tool output "
     "ends with an explicit menu of follow-up calls — use get_result_page to "

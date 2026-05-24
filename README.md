@@ -5,7 +5,7 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 ## Quick Start
 
 ```bash
-cp .env.example .env    # then fill in OPENROUTER_API_KEY, OPENROUTER_MODEL, JINA_API_KEY
+cp .env.example .env    # then fill in ANTHROPIC_API_KEY, JINA_API_KEY
 docker compose up --build
 ```
 
@@ -44,7 +44,7 @@ flat-chat/
 |------------------|-----------------------------------------------------------------------------------------------------|
 | Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
 | Backend          | FastAPI, SQLAlchemy, **Pydantic AI with AG-UI Protocol adapter**                                    |
-| LLM              | Pydantic AI agent → Anthropic preferred (prompt caching), OpenRouter as fallback                    |
+| LLM              | Pydantic AI agent → Anthropic-direct (native prompt caching)                                        |
 | Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
 | Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |
 | Map tiles        | Self-hosted **Protomaps** `.pmtiles` (Berlin extract) — served by nginx at `/tiles/`                |

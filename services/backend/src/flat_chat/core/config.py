@@ -9,9 +9,6 @@ class Settings(BaseSettings):
 
     # Provider model fields default to empty — required-ness is enforced in
     # `chat/providers/__init__.py` only when the matching API key is set.
-    openrouter_api_key: str = ""
-    openrouter_model: str = ""
-
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
 

@@ -1,13 +1,18 @@
+from __future__ import annotations
+
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from pydantic_ai.messages import ModelMessage
-from sqlalchemy.orm import Session as DbSession
 
 from flat_chat.chat.ui_state import UiState
 from flat_chat.search.schemas import SearchParams
-from flat_chat.search.service import SearchService
+
+if TYPE_CHECKING:
+    from flat_chat.search.service import SearchService
 
 # Single source of truth for the column order used in CSV-style listings shown
 # to the LLM. Detail view (prose) handles its own field order via _PROSE_FIELDS.
@@ -139,9 +144,10 @@ class ResultSet:
     def describe_for_instructions(self) -> str:
         """One-line state snapshot injected into agent instructions every turn."""
         active = self.params.model_dump(exclude_none=True)
+        params_repr = json.dumps(active, default=str, sort_keys=True)
         base = (
             f"Active result set: {self.total} listings, {self.order_label()}. "
-            f"Params: {active}"
+            f"Params: {params_repr}"
         )
         if self.notes:
             base += " Notes: " + "; ".join(self.notes)
@@ -181,18 +187,22 @@ class ResultSet:
         return "\n".join(lines)
 
     def _navigation_footer(self, shown_end: int) -> str:
+        if self.total == 0:
+            return (
+                "\nTo explore further:\n"
+                "  • search_apartments(...)          — refine with new filters or query"
+            )
+
         remaining = self.total - shown_end
-        if remaining <= 0 and self.total <= shown_end:
-            tail = "All results shown above."
+        lines: list[str] = []
+        if remaining <= 0:
+            lines.append("All results shown above. To explore further:")
         else:
-            tail = f"{remaining} more available."
-        return (
-            "\n"
-            f"{tail} To explore further:\n"
-            "  • get_result_page(page=N)         — next page (10 per page)\n"
-            "  • get_result_details(indices=[N]) — full info for specific listings\n"
-            "  • search_apartments(...)          — refine with new filters or query"
-        )
+            lines.append(f"{remaining} more available. To explore further:")
+            lines.append("  • get_result_page(page=N)         — next page (10 per page)")
+        lines.append("  • get_result_details(indices=[N]) — full info for specific listings")
+        lines.append("  • search_apartments(...)          — refine with new filters or query")
+        return "\n" + "\n".join(lines)
 
 
 def _format_cell(col: str, val, *, csv: bool = False) -> str:
@@ -245,16 +255,18 @@ class ChatSession:
 class ChatDeps:
     """Per-request deps handed to the agent and its tools.
 
-    Bridges request-scoped services (db, search_service) with the
-    session-scoped state. Tools mutate `session.result_set` (LLM-facing) and
-    `state` (frontend-facing) — both persist across messages.
+    Bridges request-scoped services (search_service) with the session-scoped
+    state. Tools mutate `session.result_set` (LLM-facing) and `state`
+    (frontend-facing) — both persist across messages.
 
     `state` is named to satisfy the `pydantic_ai.ui.StateHandler` protocol so
     the AG-UI adapter can populate it from each incoming request and stream
     JSON Patch deltas of subsequent mutations back to the frontend.
     """
 
-    db: DbSession
     search_service: SearchService
     session: ChatSession
+    # Overwritten per-request by AGUIAdapter from the AG-UI envelope.
+    # The default_factory only matters when running outside the adapter
+    # (e.g. unit tests).
     state: UiState = field(default_factory=UiState)

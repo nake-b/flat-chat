@@ -11,7 +11,7 @@ brew install just       # task runner (one-time)
 uv sync                 # install all dependencies
 ```
 
-Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` plus at least one LLM provider — either `ANTHROPIC_API_KEY` or the `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` pair. See the table below.
+Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` and `ANTHROPIC_API_KEY`. See the table below.
 
 ## Running
 
@@ -69,9 +69,8 @@ src/flat_chat/
 │   ├── service.py       # ChatService — dispatches AG-UI runs and persists state/history
 │   ├── schemas.py       # API response models
 │   └── providers/       # Chat-model dispatch — single provider seam
-│       ├── __init__.py  # build_chat_model() — @lru_cache; picks providers from settings
-│       ├── anthropic.py # AnthropicModel + prompt caching settings
-│       └── openrouter.py # OpenRouterModel subclass: retries body-embedded 5xx/429
+│       ├── __init__.py  # build_chat_model() — @lru_cache; picks provider from settings
+│       └── anthropic.py # AnthropicModel + prompt caching settings
 └── search/
     ├── models.py        # Listing SQLAlchemy model (HNSW + functional GIST indexes)
     ├── schemas.py       # SearchParams (Literal sort_by, Field-bounded limit/radius_km)
@@ -93,9 +92,7 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | Variable             | Description                                                                                                                                       | Default                            |
 |----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
 | `DATABASE_URL`       | PostgreSQL connection string                                                                                                                      | — (required)                       |
-| `OPENROUTER_API_KEY` | OpenRouter API key                                                                                                                                | —                                  |
-| `OPENROUTER_MODEL`   | Model slug (`org/model:tag`) or preset (`@preset/<slug>`). Presets configured at [openrouter.ai/settings/presets](https://openrouter.ai/settings/presets). Required when `OPENROUTER_API_KEY` is set | —                                  |
-| `ANTHROPIC_API_KEY`  | Anthropic API key. When set, takes precedence over OpenRouter so native prompt caching applies; OpenRouter becomes a fallback                     | —                                  |
+| `ANTHROPIC_API_KEY`  | Anthropic API key (native prompt caching)                                                                                                         | — (required)                       |
 | `ANTHROPIC_MODEL`    | Anthropic model id (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5`)                                                                                 | `claude-sonnet-4-6`                |
 | `JINA_API_KEY`       | Jina embeddings API key (optional — empty disables semantic search)                                                                                | —                                  |
 | `JINA_BASE_URL`      | Jina API base URL                                                                                                                                 | `https://api.jina.ai/v1`           |

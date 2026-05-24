@@ -1,4 +1,3 @@
-import { useUiState } from "./hooks/useUiState";
 import { ChatPane } from "./components/ChatPane";
 import { MapPane } from "./components/MapPane";
 import { CardsPane } from "./components/CardsPane";
@@ -15,10 +14,6 @@ import { CardsPane } from "./components/CardsPane";
 const TOP_PCT = 70;
 
 function App() {
-  // Keep the subscription so re-renders pick up state changes elsewhere,
-  // even though we don't read state here anymore.
-  useUiState();
-
   return (
     <div className="grid h-screen w-screen grid-cols-[2fr_3fr] overflow-hidden bg-paper">
       <aside className="overflow-hidden border-r border-paper-rule">

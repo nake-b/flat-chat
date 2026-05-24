@@ -24,7 +24,7 @@ Keep `POST /api/conversations` (session creation) and `GET /api/conversations/{i
 
 `@copilotkit/react-core` + `@copilotkit/react-ui`. The killer primitive is `useCoAgent<UiState>({ name, initialState })` — a hook that mirrors backend agent state on the frontend and re-renders any subscribed component when the agent mutates `ctx.deps.ui_state`. Sibling React components (chat, map, cards) all subscribe via this hook to slices of the same state.
 
-`useCoAgentStateRender({ render })` renders inline tool-call lifecycle pills in the chat thread ("Searching Kreuzberg…") driven by a `tool_logs` slice of `UiState`.
+Tool-call lifecycle pills ("Searching Kreuzberg…", "Found 12 listings…", "Thinking…") are rendered inline in the chat thread via `useCopilotAction({ name, render })` per backend tool (executing/complete phases) plus a single `useCoAgentStateRender` for the Thinking phase. UI copy lives entirely on the frontend in a tool-name → label registry. See §Status-pill lifecycle below.
 
 ### Map: MapLibre GL JS v5 + `@vis.gl/react-maplibre` + self-hosted Protomaps
 
@@ -86,12 +86,48 @@ class UiApartment(BaseModel):
 class UiState(BaseModel):
     results: list[UiApartment] = []
     active_id: str | None = None     # which card is expanded
-    tool_logs: list[str] = []        # rolling tool-call lifecycle
 ```
 
 Existing tools mutate **both** `ResultSet` (LLM-facing prose, untouched) and `UiState` (UI-facing structured data). The two are parallel projections of the same `SearchService.search()` DataFrame — *not* a replacement for `ResultSet`. The LLM never sees `UiState`; the UI never sees `ResultSet`. See `llm-tool-result-design.md` for `ResultSet`'s contract.
 
 Write-back path: when the user clicks a card, the frontend calls `setState({ active_id })`; CopilotKit streams the update back to the backend so the agent sees what the user is looking at on the next turn.
+
+### Status-pill lifecycle: frontend-owned, AG-UI tool-call driven
+
+The "Thinking…" / "Searching Kreuzberg…" / "Found 12 in Kreuzberg" pills in the chat thread are driven by AG-UI's native tool-call lifecycle events, not by a shared-state field. Backend tools mutate data only; the frontend owns all status copy in one file.
+
+**Wildcard subscription.** Each backend tool emits the AG-UI sequence `TOOL_CALL_START` → `TOOL_CALL_ARGS` → `TOOL_CALL_END` → `TOOL_CALL_RESULT`. We subscribe to **all** of them through a single CopilotKit registration: `useCopilotAction({ name: "*", render: ({ name, status, args, result }) => … })`. CopilotKit's action validator treats `name: "*"` as a render-only catch-all (no `parameters` required) and never injects it into the LLM's tool list, so it stays out of the AG-UI envelope and doesn't trip Pydantic AI's `RunAgentInput` validation.
+
+CopilotKit exposes the lifecycle as `inProgress` / `executing` / `complete`. For render-only actions (no frontend handler) the `executing` phase **never fires** — CopilotKit jumps directly from `inProgress` (with args streaming in via repeated deltas) to `complete`. So we treat `inProgress` and `executing` as a single "running" branch in `<ToolPill>`. A nice side effect: during arg streaming the pill updates progressively ("Searching apartments…" → "Searching K…" → "Searching Kreuzberg…") because each delta re-renders with the partial `args`.
+
+**Registry-based copy.** `services/frontend/src/state/toolStatus.ts` holds one entry per backend tool name:
+
+```ts
+search_apartments: {
+  executing: (a) => a.districts?.length
+    ? `Searching ${a.districts.join(", ")}…`
+    : "Searching apartments…",
+  complete: (_a, result) => firstLine(result),     // "Found 12 listings, …"
+},
+```
+
+The `executing` label is built from the tool's args (built up across `inProgress` deltas, final on `TOOL_CALL_END`). The optional `complete` label receives the tool's return value as `result` — our tools already shape their `return_value` so the first non-`Note:` line is label-worthy ("Found 12 listings…", "Page 2/3 — …"). Tools whose first return line is awkward (e.g. `get_result_details`'s `--- Listing #3 ---` banner) override `complete` directly. No structured wire contract beyond what AG-UI already streams.
+
+Adding a new tool is **one entry here**. The wildcard registration already picks it up — no ChatPane edit needed. Backend tools never need to know about UI copy.
+
+**Thinking phase.** A single `useCoAgentStateRender` renders a "Thinking…" pill that suppresses itself whenever any tool pill is currently `executing`. The cross-component signal is a tiny zustand counter (`useToolStatus.ts`'s `useActiveToolCount`) — same shape as `useHover`. The counter increments in `<ToolPill>`'s `useEffect` on `status === "executing"` and decrements on cleanup, so render functions stay pure.
+
+**Lifecycle visible to the user:**
+
+```
+Thinking…           ← agent picking a tool, no tool active
+Searching K…        ← status=executing, label from args
+Found 12 in K       ← status=complete, label from first line of return
+Thinking…           ← LLM writing the reply
+(reply lands)       ← running=false, pill gone
+```
+
+**Why this and not `tool_logs` on `UiState`** (the previous design): putting status strings in shared state coupled tool code to UI copy, deleted on every search (lost history), and couldn't represent the "Thinking…" phase (no signal until the first tool finished). Tool-call lifecycle events are first-class in AG-UI and already streamed — the redesign just consumes what was already there.
 
 ### What stays local (not in shared state)
 

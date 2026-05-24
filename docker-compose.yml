@@ -36,8 +36,6 @@ services:
         condition: service_started
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
       - JINA_API_KEY=${JINA_API_KEY:-}

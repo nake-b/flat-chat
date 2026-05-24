@@ -1,22 +1,37 @@
+import { useEffect, useRef } from "react";
+
 import { useUiState } from "../hooks/useUiState";
-import type { UiApartment } from "../state/UiState";
+import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
 
 // Detail panel: a card-sized white pane sitting at the top of the cards
 // slot, with the paper background of `CardsPane` showing beneath. The
 // pane sizes to its content — no stretching, no Option-X expansion, no
 // filler band. Matches the strip's "card-on-paper" visual density.
 export function CardDetail({ apt }: { apt: UiApartment }) {
-  const { state, setState } = useUiState();
+  const { setState } = useUiState();
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const close = () => {
-    setState({
-      ...(state ?? { results: [], tool_logs: [] }),
-      active_id: null,
-    });
+    setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: null }));
   };
 
+  useEffect(() => {
+    backButtonRef.current?.focus();
+  }, []);
+
   return (
-    <div className="flex flex-col overflow-hidden bg-white">
+    <div
+      role="region"
+      aria-label={`Detail for ${apt.title ?? "apartment"}`}
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          close();
+        }
+      }}
+      className="flex flex-col overflow-hidden bg-white focus:outline-none"
+    >
       <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
         <div className="min-w-0">
           <div className="font-mono text-[10px] uppercase tracking-widest text-red">
@@ -30,6 +45,7 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
           </div>
         </div>
         <button
+          ref={backButtonRef}
           type="button"
           className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
           onClick={close}

@@ -51,7 +51,7 @@ function Bootstrap() {
     };
     hideCopilotInspectors();
     const obs = new MutationObserver(hideCopilotInspectors);
-    obs.observe(document.documentElement, { childList: true, subtree: true });
+    obs.observe(document.body, { childList: true, subtree: false });
     return () => obs.disconnect();
   }, []);
 

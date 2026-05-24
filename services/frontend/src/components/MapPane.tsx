@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Map as MapLibreMap, Source, Layer, useMap } from "@vis.gl/react-maplibre";
-import type { MapRef } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
   GeoJSONSource,
@@ -11,7 +10,7 @@ import type { FeatureCollection, Point } from "geojson";
 
 import { useUiState } from "../hooks/useUiState";
 import { useHover } from "../hooks/useHover";
-import type { UiApartment } from "../state/UiState";
+import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -151,14 +150,12 @@ export function MapPane() {
   // suffer from closure / re-attach races against CopilotKit's frequent
   // state updates. `interactiveLayerIds` populates `e.features` with the
   // hits at the click/move point, so we don't need queryRenderedFeatures.
-  const { state, setState } = useUiState();
+  const { setState } = useUiState();
   const { setHover } = useHover();
 
-  // Stable refs so the handler closures always see the LATEST state /
-  // setState without needing to re-bind on every render. React's useState
+  // Stable refs so the handler closures always see the LATEST setState /
+  // setHover without needing to re-bind on every render. React's useState
   // setters are stable; useCoAgent's may not be.
-  const stateRef = useRef(state);
-  stateRef.current = state;
   const setStateRef = useRef(setState);
   setStateRef.current = setState;
   const setHoverRef = useRef(setHover);
@@ -191,8 +188,8 @@ export function MapPane() {
     // Unclustered apartment dot — open detail in cards pane.
     const id = f.properties?.id ?? (f.id as string | undefined);
     if (id) {
-      const current = stateRef.current ?? { results: [], tool_logs: [] };
-      setStateRef.current({ ...current, active_id: String(id) });
+      const next = String(id);
+      setStateRef.current((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: next }));
     }
   }, []);
 
@@ -277,7 +274,7 @@ function ApartmentLayer() {
       m.setFeatureState({ source: src, id: state.active_id }, { active: true });
     }
     lastFeatureStateIds.current = next;
-  }, [map, hoverId, state?.active_id]);
+  }, [map, hoverId, state?.active_id, state?.results]);
 
   return (
     <Source
@@ -305,7 +302,3 @@ interface ApartmentProps {
 }
 
 type ApartmentWithCoords = UiApartment & { lat: number; lng: number };
-
-// Silence unused-import warning for the type-only side: MapRef is exported for
-// downstream consumers that want a ref to the map instance.
-export type { MapRef };

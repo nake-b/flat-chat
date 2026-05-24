@@ -662,16 +662,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arize-phoenix-otel" },
+    { name = "arize-phoenix-otel", specifier = ">=0.16,<0.17" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "geoalchemy2", specifier = ">=0.17" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "openinference-instrumentation-pydantic-ai" },
+    { name = "openinference-instrumentation-pydantic-ai", specifier = ">=0.1,<0.2" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
-    { name = "pydantic-ai" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui"] },
+    { name = "pydantic-ai", specifier = ">=1.97,<2.0" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui"], specifier = ">=1.97,<2.0" },
     { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
