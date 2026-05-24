@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 
 def build_azure_model(settings: Settings) -> Model:
+    """Build an Azure OpenAI chat model.
+
+    Owns its own validation — the orchestrator only checks for key presence,
+    so this builder raises with a clear message when the rest of the Azure
+    config is incomplete.
+    """
+    missing = [
+        name
+        for name in (
+            "azure_openai_endpoint",
+            "azure_openai_deployment",
+            "azure_openai_api_version",
+        )
+        if not getattr(settings, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "AZURE_OPENAI_API_KEY is set but the following are empty: "
+            + ", ".join(name.upper() for name in missing)
+            + ". Set them in .env."
+        )
     return OpenAIChatModel(
         settings.azure_openai_deployment,
         provider=AzureProvider(

@@ -80,6 +80,14 @@ cd services/ingestion && PYTHONPATH=src python3 -m silver.run
 
 Silver is idempotent — safe to re-run at any time, including while a scraper is still going if you want to peek at progress.
 
+After silver lands fresh rows, populate the `embedding` column so semantic search works:
+
+```bash
+cd services/ingestion && PYTHONPATH=src python3 -m silver.embed
+```
+
+`silver.embed` posts text in batches to Jina v3 (`retrieval.passage` task) and updates rows where `embedding IS NULL`. Idempotent — re-running is a no-op for already-embedded rows. Requires `JINA_API_KEY` in `.env`. Skip the step if you don't have a Jina key — structured search still works without embeddings.
+
 ## JSON replay (no scraping)
 
 The committed `*.json` / `*-detail.json` files act as fixtures — useful for working without re-scraping.

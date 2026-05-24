@@ -22,16 +22,38 @@ logger = logging.getLogger(__name__)
 RESULT_COLUMNS = [
     "id",
     "title",
+    # Money
     "price_warm_eur",
     "price_cold_eur",
+    "nebenkosten_eur",
+    "kaution_eur",
+    # Size
     "rooms",
+    "bedrooms",
     "area_sqm",
+    # Location
     "district",
     "address",
+    # Building / availability
     "floor",
+    "floors_total",
     "listing_type",
     "available_from",
+    # Amenities (chip-row subset on the frontend)
+    "wbs_required",
+    "is_furnished",
+    "has_balcony",
+    "has_kitchen",
+    "has_elevator",
+    "has_garden",
+    # Energy
+    "heating",
+    "energy_consumption_kwh",
+    # Listing source
+    "lister_type",
+    # Outbound
     "source_url",
+    # Geo (for the map; UiApartment maps these to lat/lng)
     "latitude",
     "longitude",
 ]
@@ -54,23 +76,51 @@ class SearchService:
     async def search(self, params: SearchParams) -> pd.DataFrame:
         stmt = select(Listing)
 
+        # Money
+        if params.price_warm_min is not None:
+            stmt = stmt.where(Listing.warm_rent_eur >= params.price_warm_min)
         if params.price_warm_max is not None:
             stmt = stmt.where(Listing.warm_rent_eur <= params.price_warm_max)
+        if params.price_cold_max is not None:
+            stmt = stmt.where(Listing.cold_rent_eur <= params.price_cold_max)
 
+        # Size
         if params.rooms_min is not None:
             stmt = stmt.where(Listing.rooms >= params.rooms_min)
-
         if params.rooms_max is not None:
             stmt = stmt.where(Listing.rooms <= params.rooms_max)
-
+        if params.bedrooms_min is not None:
+            stmt = stmt.where(Listing.bedrooms >= params.bedrooms_min)
         if params.area_sqm_min is not None:
             stmt = stmt.where(Listing.area_sqm >= params.area_sqm_min)
+        if params.area_sqm_max is not None:
+            stmt = stmt.where(Listing.area_sqm <= params.area_sqm_max)
 
+        # Building / availability
         if params.floor_min is not None:
             stmt = stmt.where(Listing.floor >= params.floor_min)
-
+        if params.floor_max is not None:
+            stmt = stmt.where(Listing.floor <= params.floor_max)
         if params.listing_type is not None:
             stmt = stmt.where(Listing.apartment_type == params.listing_type)
+        if params.available_by is not None:
+            # ISO date string; SQLAlchemy + Postgres cast it to TIMESTAMP for
+            # the comparison. We accept the raw string here rather than
+            # parsing in this layer so a bad format raises at the DB instead
+            # of silently coercing into the wrong half-year.
+            stmt = stmt.where(Listing.available_from <= params.available_by)
+
+        # Amenities — tri-state. None is a no-op; True/False both filter.
+        if params.wbs_required is not None:
+            stmt = stmt.where(Listing.wbs_required == params.wbs_required)
+        if params.is_furnished is not None:
+            stmt = stmt.where(Listing.is_furnished == params.is_furnished)
+        if params.has_balcony is not None:
+            stmt = stmt.where(Listing.has_balcony == params.has_balcony)
+        if params.has_kitchen is not None:
+            stmt = stmt.where(Listing.has_kitchen == params.has_kitchen)
+        if params.has_elevator is not None:
+            stmt = stmt.where(Listing.has_elevator == params.has_elevator)
 
         if params.districts:
             district_clauses = [

@@ -8,4 +8,5 @@ ENV PYTHONPATH=/app/src
 #   docker compose run --rm ingestion python -m iron.loader <path>
 #   docker compose run --rm ingestion python -m bronze.loader <path>
 #   docker compose run --rm ingestion python -m silver.run
+#   docker compose run --rm ingestion python -m silver.embed   # Jina backfill
 CMD ["uv", "run", "python", "-m", "silver.run"]
