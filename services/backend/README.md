@@ -11,7 +11,7 @@ brew install just       # task runner (one-time)
 uv sync                 # install all dependencies
 ```
 
-Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`. See the table below.
+Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` plus at least one LLM provider — either `ANTHROPIC_API_KEY` or the `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` pair. See the table below.
 
 ## Running
 
@@ -37,14 +37,14 @@ CI runs the same checks on every push and PR — see [`.github/workflows/ci.yml`
 
 ## API Endpoints
 
-| Endpoint                                  | Method | Description           |
-|-------------------------------------------|--------|-----------------------|
-| `/api/health`                             | GET    | Health check          |
-| `/api/conversations`                      | POST   | Create a conversation |
-| `/api/conversations/{id}/messages`        | POST   | Send a message        |
-| `/api/conversations/{id}/messages`        | GET    | Get message history   |
+| Endpoint                                  | Method | Description                                                                                                |
+|-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
+| `/api/health`                             | GET    | Health check                                                                                               |
+| `/api/conversations`                      | POST   | Create a conversation; returned id doubles as the AG-UI `thread_id`                                        |
+| `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only)                                        |
+| `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas      |
 
-Chat uses an app-level REST shape (not OpenAI-style). The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx.
+The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx. Sending a new user message goes through `/api/agent` (AG-UI streaming). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed when the agent path landed.
 
 ## Project Layout
 
@@ -58,16 +58,19 @@ src/flat_chat/
 │   ├── dependencies.py  # FastAPI Depends wiring (session store, services)
 │   └── observability.py # Phoenix / OpenTelemetry — Agent.instrument_all()
 ├── api/
-│   └── chat.py          # Thin FastAPI router; serializes ModelMessage history
+│   ├── chat.py          # Conversation lifecycle: POST create + GET history reload (no message-send)
+│   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
 ├── chat/
-│   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + run_agent()
-│   ├── tools.py         # FunctionToolset[ChatDeps]: search / page / details
-│   ├── state.py         # ChatSession, ResultSet (central LLM-facing formatter), ChatDeps
+│   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + dynamic-instruction injection
+│   ├── tools.py         # FunctionToolset[ChatDeps]: search / page / details; mirrors into UiState
+│   ├── state.py         # ChatSession (history + ResultSet + ui_state), ChatDeps (StateHandler-compatible)
+│   ├── ui_state.py      # Frontend mirror: UiState + UiApartment Pydantic models
 │   ├── sessions.py      # SessionStore Protocol + InMemorySessionStore (per-session asyncio.Lock)
-│   ├── service.py       # ChatService orchestration
-│   ├── schemas.py       # API request/response models
+│   ├── service.py       # ChatService — dispatches AG-UI runs and persists state/history
+│   ├── schemas.py       # API response models
 │   └── providers/       # Chat-model dispatch — single provider seam
 │       ├── __init__.py  # build_chat_model() — @lru_cache; picks providers from settings
+│       ├── anthropic.py # AnthropicModel + prompt caching settings
 │       └── openrouter.py # OpenRouterModel subclass: retries body-embedded 5xx/429
 └── search/
     ├── models.py        # Listing SQLAlchemy model (HNSW + functional GIST indexes)
@@ -78,6 +81,8 @@ tests/                   # Test suite (pytest)
 
 Key idioms:
 - **`ResultSet` owns all LLM-facing listing formatting** — `summary` / `page` / `detail` / `describe_for_instructions`. Any new listing surface goes here, not in tools. See [`agent-compound-docs/decisions/llm-tool-result-design.md`](../../agent-compound-docs/decisions/llm-tool-result-design.md).
+- **`UiState` is the frontend-facing mirror** — a parallel projection of the same search results, *not* a replacement for `ResultSet`. Tools mutate both per call; the agent only ever reads `ResultSet`, the React app only ever reads `UiState` via AG-UI shared state. See [`agent-compound-docs/decisions/frontend-stack.md`](../../agent-compound-docs/decisions/frontend-stack.md).
+- **`ChatDeps` satisfies the AG-UI `StateHandler` protocol** by exposing a `state: UiState` dataclass field. The `AGUIAdapter` sets this from each incoming request and streams JSON Patch deltas of subsequent tool mutations back to the frontend.
 - **Domain services take `db: Session` in the constructor** — framework-agnostic; works in FastAPI, scripts, and tests.
 - **All cross-layer wiring goes through FastAPI `Depends`** in `core/dependencies.py`. No module-level singletons in the request path beyond the session store.
 
@@ -89,7 +94,9 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 |----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
 | `DATABASE_URL`       | PostgreSQL connection string                                                                                                                      | — (required)                       |
 | `OPENROUTER_API_KEY` | OpenRouter API key                                                                                                                                | —                                  |
-| `OPENROUTER_MODEL`   | Model slug (`org/model:tag`) or preset (`@preset/<slug>`). Presets configured at [openrouter.ai/settings/presets](https://openrouter.ai/settings/presets) | — (required)                       |
+| `OPENROUTER_MODEL`   | Model slug (`org/model:tag`) or preset (`@preset/<slug>`). Presets configured at [openrouter.ai/settings/presets](https://openrouter.ai/settings/presets). Required when `OPENROUTER_API_KEY` is set | —                                  |
+| `ANTHROPIC_API_KEY`  | Anthropic API key. When set, takes precedence over OpenRouter so native prompt caching applies; OpenRouter becomes a fallback                     | —                                  |
+| `ANTHROPIC_MODEL`    | Anthropic model id (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5`)                                                                                 | `claude-sonnet-4-6`                |
 | `JINA_API_KEY`       | Jina embeddings API key (optional — empty disables semantic search)                                                                                | —                                  |
 | `JINA_BASE_URL`      | Jina API base URL                                                                                                                                 | `https://api.jina.ai/v1`           |
 | `PHOENIX_ENABLED`    | Enable Phoenix observability                                                                                                                      | `false`                            |

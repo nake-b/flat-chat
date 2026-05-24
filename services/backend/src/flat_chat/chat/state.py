@@ -5,6 +5,7 @@ import pandas as pd
 from pydantic_ai.messages import ModelMessage
 from sqlalchemy.orm import Session as DbSession
 
+from flat_chat.chat.ui_state import UiState
 from flat_chat.search.schemas import SearchParams
 from flat_chat.search.service import SearchService
 
@@ -227,15 +228,16 @@ def _format_field(val, spec: str) -> str:
 class ChatSession:
     """One user conversation thread.
 
-    Owns the message history (Pydantic AI's ModelMessage list) and the
-    current ResultSet under discussion. Lives in a SessionStore so the
-    storage backend (in-memory now, Postgres later) can swap without
-    touching anything else.
+    Owns the message history (Pydantic AI's ModelMessage list), the current
+    ResultSet under discussion (LLM-facing), and the UiState (frontend-facing
+    mirror). Lives in a SessionStore so the storage backend (in-memory now,
+    Postgres later) can swap without touching anything else.
     """
 
     id: str
     message_history: list[ModelMessage] = field(default_factory=list)
     result_set: ResultSet | None = None
+    ui_state: UiState = field(default_factory=UiState)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -244,10 +246,15 @@ class ChatDeps:
     """Per-request deps handed to the agent and its tools.
 
     Bridges request-scoped services (db, search_service) with the
-    session-scoped state (the ChatSession instance). Tools mutate
-    `session.result_set` so it persists across messages.
+    session-scoped state. Tools mutate `session.result_set` (LLM-facing) and
+    `state` (frontend-facing) — both persist across messages.
+
+    `state` is named to satisfy the `pydantic_ai.ui.StateHandler` protocol so
+    the AG-UI adapter can populate it from each incoming request and stream
+    JSON Patch deltas of subsequent mutations back to the frontend.
     """
 
     db: DbSession
     search_service: SearchService
     session: ChatSession
+    state: UiState = field(default_factory=UiState)

@@ -1,9 +1,15 @@
-from pydantic_ai import FunctionToolset, RunContext
+from ag_ui.core import EventType, StateSnapshotEvent
+from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
 from flat_chat.chat.state import ChatDeps, ResultSet
+from flat_chat.chat.ui_state import UiApartment
 from flat_chat.search.schemas import SearchParams, SortBy
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
+
+# Cap on tool_logs length so the AG-UI state payload doesn't grow unbounded
+# across a long conversation. Lifecycle pills are ephemeral by nature.
+_TOOL_LOG_KEEP = 20
 
 
 @toolset.tool
@@ -22,7 +28,7 @@ async def search_apartments(
     near_lon: float | None = None,
     radius_km: float = 2.0,
     sort_by: SortBy = "relevance",
-) -> str:
+) -> ToolReturn:
     """Search for apartments in Berlin. Replaces the current result set.
 
     Args:
@@ -81,15 +87,46 @@ async def search_apartments(
         )
 
     df = await ctx.deps.search_service.search(params)
+
+    # Drop listings without coordinates BEFORE building ResultSet + UiState so
+    # all four counts (chat prose, tool_logs pill, cards, map) agree — the map
+    # can only render markers for apartments with lat/lng, and silently dropping
+    # them downstream caused user-visible count mismatches. The filter belongs
+    # at the tool layer; SearchService stays general.
+    total_before = len(df)
+    df = df.dropna(subset=["latitude", "longitude"])
+    df = df.reset_index(drop=True)
+    skipped = total_before - len(df)
+
     ctx.deps.session.result_set = ResultSet(df=df, params=params, notes=notes)
-    return ctx.deps.session.result_set.summary()
+
+    # Reset tool_logs at the start of each search — a fresh search starts a
+    # new lifecycle, so stale pills from prior searches ("searched: 50") would
+    # otherwise accumulate next to the current one. Follow-up tools
+    # (get_result_page, get_result_details) operate on the same result set and
+    # should keep appending.
+    ctx.deps.state.tool_logs = []
+
+    # Mirror into the frontend-facing UiState. The agent never reads from
+    # ctx.deps.state — it's exclusively for the UI to render the map + cards.
+    ctx.deps.state.results = [UiApartment.from_dataframe_row(row) for _, row in df.iterrows()]
+    ctx.deps.state.active_id = None
+    # Single, clean status line. Coord-less listings are silently dropped
+    # (they're not renderable on the map anyway) — surfacing a separate
+    # "K skipped" warning in the chat indicator was noise.
+    _push_log(ctx.deps.state.tool_logs, _format_search_summary(params, len(df)))
+
+    return _return_with_state(
+        return_value=ctx.deps.session.result_set.summary(),
+        ui_state=ctx.deps.state,
+    )
 
 
 @toolset.tool
 async def get_result_details(
     ctx: RunContext[ChatDeps],
     indices: list[int],
-) -> str:
+) -> ToolReturn | str:
     """Show full details for specific listings from the current result set.
 
     Args:
@@ -98,6 +135,20 @@ async def get_result_details(
     rs = ctx.deps.session.result_set
     if rs is None:
         return "No active search results. Run search_apartments first."
+
+    # If the user is asking about exactly one listing, treat that as a UI
+    # "expand this card" hint so the frontend's detail panel opens
+    # automatically. Multi-listing detail calls leave active_id alone.
+    state_mutated = False
+    if len(indices) == 1:
+        pos = indices[0] - 1
+        if 0 <= pos < len(ctx.deps.state.results):
+            ctx.deps.state.active_id = ctx.deps.state.results[pos].id
+            _push_log(ctx.deps.state.tool_logs, f"Opened listing #{indices[0]}.")
+            state_mutated = True
+
+    if state_mutated:
+        return _return_with_state(return_value=rs.detail(indices), ui_state=ctx.deps.state)
     return rs.detail(indices)
 
 
@@ -117,3 +168,43 @@ async def get_result_page(
     if rs is None:
         return "No active search results. Run search_apartments first."
     return rs.page(page, page_size)
+
+
+def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:
+    """Emit a STATE_SNAPSHOT alongside the tool's normal return value.
+
+    Pydantic AI's AG-UI adapter yields any `BaseEvent` placed in
+    `ToolReturn.metadata`. Snapshotting the full state on every mutating
+    tool call is simpler than diffing — the payload is small (≤ a few KB)
+    and CopilotKit applies snapshots idempotently.
+    """
+    return ToolReturn(
+        return_value=return_value,
+        metadata=[
+            StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=ui_state.model_dump(),
+            ),
+        ],
+    )
+
+
+def _push_log(logs: list[str], entry: str) -> None:
+    logs.append(entry)
+    if len(logs) > _TOOL_LOG_KEEP:
+        del logs[: len(logs) - _TOOL_LOG_KEEP]
+
+
+def _format_search_summary(params: SearchParams, count: int) -> str:
+    """One-line static summary of a search for the UI status indicator.
+
+    Intentionally minimal: count + district (if filtered). Other filters
+    (price, rooms, area) are omitted to keep the pill readable when many
+    constraints stack — the user's chat message already shows what they
+    asked for; this line confirms what was found. Future tools follow the
+    same shape: short factual one-liner, tool-authored, no LLM round-trip.
+    """
+    base = f"Found {count} apartment{'s' if count != 1 else ''}"
+    if params.districts:
+        return f"{base} in {', '.join(params.districts)}."
+    return f"{base}."

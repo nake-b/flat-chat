@@ -28,10 +28,11 @@ Source: [`architecture.drawio`](architecture.drawio) — edit in draw.io Desktop
 ```
 flat-chat/
 ├── docker-compose.yml          # Orchestrates all services
-├── nginx/                      # Reverse proxy — only port 80 exposed to host
+├── nginx/                      # Reverse proxy — only port 80 exposed to host (also serves /tiles/)
+├── data/tiles/                 # Protomaps .pmtiles extract for MapLibre (bind-mounted into nginx)
 ├── services/
-│   ├── frontend/               # React + Vite + TypeScript (built into shared volume)
-│   ├── backend/                # FastAPI + Pydantic AI agent + SearchService — see services/backend/README.md
+│   ├── frontend/               # React + Vite + CopilotKit + MapLibre — see services/frontend/src/
+│   ├── backend/                # FastAPI + Pydantic AI agent (AG-UI streaming) — see services/backend/README.md
 │   ├── ingestion/              # Cron-triggered data ingestion
 │   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
 └── agent-compound-docs/        # Architecture decisions, plans, design conversations
@@ -39,15 +40,16 @@ flat-chat/
 
 ## Tech Stack
 
-| Layer            | Technology                                                        |
-|------------------|-------------------------------------------------------------------|
-| Frontend         | React, Vite, TypeScript                                           |
-| Backend          | FastAPI, SQLAlchemy, Pydantic AI                                  |
-| LLM              | Pydantic AI agent → OpenRouter (presets for server-side fallback) |
-| Embeddings       | Jina v3 (`retrieval.query` task LoRA)                             |
-| Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)           |
-| Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006` |
-| Infrastructure   | Docker, Docker Compose, Nginx                                     |
+| Layer            | Technology                                                                                          |
+|------------------|-----------------------------------------------------------------------------------------------------|
+| Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
+| Backend          | FastAPI, SQLAlchemy, **Pydantic AI with AG-UI Protocol adapter**                                    |
+| LLM              | Pydantic AI agent → Anthropic preferred (prompt caching), OpenRouter as fallback                    |
+| Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
+| Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |
+| Map tiles        | Self-hosted **Protomaps** `.pmtiles` (Berlin extract) — served by nginx at `/tiles/`                |
+| Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006`                                   |
+| Infrastructure   | Docker, Docker Compose, Nginx                                                                       |
 
 ## Where to look next
 
@@ -59,4 +61,5 @@ flat-chat/
 
 - User describes apartment requirements to the chatbot.
 - Iterative refinement through conversation.
+- Results stream into a persistent map + apartment cards artifact alongside the chat (chat-host layout, desktop-only).
 - Berlin only.

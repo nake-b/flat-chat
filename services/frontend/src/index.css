@@ -1,0 +1,420 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "maplibre-gl/dist/maplibre-gl.css";
+@import "@copilotkit/react-ui/styles.css";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Global frame.
+   ────────────────────────────────────────────────────────────────────── */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: theme("colors.paper.DEFAULT");
+  color: theme("colors.ink.DEFAULT");
+  font-family: theme("fontFamily.sans");
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   CopilotKit chat surface overrides.
+
+   CopilotChat renders into `.copilotKitChat` with descendants
+   `.copilotKitMessages`, `.copilotKitUserMessage`, `.copilotKitAssistantMessage`,
+   `.copilotKitInput`, `.copilotKitInputControls` etc. We override the visual
+   layer aggressively while keeping the markdown / scroll / accessibility
+   behavior they own.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Pin the composer to the bottom and let the messages list grow.
+   ChatGPT/Claude style: messages fill the available height; the input
+   sits at the bottom of the pane regardless of how few turns there are.
+   CopilotKit's default markup is `.copilotKitChat > .copilotKitChatBody >
+   (.copilotKitMessages + .copilotKitInput)`, all without explicit flex,
+   so we add it. */
+.copilotKitChat,
+.copilotKitWindow {
+  height: 100% !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: theme("fontFamily.sans") !important;
+}
+.copilotKitChat > *,
+.copilotKitChatBody {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: 100% !important;
+}
+.copilotKitMessages {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  background: transparent !important;
+  padding: 1.5rem 1.75rem 1rem !important;
+}
+.copilotKitInput,
+.copilotKitInputContainer {
+  flex: 0 0 auto !important;
+}
+
+/* Message rows. CopilotKit applies both `.copilotKitMessage` AND the role
+   class (`.copilotKitUserMessage` / `.copilotKitAssistantMessage`) to the
+   SAME element — there's no separate row wrapper. So we can't flex-align
+   from a parent. Instead, force the user bubble (which we set max-width on
+   below) to the right edge with `margin-left: auto`. */
+.copilotKitMessage {
+  margin-bottom: 0.85rem !important;
+}
+.copilotKitMessage.copilotKitUserMessage {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+.copilotKitMessage.copilotKitAssistantMessage {
+  margin-right: auto !important;
+  margin-left: 0 !important;
+}
+
+/* User bubble — Berlin red, right-aligned, sharp except the inner corner.
+   `width: fit-content` makes short messages ("only fshain") hug the text
+   instead of stretching to the full max-width band. `max-width: 78%` still
+   caps long messages and forces wrapping. */
+.copilotKitUserMessage {
+  background: theme("colors.red.DEFAULT") !important;
+  color: white !important;
+  border-radius: 14px 14px 4px 14px !important;
+  padding: 0.65rem 0.9rem !important;
+  font-size: 0.9375rem !important;
+  line-height: 1.45 !important;
+  width: fit-content !important;
+  max-width: 78% !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.005em !important;
+  box-shadow: 0 1px 0 rgba(176, 0, 48, 0.18) !important;
+}
+
+/* Assistant bubble — white with hairline border, left-aligned. */
+.copilotKitAssistantMessage {
+  background: #ffffff !important;
+  color: theme("colors.ink.DEFAULT") !important;
+  border: 1px solid theme("colors.paper.rule") !important;
+  border-radius: 14px 14px 14px 4px !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.9375rem !important;
+  line-height: 1.55 !important;
+  max-width: 84% !important;
+  letter-spacing: -0.005em !important;
+}
+
+.copilotKitAssistantMessage p:first-child {
+  margin-top: 0;
+}
+.copilotKitAssistantMessage p:last-child {
+  margin-bottom: 0;
+}
+.copilotKitAssistantMessage strong {
+  font-weight: 600;
+  color: theme("colors.ink.DEFAULT");
+}
+.copilotKitAssistantMessage code {
+  font-family: theme("fontFamily.mono");
+  font-size: 0.85em;
+  background: theme("colors.paper.dim");
+  padding: 0.05em 0.35em;
+  border-radius: 2px;
+}
+.copilotKitAssistantMessage table {
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 0.5rem 0;
+}
+.copilotKitAssistantMessage th,
+.copilotKitAssistantMessage td {
+  border-bottom: 1px solid theme("colors.paper.rule");
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+}
+.copilotKitAssistantMessage th {
+  font-weight: 600;
+  color: theme("colors.ink.soft");
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Message action toolbar (regen/copy/thumbs-up/thumbs-down) — hidden.
+   CopilotKit ships these as `.copilotKitMessageControls` containing
+   `.copilotKitMessageControlButton`s, but they have no handlers wired in
+   our self-managed AG-UI setup, so they were dead UI. Drop entirely. */
+.copilotKitMessageActions,
+.copilotKitMessage-actions,
+.copilotKitMessageControls,
+.copilotKitMessageControlButton {
+  display: none !important;
+}
+
+/* Tool-call lifecycle nodes. CopilotKit renders each tool invocation as a
+   *bare unclassed* <div> in `.copilotKitMessagesContainer` (siblings to
+   the message bubbles), containing args + name + result spans. Per the
+   tool-display research (chat thread for dialogue; map + cards ARE the
+   result widget), we want zero in-thread chrome for tool calls. The map
+   pins and card strip already show the work.
+   EXCEPT: `useCoAgentStateRender` also wraps its output in an unclassed
+   div with the same shape. We re-show that wrapper specifically by
+   anchoring on the `.fc-status-line` marker we render inside it. */
+.copilotKitMessagesContainer > div:not(.copilotKitMessage) {
+  display: none !important;
+}
+.copilotKitMessagesContainer > div:has(.fc-status-line) {
+  display: block !important;
+}
+
+/* "Powered by CopilotKit" — hide. We have our own footer story. */
+.poweredBy,
+.copilotKitInputFooter {
+  display: none !important;
+}
+
+/* CopilotKit's floating dev-console kite + promo popup — both off in
+   production-feeling UI. They re-open every time the user accidentally
+   clicks the corner. */
+.copilotKitDevConsole,
+[data-copilotkit-promo],
+[class*="copilotkit-promo"],
+[class*="DevConsole"],
+[class*="dev-console-toggle"] {
+  display: none !important;
+}
+
+/* Composer — flat band with thick top rule, plain send.
+   CopilotKit's markup is `.copilotKitInputContainer > .copilotKitInput >
+   (textarea + .copilotKitInputControls)`. The OUTER container is the
+   full-width band (border-top, padding, paper bg). The INNER `.copilotKitInput`
+   is the textarea+button row — must be explicitly `width: 100%` so it
+   doesn't shrink-to-fit and leave the textarea narrow inside a wide
+   parent (the original bug: composer was 540px but the textarea row
+   inside was only 287px). */
+.copilotKitInputContainer {
+  background: theme("colors.paper.DEFAULT") !important;
+  border-top: 1px solid theme("colors.paper.rule") !important;
+  border-radius: 0 !important;
+  padding: 0.85rem 1.25rem 1.1rem !important;
+  display: block !important;
+  width: 100% !important;
+}
+.copilotKitInput {
+  background: transparent !important;
+  border-top: none !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  width: 100% !important;
+}
+.copilotKitInput textarea,
+.copilotKitInputContainer textarea {
+  background: white !important;
+  border: 1px solid theme("colors.paper.rule") !important;
+  border-right: none !important;
+  border-radius: 2px 0 0 2px !important;
+  font-family: theme("fontFamily.sans") !important;
+  font-size: 0.9375rem !important;
+  padding: 0.75rem 0.9rem !important;
+  color: theme("colors.ink.DEFAULT") !important;
+  resize: none !important;
+  box-shadow: none !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  min-height: 3rem !important;
+  max-height: 8rem !important;
+  display: block !important;
+}
+.copilotKitInput textarea:focus,
+.copilotKitInputContainer textarea:focus {
+  outline: none !important;
+  border-color: theme("colors.ink.soft") !important;
+}
+.copilotKitInput textarea::placeholder,
+.copilotKitInputContainer textarea::placeholder {
+  color: theme("colors.ink.ghost") !important;
+  font-style: normal !important;
+}
+/* The controls cluster — sits inline-right of the textarea. */
+.copilotKitInputControls {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  flex: 0 0 auto !important;
+}
+.copilotKitInputControls > * {
+  display: flex !important;
+  align-items: stretch !important;
+}
+.copilotKitInput button,
+.copilotKitInputContainer button[type="submit"],
+.copilotKitInputControlButton {
+  background: theme("colors.red.DEFAULT") !important;
+  color: white !important;
+  border-radius: 0 2px 2px 0 !important;
+  border: 1px solid theme("colors.red.DEFAULT") !important;
+  font-family: theme("fontFamily.sans") !important;
+  font-weight: 500 !important;
+  padding: 0 0.85rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 2.5rem !important;
+  cursor: pointer !important;
+  transition: background 140ms, border-color 140ms !important;
+}
+.copilotKitInput button:hover,
+.copilotKitInputContainer button[type="submit"]:hover,
+.copilotKitInputControlButton:hover {
+  background: theme("colors.red.deep") !important;
+  border-color: theme("colors.red.deep") !important;
+}
+.copilotKitInput button:disabled,
+.copilotKitInputControlButton:disabled {
+  background: theme("colors.paper.dim") !important;
+  border-color: theme("colors.paper.rule") !important;
+  color: theme("colors.ink.ghost") !important;
+  cursor: not-allowed !important;
+}
+.copilotKitInputControlButton svg {
+  width: 1.05rem !important;
+  height: 1.05rem !important;
+}
+
+/* Tool-call lifecycle "Done" badge inside the assistant pill. */
+.copilotKitFunctionCallContainer,
+.copilotKitFunctionCall {
+  font-family: theme("fontFamily.mono") !important;
+  font-size: 0.78rem !important;
+  background: theme("colors.paper.dim") !important;
+  border: 1px solid theme("colors.paper.rule") !important;
+  border-radius: 2px !important;
+  margin: 0.4rem 0 !important;
+  letter-spacing: -0.005em !important;
+}
+
+/* Initial "starter" greeting bubble — strip CopilotKit's heavy chrome. */
+.copilotKitMessage[data-message-role="assistant"]:first-child {
+  background: transparent !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   MapLibre overrides — kill rounded UI chrome, civic look.
+   ────────────────────────────────────────────────────────────────────── */
+
+.maplibregl-ctrl-group {
+  border-radius: 0 !important;
+  box-shadow: 0 1px 0 theme("colors.paper.rule") !important;
+}
+.maplibregl-ctrl-group button {
+  border-radius: 0 !important;
+}
+.maplibregl-popup-content {
+  border-radius: 0 !important;
+  font-family: theme("fontFamily.sans") !important;
+}
+
+/* Civic-style hover popup over map dots — sharp corners, hairline border,
+   mono caps labels with sans values below. Pointer-events: none on the
+   whole popup so it never intercepts mouseover/click on the underlying
+   canvas (otherwise a hover-popup hovering near the cursor stops the
+   user from clicking the dot it labels). */
+.fc-map-popup {
+  pointer-events: none !important;
+}
+.fc-map-popup .maplibregl-popup-content {
+  background: white !important;
+  border: 1px solid theme("colors.paper.rule") !important;
+  border-radius: 0 !important;
+  padding: 0.55rem 0.7rem !important;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08) !important;
+  min-width: 8rem !important;
+  pointer-events: none !important;
+}
+.fc-map-popup .maplibregl-popup-tip {
+  display: none !important;
+}
+.fc-popup-title {
+  font-family: theme("fontFamily.sans") !important;
+  font-size: 12px !important;
+  line-height: 1.3 !important;
+  color: theme("colors.ink.DEFAULT") !important;
+  font-weight: 500 !important;
+  margin-bottom: 0.35rem !important;
+  padding-bottom: 0.3rem !important;
+  border-bottom: 1px solid theme("colors.paper.rule") !important;
+}
+.fc-popup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  line-height: 1.25;
+}
+.fc-popup-label {
+  font-family: theme("fontFamily.mono") !important;
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: theme("colors.ink.ghost") !important;
+}
+.fc-popup-value {
+  font-family: theme("fontFamily.sans") !important;
+  font-size: 12px !important;
+  color: theme("colors.ink.DEFAULT") !important;
+  font-feature-settings: "tnum";
+}
+.maplibregl-ctrl-attrib {
+  background: rgba(255, 255, 255, 0.85) !important;
+  font-family: theme("fontFamily.sans") !important;
+  font-size: 10px !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Card hover affordance — left red rule that slides in.
+   ────────────────────────────────────────────────────────────────────── */
+
+.fc-card {
+  position: relative;
+  isolation: isolate;
+}
+.fc-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: theme("colors.red.DEFAULT");
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 180ms theme("transitionTimingFunction.snap");
+}
+.fc-card:hover::before,
+.fc-card[data-hovered="true"]::before {
+  transform: scaleY(1);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Selection.
+   ────────────────────────────────────────────────────────────────────── */
+
+::selection {
+  background: theme("colors.red.DEFAULT");
+  color: white;
+}

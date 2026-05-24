@@ -68,7 +68,15 @@ class _RetryingOpenRouterModel(OpenRouterModel):
 def build_openrouter_model(settings: Settings) -> Model:
     """Build an OpenRouter-backed chat model with two stacked retry budgets:
     HTTP-level (OpenAI SDK) and body-embedded errors (our subclass).
+
+    Owns its own validation — the orchestrator only checks for key presence.
     """
+    if not settings.openrouter_model:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is set but OPENROUTER_MODEL is empty. "
+            "Set a model slug (e.g. 'anthropic/claude-sonnet-4-6') or a "
+            "preset (e.g. '@preset/my-preset')."
+        )
     client = AsyncOpenAI(
         api_key=settings.openrouter_api_key,
         base_url=_OPENROUTER_BASE_URL,

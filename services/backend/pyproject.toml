@@ -10,11 +10,11 @@ dependencies = [
     "pgvector>=0.3",
     "pydantic-settings>=2.7",
     "pydantic-ai",
+    "pydantic-ai-slim[ag-ui]",
     "pandas>=2.0",
     "geoalchemy2>=0.17",
     "httpx>=0.28",
-    "opentelemetry-sdk",
-    "opentelemetry-exporter-otlp-proto-http",
+    "arize-phoenix-otel",
     "openinference-instrumentation-pydantic-ai",
 ]
 

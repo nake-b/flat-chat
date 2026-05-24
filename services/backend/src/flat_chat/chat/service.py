@@ -1,9 +1,15 @@
 import logging
 
+from openinference.instrumentation import using_session
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 from sqlalchemy.orm import Session
+from starlette.requests import Request
+from starlette.responses import Response
 
-from flat_chat.chat.agent import AgentResult, run_agent
-from flat_chat.chat.sessions import SessionStore
+from flat_chat.chat.agent import agent
+from flat_chat.chat.providers import build_chat_model
+from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.search.service import SearchService
 
@@ -11,11 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    """Orchestrates a single user message against the agent.
+    """Orchestrates a single agent run against an AG-UI request.
 
     Loads the session, assembles ChatDeps (request-scoped services +
-    session state), runs the agent, then extends and saves the session's
-    message history. Knows nothing about HTTP or storage backend.
+    session state + the UiState the AG-UI adapter will set from the
+    request body), then hands the request to AGUIAdapter and persists
+    the new history + final state when the run completes.
+
+    Knows nothing about FastAPI routing or storage backend internals.
     """
 
     def __init__(
@@ -28,22 +37,42 @@ class ChatService:
         self.search_service = search_service
         self.store = store
 
-    async def send_message(self, session_id: str, content: str) -> AgentResult:
-        # Serialize concurrent requests on the same conversation so message
-        # history isn't corrupted by interleaved appends. Cheap insurance
-        # against double-clicks / retries; deletable when sessions move to DB.
-        async with self.store.lock(session_id):
+    async def dispatch_agent_request(self, request: Request) -> Response:
+        # Parse the AG-UI request envelope first so we can resolve the
+        # session from its `thread_id` / conversation_id. The adapter
+        # subsequently runs the agent, streams events back, and reads
+        # `deps.state` to emit JSON-Patch deltas to the frontend.
+        adapter = await AGUIAdapter.from_request(request, agent=agent)
+        session_id = adapter.conversation_id
+
+        try:
             session = self.store.get(session_id)
-            deps = ChatDeps(
-                db=self.db,
-                search_service=self.search_service,
-                session=session,
-            )
-            try:
-                result = await run_agent(content, deps)
-            except Exception:
-                logger.exception("LLM call failed")
-                raise
-            session.message_history.extend(result.new_messages)
+        except SessionNotFoundError:
+            logger.warning("Agent request for unknown session %s", session_id)
+            raise
+
+        deps = ChatDeps(
+            db=self.db,
+            search_service=self.search_service,
+            session=session,
+            state=session.ui_state,
+        )
+
+        async def on_complete(result: AgentRunResult) -> None:
+            # AG-UI sends the full thread on every call; rebuild history from
+            # the run result so the GET history endpoint sees the same set
+            # the frontend just rendered. ui_state mutates in place, so a
+            # reference assignment is enough — `state` is the same object
+            # we passed in (the adapter uses a setter, not `replace`).
+            session.message_history = list(result.all_messages())
+            session.ui_state = deps.state
             self.store.save(session)
-            return result
+
+        with using_session(session_id):
+            return adapter.streaming_response(
+                adapter.run_stream(
+                    deps=deps,
+                    model=build_chat_model(),
+                    on_complete=on_complete,
+                )
+            )
