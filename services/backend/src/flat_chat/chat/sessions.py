@@ -1,5 +1,4 @@
 import asyncio
-from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 from uuid import uuid4
@@ -36,11 +35,20 @@ class InMemorySessionStore:
     Fine for the MVP — the Protocol is the bridge to a DB-backed impl.
     """
 
+    _MAX_SESSIONS = 100
+
     def __init__(self) -> None:
         self._sessions: dict[str, ChatSession] = {}
-        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # Locks are created lazily for existing sessions only — never indexed
+        # by arbitrary IDs, which would let an attacker grow the dict via the
+        # lock() call alone.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     def create(self) -> ChatSession:
+        if len(self._sessions) >= self._MAX_SESSIONS:
+            oldest_id = min(self._sessions, key=lambda k: self._sessions[k].created_at)
+            del self._sessions[oldest_id]
+            self._locks.pop(oldest_id, None)
         session = ChatSession(id=str(uuid4()))
         self._sessions[session.id] = session
         return session
@@ -58,4 +66,13 @@ class InMemorySessionStore:
         self._sessions[session.id] = session
 
     def lock(self, session_id: str) -> asyncio.Lock:
+        # Raise on unknown session_id — do NOT lazily create a lock for any
+        # id the caller provides. A `defaultdict(asyncio.Lock)` here would
+        # let any caller grow `_locks` unboundedly by sending requests with
+        # spoofed thread_ids. The SessionNotFoundError propagates through
+        # ChatService and surfaces as 404 to the client.
+        if session_id not in self._sessions:
+            raise SessionNotFoundError(session_id)
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
         return self._locks[session_id]

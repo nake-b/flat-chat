@@ -1,6 +1,8 @@
-from pydantic_ai import FunctionToolset, RunContext
+from ag_ui.core import EventType, StateSnapshotEvent
+from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
 from flat_chat.chat.state import ChatDeps, ResultSet
+from flat_chat.chat.ui_state import UiApartment
 from flat_chat.search.schemas import SearchParams, SortBy
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
@@ -22,7 +24,7 @@ async def search_apartments(
     near_lon: float | None = None,
     radius_km: float = 2.0,
     sort_by: SortBy = "relevance",
-) -> str:
+) -> ToolReturn:
     """Search for apartments in Berlin. Replaces the current result set.
 
     Args:
@@ -81,15 +83,35 @@ async def search_apartments(
         )
 
     df = await ctx.deps.search_service.search(params)
+
+    # Drop listings without coordinates BEFORE building ResultSet + UiState so
+    # all three counts (chat prose, cards, map) agree — the map can only render
+    # markers for apartments with lat/lng, and silently dropping them downstream
+    # caused user-visible count mismatches. The filter belongs at the tool layer;
+    # SearchService stays general.
+    df = df.dropna(subset=["latitude", "longitude"])
+    df = df.reset_index(drop=True)
+
     ctx.deps.session.result_set = ResultSet(df=df, params=params, notes=notes)
-    return ctx.deps.session.result_set.summary()
+
+    # Mirror into the frontend-facing UiState. The agent never reads from
+    # ctx.deps.state — it's exclusively for the UI to render the map + cards.
+    # Status-pill copy is owned entirely by the frontend (state/toolStatus.ts);
+    # tools push data only.
+    ctx.deps.state.results = [UiApartment.from_dataframe_row(row) for _, row in df.iterrows()]
+    ctx.deps.state.active_id = None
+
+    return _return_with_state(
+        return_value=ctx.deps.session.result_set.summary(),
+        ui_state=ctx.deps.state,
+    )
 
 
 @toolset.tool
 async def get_result_details(
     ctx: RunContext[ChatDeps],
     indices: list[int],
-) -> str:
+) -> ToolReturn | str:
     """Show full details for specific listings from the current result set.
 
     Args:
@@ -98,7 +120,17 @@ async def get_result_details(
     rs = ctx.deps.session.result_set
     if rs is None:
         return "No active search results. Run search_apartments first."
-    return rs.detail(indices)
+
+    # Single-index calls are a UI "expand this card" hint — open the detail
+    # panel for that listing. Multi-index calls snap active_id to the first
+    # index in the batch so the UI has a consistent anchor (the first card
+    # the user asked about).
+    first = indices[0]
+    pos = first - 1
+    if 0 <= pos < len(ctx.deps.state.results):
+        ctx.deps.state.active_id = ctx.deps.state.results[pos].id
+
+    return _return_with_state(return_value=rs.detail(indices), ui_state=ctx.deps.state)
 
 
 @toolset.tool
@@ -106,7 +138,7 @@ async def get_result_page(
     ctx: RunContext[ChatDeps],
     page: int = 1,
     page_size: int = 10,
-) -> str:
+) -> ToolReturn | str:
     """Show a compact page of the current result set.
 
     Args:
@@ -116,4 +148,26 @@ async def get_result_page(
     rs = ctx.deps.session.result_set
     if rs is None:
         return "No active search results. Run search_apartments first."
-    return rs.page(page, page_size)
+
+    return _return_with_state(
+        return_value=rs.page(page, page_size), ui_state=ctx.deps.state
+    )
+
+
+def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:
+    """Emit a STATE_SNAPSHOT alongside the tool's normal return value.
+
+    Pydantic AI's AG-UI adapter yields any `BaseEvent` placed in
+    `ToolReturn.metadata`. Snapshotting the full state on every mutating
+    tool call is simpler than diffing — the payload is small (≤ a few KB)
+    and CopilotKit applies snapshots idempotently.
+    """
+    return ToolReturn(
+        return_value=return_value,
+        metadata=[
+            StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=ui_state.model_dump(),
+            ),
+        ],
+    )

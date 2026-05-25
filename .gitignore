@@ -220,3 +220,11 @@ __marimo__/
 node_modules/
 .env.local
 .env.*.local
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Scraped apartment data — checked in as a separate dataset, not source code.
+data/scraped/
+# Protomaps tile extracts live alongside their README; only the README is tracked.
+data/tiles/*.pmtiles
