@@ -1,3 +1,14 @@
+"""Anthropic-direct chat-model builder.
+
+Prompt caching is the reason Anthropic-direct exists as a separate
+provider seam rather than going through a generic OpenAI-compatible
+gateway. Caching the static INSTRUCTIONS block + tool schemas + the
+growing message tail collapses repeat-conversation cost by ~90% for our
+turn-after-turn UX. See `agent-compound-docs/decisions/chat-runtime-and-streaming.md`
+for the provider seam contract, and `providers/__init__.py` for the
+four-layer rule + the "add a provider" recipe.
+"""
+
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider

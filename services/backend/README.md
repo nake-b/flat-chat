@@ -46,6 +46,19 @@ CI runs the same checks on every push and PR — see [`.github/workflows/ci.yml`
 
 The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx. Sending a new user message goes through `/api/agent` (AG-UI streaming). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed when the agent path landed.
 
+### Chat runtime (how the streaming POST actually works)
+
+Per turn, the frontend POSTs an AG-UI envelope (`thread_id` + full message history + current `UiState` mirror) to `/api/agent`. The backend resolves the session from `thread_id`, acquires a per-session async lock, runs the Pydantic AI agent via `AGUIAdapter.run_stream`, and streams SSE events back on the same response body — text deltas, tool-call lifecycle, and `STATE_SNAPSHOT` events (the latter opt-in via `ToolReturn(metadata=[...])` in tools that mutate state). After the run, `on_complete(result)` rebuilds `session.message_history` from `result.all_messages()` and saves.
+
+Load-bearing files:
+- [`api/agent.py`](src/flat_chat/api/agent.py) — `POST /api/agent` route; runtime-discovery GET probes (`/info`, `/threads`).
+- [`chat/service.py`](src/flat_chat/chat/service.py) — `ChatService.dispatch_agent_request` (envelope parsing, exception translation, per-session locking), `_with_session_and_lock` generator wrapper, `on_complete` persistence hook.
+- [`chat/sessions.py`](src/flat_chat/chat/sessions.py) — `InMemorySessionStore` with `_MAX_SESSIONS = 100` LRU cap and per-session `asyncio.Lock`. `lock()` raises on unknown ids (DoS guard).
+- [`chat/tools.py`](src/flat_chat/chat/tools.py) — `_return_with_state` helper. Every tool that mutates `UiState` must use it; mutations otherwise stay invisible to the frontend.
+- [`../../nginx/nginx.conf`](../../nginx/nginx.conf) — `location /api/agent` block with `proxy_buffering off` and `Accept-Encoding ""` strip (essentials for SSE through a proxy).
+
+Full pipeline, rationale for each layer, exception translation table, rejected alternatives, and the answer to "why are state events opt-in?" live in [`agent-compound-docs/decisions/chat-runtime-and-streaming.md`](../../agent-compound-docs/decisions/chat-runtime-and-streaming.md). Read that before touching any of the files above.
+
 ## Project Layout
 
 ```

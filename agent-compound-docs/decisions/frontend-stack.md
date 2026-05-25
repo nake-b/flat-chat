@@ -129,6 +129,8 @@ Thinking…           ← LLM writing the reply
 
 **Why this and not `tool_logs` on `UiState`** (the previous design): putting status strings in shared state coupled tool code to UI copy, deleted on every search (lost history), and couldn't represent the "Thinking…" phase (no signal until the first tool finished). Tool-call lifecycle events are first-class in AG-UI and already streamed — the redesign just consumes what was already there.
 
+**Upstream wire mechanics** — how `TOOL_CALL_*` events get from the agent to the SSE stream (and why `STATE_SNAPSHOT` is opt-in via `ToolReturn.metadata`, not auto-emitted) is documented in [`chat-runtime-and-streaming.md`](./chat-runtime-and-streaming.md). Read it before adjusting `chat/service.py`, `chat/tools.py`, or the nginx `/api/agent` block.
+
 ### What stays local (not in shared state)
 
 - Map zoom/center (unless the user explicitly invokes a "search this area" action — deferred)
@@ -167,7 +169,7 @@ The runtime adapter works on Vite but reading `state.results` into the map and c
 ## Consequences
 
 - **New backend file** `chat/ui_state.py`; **new backend route** `api/agent.py`. `ChatSession` and `ChatDeps` grow a `ui_state` field; `ChatService` exposes a `build_run_deps` helper for the AG-UI dispatch path. The existing REST `POST /api/conversations/{id}/messages` endpoint is removed.
-- **State events are explicit, not automatic.** Pydantic AI's AG-UI adapter does *not* auto-emit `STATE_SNAPSHOT` / `STATE_DELTA` events when `deps.state` mutates — confirmed by reading `pydantic_ai/ui/ag_ui/_event_stream.py` (the imports list every event type except the state ones). Tools that mutate `state` must wrap their return in `ToolReturn(return_value=…, metadata=[StateSnapshotEvent(snapshot=state.model_dump())])`; the adapter yields any `BaseEvent` placed in `ToolReturn.metadata` into the stream alongside the tool result. `chat/tools.py` centralizes this via a `_return_with_state` helper.
+- **State events are explicit, not automatic.** Pydantic AI's AG-UI adapter does *not* auto-emit `STATE_SNAPSHOT` / `STATE_DELTA` events when `deps.state` mutates — confirmed by reading `pydantic_ai/ui/ag_ui/_event_stream.py` (the imports list every event type except the state ones). Tools that mutate `state` must wrap their return in `ToolReturn(return_value=…, metadata=[StateSnapshotEvent(snapshot=state.model_dump())])`; the adapter yields any `BaseEvent` placed in `ToolReturn.metadata` into the stream alongside the tool result. `chat/tools.py` centralizes this via a `_return_with_state` helper. The full opt-in contract (and the rejected alternative of auto-emission) lives in [`chat-runtime-and-streaming.md`](./chat-runtime-and-streaming.md) §State emission is opt-in.
 - **Nginx config** must add a `/api/agent` location block with SSE-safe settings (`proxy_buffering off`, `proxy_http_version 1.1`, `Connection ""`, `proxy_read_timeout 3600s`) and a `/tiles/` location with CORS + Range support for `.pmtiles`. The backend also sets `X-Accel-Buffering: no` belt-and-braces.
 - **Frontend rewrite** under `services/frontend/src/`: new `App.tsx` chat-host layout, `state/UiState.ts` (manual TS mirror of the Pydantic model), `hooks/useUiState.ts` (single seam wrapping `useCoAgent`), and new components `ChatPane.tsx` / `MapPane.tsx` / `CardsPane.tsx` / `CardStrip.tsx` / `CardDetail.tsx`. The legacy `Chat.tsx` / `Chat.css` / `types.ts` are deleted.
 - **Type sync chore**: `UiState` exists in Python (Pydantic) and TypeScript (manual mirror). No first-party codegen exists yet — keep them in sync manually for MVP; consider `pydantic-to-typescript` or a tiny in-repo codegen if the chore starts dragging.
@@ -179,6 +181,7 @@ The runtime adapter works on Vite but reading `state.results` into the map and c
 ## See also
 
 - `agent-compound-docs/conversations/frontend-stack-and-generative-ui.md` — long-form research archive: AG-UI sub-patterns, library shootouts, layout precedents (Zillow / Redfin / Idealista / Airbnb / Claude Artifacts), and the strategic "bet" framing
+- `agent-compound-docs/decisions/chat-runtime-and-streaming.md` — endpoint design, how SSE is enabled, session store + locking, exception translation, `_return_with_state` opt-in contract, persistence on completion
 - `agent-compound-docs/decisions/backend-architecture.md` — domain layering; `chat/`, `search/`, `api/` boundaries
 - `agent-compound-docs/decisions/agent-framework.md` — why Pydantic AI
 - `agent-compound-docs/decisions/llm-tool-result-design.md` — `ResultSet`'s prose/CSV/detail contract; `UiState` is a *parallel* projection, not a replacement

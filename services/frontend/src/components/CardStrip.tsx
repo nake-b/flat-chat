@@ -11,11 +11,14 @@ const MAX_CARD_W = 320;
 
 function pickCardCount(containerWidth: number): number {
   if (containerWidth <= 0) return 2;
-  // Largest N such that container/N >= MIN_CARD_W
+  // Dual constraint: per-card width must land in [MIN_CARD_W, MAX_CARD_W].
+  //   - maxByMin: cap N before each card shrinks past MIN_CARD_W (floor).
+  //   - minByMax: floor N before a single card stretches past MAX_CARD_W
+  //               (ceil — round up so narrow viewports get 2 cards, not 1).
   const maxByMin = Math.max(1, Math.floor(containerWidth / MIN_CARD_W));
-  // Smallest N such that container/N <= MAX_CARD_W (so we don't get a huge
-  // single card on narrow viewports — round up).
   const minByMax = Math.max(1, Math.ceil(containerWidth / MAX_CARD_W));
+  // Hard cap at 3 visible cards: more than that and prices/titles get hard
+  // to scan in a glance. Past N=3, horizontal scroll picks up the slack.
   return Math.max(minByMax, Math.min(maxByMin, 3));
 }
 

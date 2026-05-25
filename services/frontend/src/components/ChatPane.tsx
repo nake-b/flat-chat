@@ -14,6 +14,12 @@ export function ChatPane() {
   // "Thinking…" — appears when the agent is running but no tool pill is
   // currently executing. Same inline-injection mechanism as the tool pills
   // above so it sits in the same vertical rhythm in the chat thread.
+  //
+  // Needs its own hook (not folded into `useToolStatusPills`) because the
+  // `running` flag comes from `useCoAgent` — the wildcard `useCopilotAction`
+  // only fires per tool call and can't see the LLM-only thinking phase
+  // between tool calls. ThinkingSlot self-suppresses while any tool pill is
+  // active (zustand counter in useToolStatus.tsx).
   useCoAgentStateRender<UiState>({
     name: AGENT_NAME,
     render: () => <ThinkingSlot />,

@@ -66,6 +66,11 @@ class InMemorySessionStore:
         self._sessions[session.id] = session
 
     def lock(self, session_id: str) -> asyncio.Lock:
+        # Raise on unknown session_id — do NOT lazily create a lock for any
+        # id the caller provides. A `defaultdict(asyncio.Lock)` here would
+        # let any caller grow `_locks` unboundedly by sending requests with
+        # spoofed thread_ids. The SessionNotFoundError propagates through
+        # ChatService and surfaces as 404 to the client.
         if session_id not in self._sessions:
             raise SessionNotFoundError(session_id)
         if session_id not in self._locks:

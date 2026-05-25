@@ -1,3 +1,14 @@
+"""FastAPI app entrypoint.
+
+Process-wide setup (observability, embedder) happens in the `lifespan`
+context manager — never at module import. Importing `flat_chat.main`
+from a test or a script should be free of side effects. See CLAUDE.md
+§Architecture Notes "No side effects at module import" for the rule.
+
+Routers are mounted below; runtime behavior for the streaming `/api/agent`
+route is documented in `agent-compound-docs/decisions/chat-runtime-and-streaming.md`.
+"""
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
