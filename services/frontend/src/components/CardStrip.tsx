@@ -113,7 +113,7 @@ function ApartmentCard({
     <button
       type="button"
       data-hovered={hovered ? "true" : "false"}
-      className="fc-card group h-full shrink-0 snap-start border-r border-paper-rule bg-white px-5 py-4 text-left transition-colors duration-200 ease-snap hover:bg-paper-dim/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red"
+      className="fc-card group h-full shrink-0 snap-start border-r border-paper-rule bg-white px-5 pt-4 pb-6 text-left transition-colors duration-200 ease-snap hover:bg-paper-dim/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red"
       style={{ flex: "0 0 calc(100% / var(--card-count, 2))" }}
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
@@ -144,7 +144,7 @@ function ApartmentCard({
                 {apt.district ?? "Berlin"}
               </span>
             </div>
-            <div className="line-clamp-2 min-h-[3em] font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
+            <div className="line-clamp-2 font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
               {apt.title ?? "(untitled)"}
             </div>
             {apt.address ? (
@@ -190,7 +190,7 @@ function ApartmentCard({
 function CardChips({ apt }: { apt: UiApartment }) {
   const chips: { key: string; label: string; wbs?: boolean }[] = [];
   if (apt.wbs_required === true) chips.push({ key: "wbs", label: "WBS", wbs: true });
-  if (apt.is_furnished === true) chips.push({ key: "furn", label: "möbl." });
+  if (apt.is_furnished === true) chips.push({ key: "furn", label: "Furnished" });
   if (apt.has_balcony === true && chips.length < 3) {
     chips.push({ key: "balc", label: "Balkon" });
   }

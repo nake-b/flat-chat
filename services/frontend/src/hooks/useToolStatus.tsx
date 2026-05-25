@@ -1,5 +1,6 @@
 import { useCopilotAction } from "@copilotkit/react-core";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 
 import {
@@ -89,14 +90,80 @@ function ToolPill({
   return <></>;
 }
 
-// Rendered by ChatPane via useCoAgentStateRender. Visible only when the agent
-// is running AND no tool pill is currently executing — i.e. the LLM is
-// reasoning between (or before / after) tool calls.
-export function ThinkingSlot() {
+// Thinking pill that injects itself as the LAST child of
+// `.copilotKitMessagesContainer`, so it sits in the same vertical rhythm as
+// tool pills — directly below the most recent message. We *cannot* use
+// CopilotKit's `useCoAgentStateRender`: its claim-bridge anchors the render
+// to a message id that can be stale, parking the pill above an old assistant
+// bubble. By owning a portal slot we ourselves keep at the end of the
+// container (via MutationObserver), positioning is deterministic.
+//
+// Hook variant — call it inside ChatPane. The hook returns JSX (a portal),
+// so callers must include `{useThinkingPillInStream()}` in their tree.
+export function useThinkingPillInStream(): React.ReactNode {
   const { running } = useUiState();
   const activeCount = useActiveToolCount((s) => s.count);
-  if (!running || activeCount > 0) return null;
-  return <ToolStatusInline label={THINKING_LABEL} pulse />;
+  const shouldShow = !!running && activeCount === 0;
+
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!shouldShow) {
+      setSlot(null);
+      return undefined;
+    }
+
+    // CopilotChat mounts asynchronously — poll briefly until the container
+    // exists, then attach. 50ms × up to 20 tries (~1s) covers cold mount.
+    let cancelled = false;
+    let attachInterval: ReturnType<typeof setInterval> | undefined;
+    let observer: MutationObserver | undefined;
+    let createdSlot: HTMLDivElement | undefined;
+
+    const attach = () => {
+      const target = document.querySelector(
+        ".copilotKitMessagesContainer",
+      ) as HTMLElement | null;
+      if (!target) return false;
+      if (cancelled) return true;
+
+      const node = document.createElement("div");
+      node.setAttribute("data-fc-thinking-slot", "");
+      target.appendChild(node);
+      createdSlot = node;
+      setSlot(node);
+
+      // Keep our slot at the very end whenever CopilotKit appends/removes
+      // children. Cheap — the container has at most ~tens of children.
+      observer = new MutationObserver(() => {
+        if (target.lastElementChild !== node) {
+          target.appendChild(node);
+        }
+      });
+      observer.observe(target, { childList: true });
+      return true;
+    };
+
+    if (!attach()) {
+      let tries = 0;
+      attachInterval = setInterval(() => {
+        if (cancelled || attach() || ++tries >= 20) {
+          if (attachInterval) clearInterval(attachInterval);
+        }
+      }, 50);
+    }
+
+    return () => {
+      cancelled = true;
+      if (attachInterval) clearInterval(attachInterval);
+      observer?.disconnect();
+      createdSlot?.remove();
+      setSlot(null);
+    };
+  }, [shouldShow]);
+
+  if (!slot || !shouldShow) return null;
+  return createPortal(<ToolStatusInline label={THINKING_LABEL} pulse />, slot);
 }
 
 // Reusable pill UI shared by tool renders and the Thinking slot.

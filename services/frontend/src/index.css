@@ -168,9 +168,12 @@ body,
    tool-display research (chat thread for dialogue; map + cards ARE the
    result widget), we want zero in-thread chrome for tool calls. The map
    pins and card strip already show the work.
-   EXCEPT: `useCoAgentStateRender` also wraps its output in an unclassed
-   div with the same shape. We re-show that wrapper specifically by
-   anchoring on the `.fc-status-line` marker we render inside it. */
+   EXCEPT: `useCopilotAction({name: "*"})` renders our own ToolPill inside
+   the same unclassed wrapper div. We re-show that wrapper specifically by
+   anchoring on the `.fc-status-line` marker the pill emits.
+   (The Thinking pill used to piggyback on this via `useCoAgentStateRender`
+   but is now ChatPane chrome — see ChatPane.tsx. Tool pills still need
+   this carve-out.) */
 .copilotKitMessagesContainer > div:not(.copilotKitMessage) {
   display: none !important;
 }

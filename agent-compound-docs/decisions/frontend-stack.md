@@ -24,7 +24,7 @@ Keep `POST /api/conversations` (session creation) and `GET /api/conversations/{i
 
 `@copilotkit/react-core` + `@copilotkit/react-ui`. The killer primitive is `useCoAgent<UiState>({ name, initialState })` — a hook that mirrors backend agent state on the frontend and re-renders any subscribed component when the agent mutates `ctx.deps.ui_state`. Sibling React components (chat, map, cards) all subscribe via this hook to slices of the same state.
 
-Tool-call lifecycle pills ("Searching Kreuzberg…", "Found 12 listings…", "Thinking…") are rendered inline in the chat thread via `useCopilotAction({ name, render })` per backend tool (executing/complete phases) plus a single `useCoAgentStateRender` for the Thinking phase. UI copy lives entirely on the frontend in a tool-name → label registry. See §Status-pill lifecycle below.
+Tool-call lifecycle pills ("Searching Kreuzberg…", "Found 12 listings…") are rendered inline in the chat thread via `useCopilotAction({ name, render })` per backend tool (executing/complete phases). The "Thinking…" pill lives separately as ChatPane chrome (positioned above the input) because CopilotKit's `useCoAgentStateRender` claim-bridge anchored it to stale message IDs. UI copy lives entirely on the frontend in a tool-name → label registry. See §Status-pill lifecycle below.
 
 ### Map: MapLibre GL JS v5 + `@vis.gl/react-maplibre` + self-hosted Protomaps
 
@@ -115,7 +115,9 @@ The `executing` label is built from the tool's args (built up across `inProgress
 
 Adding a new tool is **one entry here**. The wildcard registration already picks it up — no ChatPane edit needed. Backend tools never need to know about UI copy.
 
-**Thinking phase.** A single `useCoAgentStateRender` renders a "Thinking…" pill that suppresses itself whenever any tool pill is currently `executing`. The cross-component signal is a tiny zustand counter (`useToolStatus.ts`'s `useActiveToolCount`) — same shape as `useHover`. The counter increments in `<ToolPill>`'s `useEffect` on `status === "executing"` and decrements on cleanup, so render functions stay pure.
+**Thinking phase.** `<ThinkingSlot />` is rendered once by `ChatPane`, absolutely positioned just above CopilotChat's input area. It self-hides unless `running === true` AND `useActiveToolCount() === 0`. `running` is `useCoAgent<UiState>().running` — CopilotKit's `agent.isRunning` flag, true between LLM reasoning start and final reply. The active-tool counter (`useToolStatus.ts`'s `useActiveToolCount`) is a tiny zustand store — same shape as `useHover`. The counter increments in `<ToolPill>`'s `useEffect` on `status === "executing"` and decrements on cleanup, so render functions stay pure.
+
+**Why ChatPane chrome, not `useCoAgentStateRender`.** Earlier the Thinking pill used `useCoAgentStateRender({ name, render: () => <ThinkingSlot /> })`, which inserts a sibling `<div>` into `.copilotKitMessagesContainer`. CopilotKit's claim bridge then binds that div to a message ID — and that ID went stale, sometimes anchoring the pill **above an old assistant bubble** instead of below the latest one. CopilotKit `^1.10.0` exposes no positional override for the hook. Pulling the pill out of the stream into ChatPane gives us deterministic positioning at the cost of one absolute-positioned div; tool pills stay in-stream (they're inherently message-tied via `useCopilotAction`, no anchor drift). Index.css still carves out `.copilotKitMessagesContainer > div:has(.fc-status-line)` so the tool pills remain visible.
 
 **Lifecycle visible to the user:**
 

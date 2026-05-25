@@ -30,7 +30,7 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
           close();
         }
       }}
-      className="flex flex-col overflow-hidden bg-white focus:outline-none"
+      className="flex h-full flex-col overflow-y-auto bg-white focus:outline-none"
     >
       <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
         <div className="min-w-0">
@@ -54,45 +54,49 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
         </button>
       </header>
 
-      <div className="grid grid-cols-6">
-        <Stat
-          label="Warm rent"
-          value={formatEuro(apt.price_warm_eur)}
-          accent
-        />
-        <Stat label="Cold rent" value={formatEuro(apt.price_cold_eur)} />
-        <Stat label="Nebenkosten" value={formatEuro(apt.nebenkosten_eur)} />
-        <Stat label="Kaution" value={formatEuro(apt.kaution_eur)} />
-        <Stat
-          label="Rooms"
-          value={apt.rooms?.toString().replace(/\.0$/, "") ?? "—"}
-        />
-        <Stat
-          label="Area"
-          value={apt.area_sqm != null ? `${Math.round(apt.area_sqm)} m²` : "—"}
-        />
-      </div>
-
-      <div className="grid grid-cols-6 border-t border-paper-rule">
-        <Stat
-          label="Bedrooms"
-          value={apt.bedrooms != null ? apt.bedrooms.toString() : "—"}
-        />
-        <Stat
-          label="€/m²"
-          value={
-            apt.price_warm_eur != null && apt.area_sqm
-              ? `€${Math.round(apt.price_warm_eur / apt.area_sqm)}`
-              : "—"
-          }
-        />
-        <Stat label="Floor" value={formatFloor(apt.floor, apt.floors_total)} />
-        <Stat label="Type" value={apt.listing_type ?? "—"} />
-        <Stat label="Available" value={formatDate(apt.available_from)} />
-        <Stat
-          label="Source"
-          value={
-            apt.source_url ? (
+      {/* Stat row: only cells with real data render. flex-wrap lets the row
+          flow naturally when some sources expose fewer fields (wg-gesucht
+          rarely has kaution, klein rarely has bedrooms). flex-1 basis-0
+          shares row width equally among present cells. */}
+      <div className="flex flex-wrap">
+        {apt.price_warm_eur != null && (
+          <Stat label="Warm rent" value={formatEuro(apt.price_warm_eur)} accent />
+        )}
+        {apt.price_cold_eur != null && (
+          <Stat label="Cold rent" value={formatEuro(apt.price_cold_eur)} />
+        )}
+        {apt.nebenkosten_eur != null && (
+          <Stat label="Nebenkosten" value={formatEuro(apt.nebenkosten_eur)} />
+        )}
+        {apt.kaution_eur != null && (
+          <Stat label="Kaution" value={formatEuro(apt.kaution_eur)} />
+        )}
+        {apt.rooms != null && (
+          <Stat label="Rooms" value={apt.rooms.toString().replace(/\.0$/, "")} />
+        )}
+        {apt.bedrooms != null && (
+          <Stat label="Bedrooms" value={apt.bedrooms.toString()} />
+        )}
+        {apt.area_sqm != null && (
+          <Stat label="Area" value={`${Math.round(apt.area_sqm)} m²`} />
+        )}
+        {apt.price_warm_eur != null && apt.area_sqm != null && apt.area_sqm > 0 && (
+          <Stat
+            label="€/m²"
+            value={`€${Math.round(apt.price_warm_eur / apt.area_sqm)}`}
+          />
+        )}
+        {apt.floor != null && <Stat label="Floor" value={formatFloor(apt.floor)} />}
+        {apt.listing_type != null && (
+          <Stat label="Type" value={apt.listing_type} />
+        )}
+        {apt.available_from != null && (
+          <Stat label="Available" value={formatDate(apt.available_from)} />
+        )}
+        {apt.source_url && (
+          <Stat
+            label="Source"
+            value={
               <a
                 href={apt.source_url}
                 target="_blank"
@@ -101,11 +105,9 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
               >
                 Open →
               </a>
-            ) : (
-              "—"
-            )
-          }
-        />
+            }
+          />
+        )}
       </div>
 
       <AmenityChips apt={apt} />
@@ -126,25 +128,6 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
         </p>
       </div>
 
-      <div className="px-7 py-3">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
-          Ask the chat
-        </div>
-        <ul className="mt-1.5 space-y-1 text-[12.5px] leading-relaxed text-ink-soft">
-          <li>
-            <span className="text-ink-ghost">›</span> "Is this an
-            Altbau? What floor?"
-          </li>
-          <li>
-            <span className="text-ink-ghost">›</span> "What U-Bahn /
-            S-Bahn is closest?"
-          </li>
-          <li>
-            <span className="text-ink-ghost">›</span> "Compare this to
-            cheaper options nearby."
-          </li>
-        </ul>
-      </div>
     </div>
   );
 }
@@ -194,7 +177,7 @@ function summarize(apt: UiApartment): string {
 function AmenityChips({ apt }: { apt: UiApartment }) {
   const chips: { label: string; tone: "wbs" | "amenity" }[] = [];
   if (apt.wbs_required === true) chips.push({ label: "WBS", tone: "wbs" });
-  if (apt.is_furnished === true) chips.push({ label: "möbl.", tone: "amenity" });
+  if (apt.is_furnished === true) chips.push({ label: "Furnished", tone: "amenity" });
   if (apt.has_balcony === true) chips.push({ label: "Balkon", tone: "amenity" });
   if (apt.has_kitchen === true) chips.push({ label: "Einbauküche", tone: "amenity" });
   if (apt.has_elevator === true) chips.push({ label: "Aufzug", tone: "amenity" });
@@ -220,29 +203,19 @@ function AmenityChips({ apt }: { apt: UiApartment }) {
   );
 }
 
-// Energy block — only renders when there's data to show. Heating type and
-// consumption are the two most-glanced fields in a Berlin Energieausweis;
-// the rest stays in raw until users ask.
+// Heating-only block. We used to also surface energy_consumption_kwh
+// (Energieausweis Verbrauch), but the silver layer can't reliably extract
+// it from either source's amenity strings — see the data-quality audit.
+// Heating itself only fills ~11% of wg-gesucht and 0% of kleinanzeigen,
+// so the block self-hides when empty.
 function EnergyBlock({ apt }: { apt: UiApartment }) {
-  if (!apt.heating && apt.energy_consumption_kwh == null) return null;
+  if (!apt.heating) return null;
   return (
     <div className="border-t border-paper-rule px-7 py-2.5">
       <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
-        Energy
+        Heating
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-ink-soft">
-        {apt.heating && (
-          <span>
-            <span className="text-ink-ghost">Heating:</span> {apt.heating}
-          </span>
-        )}
-        {apt.energy_consumption_kwh != null && (
-          <span>
-            <span className="text-ink-ghost">Consumption:</span>{" "}
-            {Math.round(apt.energy_consumption_kwh)} kWh/(m²·a)
-          </span>
-        )}
-      </div>
+      <div className="mt-1 text-[12.5px] text-ink-soft">{apt.heating}</div>
     </div>
   );
 }
@@ -252,10 +225,9 @@ function formatEuro(v: number | null): string {
   return `€${Math.round(v).toLocaleString("en-US")}`;
 }
 
-function formatFloor(floor: number | null, total: number | null): string {
+function formatFloor(floor: number | null): string {
   if (floor == null) return "—";
-  const label = floor === 0 ? "EG" : floor.toString();
-  return total != null ? `${label} / ${total}` : label;
+  return floor === 0 ? "EG" : floor.toString();
 }
 
 function formatDate(iso: string | null): string {
@@ -282,7 +254,7 @@ function Stat({
   accent?: boolean;
 }) {
   return (
-    <div className="min-w-0 border-r border-paper-rule px-3 py-2 last:border-r-0">
+    <div className="flex min-w-[100px] flex-1 basis-0 flex-col border-b border-r border-paper-rule px-3 py-2">
       <div className="truncate font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
         {label}
       </div>

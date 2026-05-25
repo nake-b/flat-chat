@@ -1,8 +1,6 @@
 import { CopilotChat } from "@copilotkit/react-ui";
-import { useCoAgentStateRender } from "@copilotkit/react-core";
 
-import { AGENT_NAME, type UiState } from "../state/UiState";
-import { ThinkingSlot, useToolStatusPills } from "../hooks/useToolStatus";
+import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 
 export function ChatPane() {
   // One wildcard registration drives inline pills for every backend tool
@@ -11,13 +9,11 @@ export function ChatPane() {
   // nothing changes here.
   useToolStatusPills();
 
-  // "Thinking…" — appears when the agent is running but no tool pill is
-  // currently executing. Same inline-injection mechanism as the tool pills
-  // above so it sits in the same vertical rhythm in the chat thread.
-  useCoAgentStateRender<UiState>({
-    name: AGENT_NAME,
-    render: () => <ThinkingSlot />,
-  });
+  // Thinking pill injected as the LAST child of `.copilotKitMessagesContainer`
+  // so it sits in the same vertical rhythm as the tool pills — directly below
+  // the latest message. DOM-portal approach because CopilotKit's
+  // `useCoAgentStateRender` anchors via a stale message-id claim bridge.
+  const thinkingPill = useThinkingPillInStream();
 
   return (
     <div className="flex h-full flex-col bg-paper">
@@ -36,10 +32,11 @@ export function ChatPane() {
           labels={{
             title: "",
             initial:
-              "Hi. Tell me what you want — 2BR Kreuzberg under €1200, an Altbau with light, close to a U-Bahn — and I'll find it.",
+              "Hi. Tell me what you want — 2 rooms in Kreuzberg under €1200 with a balcony, or just describe the vibe. I'll find it.",
             placeholder: "Describe your apartment…",
           }}
         />
+        {thinkingPill}
       </div>
     </div>
   );

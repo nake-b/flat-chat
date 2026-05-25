@@ -165,12 +165,18 @@ class SearchService:
                 )
                 sort_by_effective = "recent"
 
+        # Compute the similarity column whenever we *can*, so the LLM sees a
+        # similarity_score in every result even when it sorted by price/area.
+        # ORDER BY is decoupled from this: only relevance uses distance.
+        distance = None
         if params.query and self.embedder:
             embedding = await self._embed(params.query)
             distance = Listing.embedding.cosine_distance(
                 cast(embedding, Vector(1024))
             )
             stmt = stmt.add_columns(distance.label("similarity_score"))
+
+        if sort_by_effective == "relevance" and distance is not None:
             stmt = stmt.order_by(distance)
         elif sort_by_effective == "price":
             stmt = stmt.order_by(Listing.warm_rent_eur.asc().nulls_last())

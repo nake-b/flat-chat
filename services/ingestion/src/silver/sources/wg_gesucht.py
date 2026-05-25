@@ -108,7 +108,10 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "title": dump.get("title"),
         "headline": None,
         "description": _description(dump.get("descriptions")),
-        "rooms": dump.get("rooms"),
+        # WG-Gesucht's bronze blob often leaves the top-level `rooms` null and
+        # carries the value under `dump.card.rooms` (the search-card payload
+        # that came in via iron). Fall back so 60+ listings stop reading null.
+        "rooms": dump.get("rooms") or (dump.get("card") or {}).get("rooms"),
         "bedrooms": None,
         "bathrooms": None,
         "area_sqm": float(dump["areaSqm"]) if dump.get("areaSqm") is not None else None,
