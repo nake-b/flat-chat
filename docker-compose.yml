@@ -6,6 +6,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - frontend_dist:/usr/share/nginx/html:ro
+      # Map tiles for MapLibre. The .pmtiles file is downloaded out-of-band —
+      # see services/backend/README.md for the one-time setup. Volume is
+      # bind-mounted so swapping the file doesn't require a container rebuild.
+      - ./data/tiles:/usr/share/nginx/tiles:ro
     depends_on:
       frontend:
         condition: service_healthy
@@ -32,13 +36,17 @@ services:
         condition: service_started
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
       - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
       - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006/v1/traces}
-    command: uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
       interval: 10s
@@ -50,6 +58,10 @@ services:
     image: arizephoenix/phoenix:latest
     ports:
       - "6006:6006"
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
 
   postgres:
     build: services/postgres/
@@ -71,7 +83,16 @@ services:
     build: services/ingestion/
     profiles:
       - ingestion
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Forwarded for `silver.embed`, the Jina v3 backfill CLI.
+      - JINA_API_KEY=${JINA_API_KEY:-}
+      - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
 
 volumes:
   postgres_data:
   frontend_dist:
+  phoenix_data:

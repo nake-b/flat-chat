@@ -37,8 +37,20 @@ Vite dev server runs on `http://localhost:5173` and proxies `/api/*` to `http://
 
 ### Running Ingestion
 
+See **[services/ingestion/README.md](../services/ingestion/README.md)** for the full pipeline — three tiers (iron → bronze → silver), the scrape commands, the JSON-replay path, and the cursor-resume semantics.
+
+Headline commands once first-time setup is done:
+
 ```bash
-docker compose --profile ingestion run --rm ingestion
+# Apply migrations once
+docker compose run --rm backend uv run alembic upgrade head
+
+# Scrape (per source) — VPN on, no DATABASE_URL prefix needed (auto-loaded from .env)
+cd services/ingestion/src/scraper/<source> && npm run scrape:cards
+cd services/ingestion/src/scraper/<source> && npm run scrape:details
+
+# Normalize bronze → silver
+cd services/ingestion && PYTHONPATH=src python3 -m silver.run
 ```
 
 ## Production (VPS)

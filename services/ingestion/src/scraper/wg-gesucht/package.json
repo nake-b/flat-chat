@@ -1,0 +1,18 @@
+{
+  "name": "wg-gesucht-scraper",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "wggesuchtscraper.js",
+  "scripts": {
+    "scrape:cards": "node wggesuchtscraper.js",
+    "scrape:details": "node wggesuchtdetailscraper.js",
+    "start": "node wggesuchtscraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.42.0",
+    "scraper-lib": "file:../_lib"
+  }
+}

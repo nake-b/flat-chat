@@ -11,7 +11,7 @@ The system architecture diagram for this project lives at the repo root:
 
 The diagram is laid out as horizontal layers, with one dashed VPS boundary that everything internal lives inside:
 
-- **Cloudflare** sits outside the VPS as a tall vertical gateway — both Web Users and External API Clients flow through it on their way to Nginx.
+- **Cloudflare** sits outside the VPS as a vertical gateway — Web Users flow through it on their way to Nginx.
 - **Frontend** (React/Vite) is served by Nginx at `/` — there is intentionally **no arrow** from Frontend to Backend; in-browser fetches go back out through Cloudflare → Nginx → `/api/`.
 - **Backend** is split into clear layers:
   - **Users layer** (top) — `users` module, talks only to the User-data zone of Postgres.
@@ -52,7 +52,7 @@ That invokes draw.io Desktop's CLI and writes `architecture.png` at 2400 px wide
 
 - Frontend is **React + Vite + TypeScript**, not Next.js.
 - Ingestion is **Puppeteer + Python**, not pure-Python.
-- LLM gateway is **LiteLLM**, supports BYOK — diagram shows `via LiteLLM gateway · BYOK or platform key`.
+- LLM dispatch is **Pydantic AI** with native provider clients — selection lives in `services/backend/src/flat_chat/chat/providers/__init__.py` (the single seam). Two providers are wired today: Anthropic-direct (preferred when its key is set, for native prompt caching) and Azure OpenAI as fallback. No LiteLLM in the request path.
 - Postgres uses **both pgvector and PostGIS** in the same database — not split into separate stores.
 - Cloudflare sits **in front of** the VPS for DNS / TLS / WAF and to hide the VPS IP.
 - The frontend talks to the backend **only via the user's browser**, through the same Cloudflare → Nginx ingress — there is no direct Frontend → Backend arrow in the diagram.

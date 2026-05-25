@@ -24,10 +24,9 @@ def get_search_service(
 
 
 def get_chat_service(
-    db: Session = Depends(get_db),
     search_service: SearchService = Depends(get_search_service),
     store: SessionStore = Depends(get_session_store),
 ):
     from flat_chat.chat.service import ChatService
 
-    return ChatService(db=db, search_service=search_service, store=store)
+    return ChatService(search_service=search_service, store=store)

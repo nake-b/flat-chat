@@ -1,0 +1,179 @@
+"""Frontend-facing mirror of the active result set.
+
+`ResultSet` (in `state.py`) owns LLM-facing prose/CSV/detail formatting; the
+agent reads from it. `UiState` is the parallel projection the React frontend
+reads via AG-UI shared state — typed apartments with lat/lng and the currently
+expanded card id.
+
+The two projections share source data (the DataFrame from
+`SearchService.search()`) but never collapse into one: the LLM never sees
+`UiState`, the UI never sees `ResultSet`.
+
+Status-pill copy is NOT mirrored here. The frontend derives lifecycle labels
+directly from AG-UI tool-call events via a tool-name → label registry
+(`services/frontend/src/state/toolStatus.ts`). Keeping that string-building
+on the frontend means adding a new tool is one registry line, with zero
+backend churn — and tools stay pure data mutators.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import pandas as pd
+from pydantic import BaseModel, Field
+
+
+class UiApartment(BaseModel):
+    """A single listing as the frontend renders it on the map and in cards."""
+
+    id: str
+    lat: float | None = None
+    lng: float | None = None
+    # Money — full breakdown so the detail panel can show what the user actually pays
+    price_warm_eur: float | None = None
+    price_cold_eur: float | None = None
+    nebenkosten_eur: float | None = None
+    kaution_eur: float | None = None
+    # Size
+    rooms: float | None = None
+    bedrooms: int | None = None
+    area_sqm: float | None = None
+    # Building / availability
+    floor: int | None = None
+    floors_total: int | None = None
+    available_from: str | None = None  # ISO date string (datetime → isoformat)
+    listing_type: str | None = None
+    # Location
+    district: str | None = None
+    title: str | None = None
+    address: str | None = None
+    # Amenities (most-asked subset surfaced as chips; rest stays in raw)
+    wbs_required: bool | None = None
+    is_furnished: bool | None = None
+    has_balcony: bool | None = None
+    has_kitchen: bool | None = None
+    has_elevator: bool | None = None
+    has_garden: bool | None = None
+    # Energy — shown in the detail panel when present
+    heating: str | None = None
+    energy_consumption_kwh: float | None = None
+    # Listing source signal — "private" / "agency" / "commercial"
+    lister_type: str | None = None
+    # Outbound link
+    source_url: str | None = None
+    # Image plumbing deferred — populated from raw.images JSONB in a later change.
+    image_url: str | None = None
+
+    @classmethod
+    def from_dataframe_row(cls, row: pd.Series) -> UiApartment:
+        """Project a single search-result row into the UI shape."""
+        return cls(
+            id=str(row["id"]),
+            lat=_opt_float(row.get("latitude")),
+            lng=_opt_float(row.get("longitude")),
+            price_warm_eur=_opt_float(row.get("price_warm_eur")),
+            price_cold_eur=_opt_float(row.get("price_cold_eur")),
+            nebenkosten_eur=_opt_float(row.get("nebenkosten_eur")),
+            kaution_eur=_opt_float(row.get("kaution_eur")),
+            rooms=_opt_float(row.get("rooms")),
+            bedrooms=_opt_int(row.get("bedrooms")),
+            area_sqm=_opt_float(row.get("area_sqm")),
+            floor=_opt_int(row.get("floor")),
+            floors_total=_opt_int(row.get("floors_total")),
+            available_from=_opt_iso(row.get("available_from")),
+            listing_type=_opt_str(row.get("listing_type")),
+            district=_opt_str(row.get("district")),
+            title=_opt_str(row.get("title")),
+            address=_opt_str(row.get("address")),
+            wbs_required=_opt_bool(row.get("wbs_required")),
+            is_furnished=_opt_bool(row.get("is_furnished")),
+            has_balcony=_opt_bool(row.get("has_balcony")),
+            has_kitchen=_opt_bool(row.get("has_kitchen")),
+            has_elevator=_opt_bool(row.get("has_elevator")),
+            has_garden=_opt_bool(row.get("has_garden")),
+            heating=_opt_str(row.get("heating")),
+            energy_consumption_kwh=_opt_float(row.get("energy_consumption_kwh")),
+            lister_type=_opt_str(row.get("lister_type")),
+            source_url=_opt_str(row.get("source_url")),
+            image_url=None,
+        )
+
+
+class UiState(BaseModel):
+    """Shared state mirrored between backend (truth) and frontend (read).
+
+    AG-UI streams JSON Patch deltas of this object to the frontend on every
+    mutation by an agent tool. The frontend's CopilotKit store applies the
+    patches; `useCoAgent<UiState>()` exposes the result to React components.
+    Write-back: when the user clicks a card, `setState({active_id})` flows
+    back so the agent's next turn knows what the user is looking at.
+    """
+
+    results: list[UiApartment] = Field(default_factory=list)
+    """Apartments currently displayed on the map and in the card strip."""
+
+    active_id: str | None = None
+    """The id of the card currently expanded into detail view, if any."""
+
+
+def _opt_float(val: object) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    try:
+        return float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_int(val: object) -> int | None:
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    try:
+        return int(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_str(val: object) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    text = str(val)
+    return text or None
+
+
+def _opt_bool(val: object) -> bool | None:
+    # SQLAlchemy returns Python bools directly; pandas may surface them as
+    # objects. None / NaN both map to None so the chip layer can use strict
+    # `=== true` to render only confirmed amenities.
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    if isinstance(val, bool):
+        return val
+    return bool(val)
+
+
+def _opt_iso(val: object) -> str | None:
+    # available_from is a TIMESTAMP in the new schema. Pandas surfaces it as
+    # a pd.Timestamp; SQLAlchemy may also hand back a datetime. Normalize to
+    # an ISO string so the frontend can format with Intl.DateTimeFormat.
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    if isinstance(val, pd.Timestamp):
+        if pd.isna(val):
+            return None
+        return val.isoformat()
+    if isinstance(val, datetime):
+        return val.isoformat()
+    text = str(val)
+    return text or None
