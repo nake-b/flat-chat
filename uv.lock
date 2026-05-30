@@ -724,6 +724,7 @@ name = "flat-chat-ingestion"
 version = "0.1.0"
 source = { editable = "services/ingestion" }
 dependencies = [
+    { name = "httpx" },
     { name = "psycopg2-binary" },
     { name = "python-dotenv" },
     { name = "sqlalchemy" },
@@ -731,6 +732,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
