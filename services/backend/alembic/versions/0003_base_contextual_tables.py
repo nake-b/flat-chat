@@ -1,8 +1,19 @@
-"""add gis context tables (slim edition)
+"""geo-context tables: Berlin GDI WFS + VBB GTFS
 
 Revision ID: 0003_base_contextual_tables
 Revises: 0002_postgis_and_embedding_dim
 Create Date: 2026-05-29
+
+Creates the silver-tier tables consumed by the geo_context ingestion
+pipeline (`services/ingestion/src/geo_context/`). All column and table
+names are English; the German→English rename happens in the Transform
+stage (`geo_context/transform/aliases.py`) so this schema reflects the
+final shape the chat agent queries.
+
+Index policy: only GIST on geom (plus GIST on geom::geography for
+transit_stops, mirroring the listings.location pattern in 0002).
+Attribute b-tree indexes are intentionally omitted — they're easy to
+add back when a real query needs one.
 """
 
 from collections.abc import Sequence
@@ -10,19 +21,9 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-
-# -------------------------------------------------------------------------
-# Alembic migration graph metadata
-# -------------------------------------------------------------------------
-
 revision: str = "0003_base_contextual_tables"
-
-down_revision: str | Sequence[str] | None = (
-    "0002_postgis_and_embedding_dim"
-)
-
+down_revision: str | Sequence[str] | None = "0002_postgis_and_embedding_dim"
 branch_labels: str | Sequence[str] | None = None
-
 depends_on: str | Sequence[str] | None = None
 
 
@@ -30,642 +31,412 @@ depends_on: str | Sequence[str] | None = None
 # Forward migration
 # -------------------------------------------------------------------------
 
+
 def upgrade() -> None:
-
-    # ---------------------------------------------------------------------
-    # Berlin schools GIS context table (existing)
-    # ---------------------------------------------------------------------
+    # =====================================================================
+    # schools  ← Berlin GDI WFS: schulen / schulen  (Point)
+    # =====================================================================
 
     op.execute(
         """
-        CREATE TABLE schulen_schulen (
+        CREATE TABLE schools (
+            id              BIGSERIAL PRIMARY KEY,
+            school_number   TEXT,
+            name            TEXT,
+            school_type     TEXT,
+            operator        TEXT,
+            school_category TEXT,
+            district        TEXT,
+            neighborhood    TEXT,
+            postal_code     TEXT,
+            street          TEXT,
+            house_number    TEXT,
+            phone           TEXT,
+            email           TEXT,
+            website         TEXT,
+            school_year     TEXT,
+            geom            geometry(Point, 4326)
+        )
+        """
+    )
+    op.execute("CREATE INDEX schools_geom_gix ON schools USING GIST (geom)")
 
-            id BIGSERIAL PRIMARY KEY,
+    # =====================================================================
+    # school_catchments  ← schulen / schulen_esb  (MultiPolygon)
+    # Primary-school catchment polygons (Einschulungsbereiche).
+    # =====================================================================
 
-            bsn TEXT,
+    op.execute(
+        """
+        CREATE TABLE school_catchments (
+            id              BIGSERIAL PRIMARY KEY,
+            catchment_id    TEXT,
+            school_number   TEXT,
+            school_name     TEXT,
+            geom            geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX school_catchments_geom_gix "
+        "ON school_catchments USING GIST (geom)"
+    )
 
-            schulname TEXT,
+    # =====================================================================
+    # population_density_2025  ← ua_einwohnerdichte_2025 / same  (MultiPolygon)
+    # =====================================================================
 
-            schulart TEXT,
+    op.execute(
+        """
+        CREATE TABLE population_density_2025 (
+            id                      BIGSERIAL PRIMARY KEY,
+            lor_key                 TEXT,
+            population              INTEGER,
+            area_total              DOUBLE PRECISION,
+            area_hectares           DOUBLE PRECISION,
+            population_per_hectare  DOUBLE PRECISION,
+            age_under_6             INTEGER,
+            age_6_to_10             INTEGER,
+            age_10_to_18            INTEGER,
+            age_18_to_65            INTEGER,
+            age_65_to_70            INTEGER,
+            age_70_to_75            INTEGER,
+            age_75_to_80            INTEGER,
+            age_80_plus             INTEGER,
+            area_type               TEXT,
+            area_type_en            TEXT,
+            geom                    geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX population_density_2025_geom_gix "
+        "ON population_density_2025 USING GIST (geom)"
+    )
 
-            traeger TEXT,
+    # =====================================================================
+    # street_noise_2022  ← ua_stratlaerm_2022 / aa_fp_gesamt2022  (Point)
+    # Source publishes raw x/y in EPSG:25833 alongside geom; we drop them
+    # because they're redundant with the projected Point geometry.
+    # The *_den fields are EU Lden values (day-evening-night, dB);
+    # *_n are Lnight values. Air-noise (flg_*) is published as a
+    # categorical TEXT label by the source — we preserve that.
+    # =====================================================================
 
-            schultyp TEXT,
+    op.execute(
+        """
+        CREATE TABLE street_noise_2022 (
+            id                      BIGSERIAL PRIMARY KEY,
+            import_id               TEXT,
+            noise_street_lden       DOUBLE PRECISION,
+            noise_street_lnight     DOUBLE PRECISION,
+            noise_rail_lden         DOUBLE PRECISION,
+            noise_rail_lnight       DOUBLE PRECISION,
+            noise_air_lden_class    TEXT,
+            noise_air_lnight_class  TEXT,
+            noise_total_lden        DOUBLE PRECISION,
+            noise_total_lnight      DOUBLE PRECISION,
+            geom                    geometry(Point, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX street_noise_2022_geom_gix "
+        "ON street_noise_2022 USING GIST (geom)"
+    )
 
-            bezirk TEXT,
+    # =====================================================================
+    # green_volume_2020  ← ua_gruenvolumen_2020 / a_gruenvol2020  (MultiPolygon)
+    # =====================================================================
 
-            ortsteil TEXT,
+    op.execute(
+        """
+        CREATE TABLE green_volume_2020 (
+            id                                BIGSERIAL PRIMARY KEY,
+            lor_key                           TEXT,
+            area_key_5                        TEXT,
+            area_total                        DOUBLE PRECISION,
+            area_use_code                     TEXT,
+            area_use_name                     TEXT,
+            block_type_code                   TEXT,
+            block_type_name                   TEXT,
+            area_class_code                   TEXT,
+            area_class_name                   TEXT,
+            veg_height_2020                   DOUBLE PRECISION,
+            veg_percent_2020                  DOUBLE PRECISION,
+            veg_vol_per_area_2010             DOUBLE PRECISION,
+            veg_vol_per_area_2020             DOUBLE PRECISION,
+            veg_vol_2010                      DOUBLE PRECISION,
+            veg_vol_2020                      DOUBLE PRECISION,
+            built_area_2020                   DOUBLE PRECISION,
+            veg_height_excl_built_2020        DOUBLE PRECISION,
+            veg_percent_excl_built_2020       DOUBLE PRECISION,
+            veg_vol_per_area_excl_built_2020  DOUBLE PRECISION,
+            veg_vol_excl_built_2020           DOUBLE PRECISION,
+            veg_vol_change                    DOUBLE PRECISION,
+            area_use_name_en                  TEXT,
+            block_type_name_en                TEXT,
+            area_class_name_en                TEXT,
+            geom                              geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX green_volume_2020_geom_gix "
+        "ON green_volume_2020 USING GIST (geom)"
+    )
 
-            plz TEXT,
+    # =====================================================================
+    # parks  ← gruenanlagen / gruenanlagen  (MultiPolygon)
+    # =====================================================================
 
-            strasse TEXT,
+    op.execute(
+        """
+        CREATE TABLE parks (
+            id                  BIGSERIAL PRIMARY KEY,
+            pit_id              TEXT,
+            marker              TEXT,
+            district            TEXT,
+            neighborhood        TEXT,
+            object_type         TEXT,
+            name                TEXT,
+            name_addition       TEXT,
+            year_built          TEXT,
+            year_renovated      TEXT,
+            cadastral_area_m2   DOUBLE PRECISION,
+            dedication          TEXT,
+            plan_number         TEXT,
+            plan_name           TEXT,
+            geom                geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute("CREATE INDEX parks_geom_gix ON parks USING GIST (geom)")
 
-            hausnr TEXT,
+    # =====================================================================
+    # playgrounds  ← gruenanlagen / spielplaetze  (MultiPolygon)
+    # =====================================================================
 
-            telefon TEXT,
+    op.execute(
+        """
+        CREATE TABLE playgrounds (
+            id                  BIGSERIAL PRIMARY KEY,
+            pit_id              TEXT,
+            marker              TEXT,
+            district            TEXT,
+            neighborhood        TEXT,
+            object_type         TEXT,
+            name                TEXT,
+            name_addition       TEXT,
+            year_built          TEXT,
+            year_renovated      TEXT,
+            cadastral_area_m2   DOUBLE PRECISION,
+            dedication          TEXT,
+            plan_number         TEXT,
+            plan_name           TEXT,
+            play_area_m2        DOUBLE PRECISION,
+            geom                geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX playgrounds_geom_gix ON playgrounds USING GIST (geom)"
+    )
 
-            fax TEXT,
+    # =====================================================================
+    # hospitals  ← krankenhaeuser / plankrankenhaeuser + weitere_krankenhaeuser
+    # Single table, `tier` discriminates between the two source layers so the
+    # agent can filter by importance (plan_hospital = the ~80 Krankenhausplan
+    # facilities with full ERs; other = smaller clinics / specialist hospitals).
+    # =====================================================================
 
-            email TEXT,
+    op.execute(
+        """
+        CREATE TABLE hospitals (
+            id               BIGSERIAL PRIMARY KEY,
+            tier             TEXT NOT NULL,
+            gis_id           TEXT,
+            name             TEXT,
+            street           TEXT,
+            house_number     TEXT,
+            postal_code      TEXT,
+            neighborhood     TEXT,
+            total_beds       INTEGER,
+            location_number  TEXT,
+            location_name    TEXT,
+            hospital_number  TEXT,
+            departments      TEXT,
+            geom             geometry(Point, 4326),
+            CONSTRAINT hospitals_tier_check
+                CHECK (tier IN ('plan_hospital', 'other'))
+        )
+        """
+    )
+    op.execute("CREATE INDEX hospitals_geom_gix ON hospitals USING GIST (geom)")
 
-            internet TEXT,
+    # =====================================================================
+    # disabled_parking  ← behindertenparkplaetze / bpark  (Point)
+    # Source gps_lat/gps_lon dropped — redundant with projected geom.
+    # =====================================================================
 
-            schuljahr TEXT,
+    op.execute(
+        """
+        CREATE TABLE disabled_parking (
+            id                   BIGSERIAL PRIMARY KEY,
+            uid                  TEXT,
+            district             TEXT,
+            label                TEXT,
+            note                 TEXT,
+            spot_count           INTEGER,
+            police_jurisdiction  TEXT,
+            location             TEXT,
+            postal_code          TEXT,
+            neighborhood         TEXT,
+            recorded_date        DATE,
+            geom                 geometry(Point, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX disabled_parking_geom_gix "
+        "ON disabled_parking USING GIST (geom)"
+    )
 
-            geom geometry(Point, 4326)
+    # =====================================================================
+    # social_monitoring_2025  ← mss_2025 / mss2025_indizes_542  (MultiPolygon)
+    # Berlin's Monitoring Soziale Stadtentwicklung — composite indices per
+    # planning area: Status Index (current state), Dynamics Index (recent
+    # trajectory), Social Inequality Index (overall composite).
+    # =====================================================================
 
+    op.execute(
+        """
+        CREATE TABLE social_monitoring_2025 (
+            id                         BIGSERIAL PRIMARY KEY,
+            planning_area_id           TEXT,
+            planning_area_name         TEXT,
+            district_id                TEXT,
+            residents                  INTEGER,
+            dynamics_index_score       INTEGER,
+            dynamics_index_label       TEXT,
+            social_inequality_category TEXT,
+            social_inequality_score    INTEGER,
+            social_inequality_label    TEXT,
+            status_index_score         INTEGER,
+            status_index_label         TEXT,
+            year                       INTEGER,
+            notes                      TEXT,
+            geom                       geometry(MultiPolygon, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX social_monitoring_2025_geom_gix "
+        "ON social_monitoring_2025 USING GIST (geom)"
+    )
+
+    # =====================================================================
+    # water_bodies  ← gewaesserkarte / e_gew_gewaesser_fl  (mixed geometry)
+    # Surface representations for every Berlin water body: lakes (Wannsee,
+    # Müggelsee), the Spree, Havel, canals. The source mixes Polygon,
+    # MultiPolygon and GeometryCollection rows (some water bodies bundle
+    # bank lines with surfaces), so the column accepts any geometry type.
+    # =====================================================================
+
+    op.execute(
+        """
+        CREATE TABLE water_bodies (
+            id                   BIGSERIAL PRIMARY KEY,
+            water_number_old     TEXT,
+            water_type           TEXT,
+            name                 TEXT,
+            water_number_new     TEXT,
+            district             TEXT,
+            neighborhood         TEXT,
+            receiving_water      TEXT,
+            surface_area_m2      TEXT,
+            length_m             TEXT,
+            owner                TEXT,
+            maintenance          TEXT,
+            water_kind           TEXT,
+            water_class          TEXT,
+            notes                TEXT,
+            geom                 geometry(Geometry, 4326)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX water_bodies_geom_gix ON water_bodies USING GIST (geom)"
+    )
+
+    # =====================================================================
+    # transit_stops  ← VBB GTFS stops + derived modes_served / lines_served
+    # Platform children collapsed onto parent_station where present.
+    # modes_served uses GTFS *Extended* Route Types (VBB's convention):
+    #   100=mainline, 106=regional, 109=S-Bahn, 400=U-Bahn,
+    #   700=bus, 900=tram, 1000=ferry, 3=legacy-bus.
+    # See services/ingestion/src/geo_context/README.md for the full table.
+    # =====================================================================
+
+    op.execute(
+        """
+        CREATE TABLE transit_stops (
+            stop_id              TEXT PRIMARY KEY,
+            name                 TEXT NOT NULL,
+            geom                 geometry(Point, 4326) NOT NULL,
+            modes_served         SMALLINT[] NOT NULL,
+            lines_served         TEXT[]     NOT NULL
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX transit_stops_geom_gix "
+        "ON transit_stops USING GIST (geom)"
+    )
+    # Mirrors the listings.location_geog_idx pattern from 0002 so that the
+    # agent's ST_DWithin(stop.geom::geography, listing.location::geography, m)
+    # queries hit an index.
+    op.execute(
+        "CREATE INDEX transit_stops_geog_gix "
+        "ON transit_stops USING GIST ((geom::geography))"
+    )
+
+    # =====================================================================
+    # transit_routes  ← VBB GTFS routes.txt  (no geometry)
+    # =====================================================================
+
+    op.execute(
+        """
+        CREATE TABLE transit_routes (
+            route_id    TEXT PRIMARY KEY,
+            short_name  TEXT,
+            long_name   TEXT,
+            route_type  SMALLINT NOT NULL,
+            color       TEXT,
+            text_color  TEXT
         )
         """
     )
 
-    # ---------------------------------------------------------------------
-    # Spatial GIS index (existing)
-    # ---------------------------------------------------------------------
-
-    op.execute(
-        """
-        CREATE INDEX schulen_schulen_geom_gix
-        ON schulen_schulen
-        USING GIST (geom)
-        """
-    )
-
-    # ---------------------------------------------------------------------
-    # Optional attribute indexes (existing)
-    # Useful for filtering/search
-    # ---------------------------------------------------------------------
-
-    op.create_index(
-        "idx_schulen_schulen_bezirk",
-        "schulen_schulen",
-        ["bezirk"],
-    )
-
-    op.create_index(
-        "idx_schulen_schulen_ortsteil",
-        "schulen_schulen",
-        ["ortsteil"],
-    )
-
-    op.create_index(
-        "idx_schulen_schulen_schulart",
-        "schulen_schulen",
-        ["schulart"],
-    )
-
-    # ---------------------------------------------------------------------
-    # NEW TABLES BELOW
-    # ---------------------------------------------------------------------
-    # All names follow: <dataset>_<layer>
-    # All geometries use SRID 4326 for consistency with schulen_schulen
-    # ---------------------------------------------------------------------
-
     # =====================================================================
-    # ua_einwohnerdichte_2025 : ua_einwohnerdichte_2025 (MULTIPOLYGON)
+    # transit_route_shapes  ← VBB GTFS shapes.txt collapsed
+    # One canonical LineString per (route_id, direction_id), picked from the
+    # most-frequently-used shape for that direction.
     # =====================================================================
 
     op.execute(
         """
-        CREATE TABLE ua_einwohnerdichte_2025_ua_einwohnerdichte_2025 (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            schluessel TEXT,
-
-            ew2025 INTEGER,
-
-            flalle DOUBLE PRECISION,
-
-            ha DOUBLE PRECISION,
-
-            ew_ha_2025 DOUBLE PRECISION,
-
-            alter_u6 INTEGER,
-
-            alter_6_u10 INTEGER,
-
-            alter_10_u18 INTEGER,
-
-            alter_18_u65 INTEGER,
-
-            alter_65_u70 INTEGER,
-
-            alter_70_u75 INTEGER,
-
-            alter75_u80 INTEGER,
-
-            alter_80plus INTEGER,
-
-            typklar TEXT,
-
-            etypklar TEXT,
-
-            geom geometry(MultiPolygon, 4326)
-
+        CREATE TABLE transit_route_shapes (
+            route_id      TEXT NOT NULL REFERENCES transit_routes(route_id),
+            direction_id  SMALLINT NOT NULL,
+            geom          geometry(LineString, 4326) NOT NULL,
+            PRIMARY KEY (route_id, direction_id)
         )
         """
     )
-
     op.execute(
-        """
-        CREATE INDEX ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_geom_gix
-        ON ua_einwohnerdichte_2025_ua_einwohnerdichte_2025
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_ua_einwdichte2025_schluessel",
-        "ua_einwohnerdichte_2025_ua_einwohnerdichte_2025",
-        ["schluessel"],
-    )
-
-    op.create_index(
-        "idx_ua_einwdichte2025_typklar",
-        "ua_einwohnerdichte_2025_ua_einwohnerdichte_2025",
-        ["typklar"],
-    )
-
-    # =====================================================================
-    # ua_einwohnerdichte_2025 : ua_einwohnerdichte_2025_entw (MULTIPOLYGON)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            schluessel TEXT,
-
-            ew2024 INTEGER,
-
-            ew2025 INTEGER,
-
-            flalle DOUBLE PRECISION,
-
-            ha DOUBLE PRECISION,
-
-            ew_ha_2024 DOUBLE PRECISION,
-
-            ew_ha_2025 DOUBLE PRECISION,
-
-            diff_2025_2024 INTEGER,
-
-            typklar TEXT,
-
-            etypklar TEXT,
-
-            geom geometry(MultiPolygon, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw_geom_gix
-        ON ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_ua_einwdichte2025_entw_schluessel",
-        "ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw",
-        ["schluessel"],
-    )
-
-    op.create_index(
-        "idx_ua_einwdichte2025_entw_typklar",
-        "ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw",
-        ["typklar"],
-    )
-
-    # =====================================================================
-    # ua_stratlaerm_2022 : aa_fp_gesamt2022 (POINT)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE ua_stratlaerm_2022_aa_fp_gesamt2022 (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            importid TEXT,
-
-            x DOUBLE PRECISION,
-
-            y DOUBLE PRECISION,
-
-            str_den DOUBLE PRECISION,
-
-            str_n DOUBLE PRECISION,
-
-            sch_den DOUBLE PRECISION,
-
-            sch_n DOUBLE PRECISION,
-
-            flg_den TEXT,
-
-            flg_n TEXT,
-
-            ges_den DOUBLE PRECISION,
-
-            ges_n DOUBLE PRECISION,
-
-            geom geometry(Point, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX ua_stratlaerm_2022_aa_fp_gesamt2022_geom_gix
-        ON ua_stratlaerm_2022_aa_fp_gesamt2022
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_ua_stratlaerm2022_importid",
-        "ua_stratlaerm_2022_aa_fp_gesamt2022",
-        ["importid"],
-    )
-
-    # =====================================================================
-    # ua_gruenvolumen_2020 : a_gruenvol2020 (MULTIPOLYGON)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE ua_gruenvolumen_2020_a_gruenvol2020 (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            schluessel TEXT,
-
-            schl5 TEXT,
-
-            flalle DOUBLE PRECISION,
-
-            woz TEXT,
-
-            woz_name TEXT,
-
-            grz TEXT,
-
-            grz_name TEXT,
-
-            typ TEXT,
-
-            typklar TEXT,
-
-            veghoh2020 DOUBLE PRECISION,
-
-            vegproz2020 DOUBLE PRECISION,
-
-            vegvola2010 DOUBLE PRECISION,
-
-            vegvola2020 DOUBLE PRECISION,
-
-            vegvol2010 DOUBLE PRECISION,
-
-            vegvol2020 DOUBLE PRECISION,
-
-            flubeb2020 DOUBLE PRECISION,
-
-            veghoeubeb2020 DOUBLE PRECISION,
-
-            vegproubeb2020 DOUBLE PRECISION,
-
-            vegvolaube2020 DOUBLE PRECISION,
-
-            vegvolubeb2020 DOUBLE PRECISION,
-
-            changegvz DOUBLE PRECISION,
-
-            ewoz_name TEXT,
-
-            egrz_name TEXT,
-
-            etypklar TEXT,
-
-            geom geometry(MultiPolygon, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX ua_gruenvolumen_2020_a_gruenvol2020_geom_gix
-        ON ua_gruenvolumen_2020_a_gruenvol2020
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_ua_gruenvol2020_schluessel",
-        "ua_gruenvolumen_2020_a_gruenvol2020",
-        ["schluessel"],
-    )
-
-    op.create_index(
-        "idx_ua_gruenvol2020_typklar",
-        "ua_gruenvolumen_2020_a_gruenvol2020",
-        ["typklar"],
-    )
-
-    # =====================================================================
-    # gruenanlagen : gruenanlagen (MULTIPOLYGON)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE gruenanlagen_gruenanlagen (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            pitid TEXT,
-
-            kennzeich TEXT,
-
-            bezirkname TEXT,
-
-            ortstlname TEXT,
-
-            objartname TEXT,
-
-            namenr TEXT,
-
-            namezusatz TEXT,
-
-            baujahr TEXT,
-
-            sanierjahr TEXT,
-
-            katasterfl DOUBLE PRECISION,
-
-            widmung TEXT,
-
-            plannr TEXT,
-
-            planname TEXT,
-
-            geom geometry(MultiPolygon, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX gruenanlagen_gruenanlagen_geom_gix
-        ON gruenanlagen_gruenanlagen
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_gruenanlagen_bezirkname",
-        "gruenanlagen_gruenanlagen",
-        ["bezirkname"],
-    )
-
-    op.create_index(
-        "idx_gruenanlagen_ortstlname",
-        "gruenanlagen_gruenanlagen",
-        ["ortstlname"],
-    )
-
-    # =====================================================================
-    # gruenanlagen : spielplaetze (MULTIPOLYGON)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE gruenanlagen_spielplaetze (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            pitid TEXT,
-
-            kennzeich TEXT,
-
-            bezirkname TEXT,
-
-            ortstlname TEXT,
-
-            objartname TEXT,
-
-            namenr TEXT,
-
-            namezusatz TEXT,
-
-            baujahr TEXT,
-
-            sanierjahr TEXT,
-
-            katasterfl DOUBLE PRECISION,
-
-            widmung TEXT,
-
-            plannr TEXT,
-
-            planname TEXT,
-
-            nettospfl DOUBLE PRECISION,
-
-            geom geometry(MultiPolygon, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX gruenanlagen_spielplaetze_geom_gix
-        ON gruenanlagen_spielplaetze
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_spielplaetze_bezirkname",
-        "gruenanlagen_spielplaetze",
-        ["bezirkname"],
-    )
-
-    op.create_index(
-        "idx_spielplaetze_ortstlname",
-        "gruenanlagen_spielplaetze",
-        ["ortstlname"],
-    )
-
-    # =====================================================================
-    # schulen : schulen_esb (MULTIPOLYGON)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE schulen_schulen_esb (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            esb TEXT,
-
-            bez TEXT,
-
-            bezname TEXT,
-
-            geom geometry(MultiPolygon, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX schulen_schulen_esb_geom_gix
-        ON schulen_schulen_esb
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_schulen_esb_bez",
-        "schulen_schulen_esb",
-        ["bez"],
-    )
-
-    op.create_index(
-        "idx_schulen_esb_bezname",
-        "schulen_schulen_esb",
-        ["bezname"],
-    )
-
-    # =====================================================================
-    # krankenhaeuser : plankrankenhaeuser (POINT)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE krankenhaeuser_plankrankenhaeuser (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            gisid TEXT,
-
-            nr_standort TEXT,
-
-            kkh_standort TEXT,
-
-            nr_kkh TEXT,
-
-            kkh TEXT,
-
-            gc_strasse TEXT,
-
-            gc_haus TEXT,
-
-            gc_plz TEXT,
-
-            gc_ortsteil TEXT,
-
-            betten_insgesamt INTEGER,
-
-            geom geometry(Point, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX krankenhaeuser_plankrankenhaeuser_geom_gix
-        ON krankenhaeuser_plankrankenhaeuser
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_krankenhaeuser_plankrankenhaeuser_plz",
-        "krankenhaeuser_plankrankenhaeuser",
-        ["gc_plz"],
-    )
-
-    op.create_index(
-        "idx_krankenhaeuser_plankrankenhaeuser_ortsteil",
-        "krankenhaeuser_plankrankenhaeuser",
-        ["gc_ortsteil"],
-    )
-
-    # =====================================================================
-    # behindertenparkplaetze : bpark (POINT)
-    # =====================================================================
-
-    op.execute(
-        """
-        CREATE TABLE behindertenparkplaetze_bpark (
-
-            id BIGSERIAL PRIMARY KEY,
-
-            uid TEXT,
-
-            bezirk TEXT,
-
-            bezeichnun TEXT,
-
-            bemerkung TEXT,
-
-            anzahl INTEGER,
-
-            polizei TEXT,
-
-            standort TEXT,
-
-            plz TEXT,
-
-            ortsteil TEXT,
-
-            gps_lat DOUBLE PRECISION,
-
-            gps_lon DOUBLE PRECISION,
-
-            datum DATE,
-
-            geom geometry(Point, 4326)
-
-        )
-        """
-    )
-
-    op.execute(
-        """
-        CREATE INDEX behindertenparkplaetze_bpark_geom_gix
-        ON behindertenparkplaetze_bpark
-        USING GIST (geom)
-        """
-    )
-
-    op.create_index(
-        "idx_bpark_bezirk",
-        "behindertenparkplaetze_bpark",
-        ["bezirk"],
-    )
-
-    op.create_index(
-        "idx_bpark_ortsteil",
-        "behindertenparkplaetze_bpark",
-        ["ortsteil"],
-    )
-
-    op.create_index(
-        "idx_bpark_plz",
-        "behindertenparkplaetze_bpark",
-        ["plz"],
+        "CREATE INDEX transit_route_shapes_geom_gix "
+        "ON transit_route_shapes USING GIST (geom)"
     )
 
 
@@ -673,176 +444,21 @@ def upgrade() -> None:
 # Rollback migration
 # -------------------------------------------------------------------------
 
+
 def downgrade() -> None:
-
-    # ---------------------------------------------------------------------
-    # Drop indexes and tables in reverse dependency order
-    # ---------------------------------------------------------------------
-
-    # behindertenparkplaetze_bpark
-    op.drop_index(
-        "idx_bpark_plz",
-        table_name="behindertenparkplaetze_bpark",
-    )
-    op.drop_index(
-        "idx_bpark_ortsteil",
-        table_name="behindertenparkplaetze_bpark",
-    )
-    op.drop_index(
-        "idx_bpark_bezirk",
-        table_name="behindertenparkplaetze_bpark",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS behindertenparkplaetze_bpark_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS behindertenparkplaetze_bpark"
-    )
-
-    # krankenhaeuser_plankrankenhaeuser
-    op.drop_index(
-        "idx_krankenhaeuser_plankrankenhaeuser_ortsteil",
-        table_name="krankenhaeuser_plankrankenhaeuser",
-    )
-    op.drop_index(
-        "idx_krankenhaeuser_plankrankenhaeuser_plz",
-        table_name="krankenhaeuser_plankrankenhaeuser",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS krankenhaeuser_plankrankenhaeuser_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS krankenhaeuser_plankrankenhaeuser"
-    )
-
-    # schulen_schulen_esb
-    op.drop_index(
-        "idx_schulen_esb_bezname",
-        table_name="schulen_schulen_esb",
-    )
-    op.drop_index(
-        "idx_schulen_esb_bez",
-        table_name="schulen_schulen_esb",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS schulen_schulen_esb_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS schulen_schulen_esb"
-    )
-
-    # gruenanlagen_spielplaetze
-    op.drop_index(
-        "idx_spielplaetze_ortstlname",
-        table_name="gruenanlagen_spielplaetze",
-    )
-    op.drop_index(
-        "idx_spielplaetze_bezirkname",
-        table_name="gruenanlagen_spielplaetze",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS gruenanlagen_spielplaetze_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS gruenanlagen_spielplaetze"
-    )
-
-    # gruenanlagen_gruenanlagen
-    op.drop_index(
-        "idx_gruenanlagen_ortstlname",
-        table_name="gruenanlagen_gruenanlagen",
-    )
-    op.drop_index(
-        "idx_gruenanlagen_bezirkname",
-        table_name="gruenanlagen_gruenanlagen",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS gruenanlagen_gruenanlagen_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS gruenanlagen_gruenanlagen"
-    )
-
-    # ua_gruenvolumen_2020_a_gruenvol2020
-    op.drop_index(
-        "idx_ua_gruenvol2020_typklar",
-        table_name="ua_gruenvolumen_2020_a_gruenvol2020",
-    )
-    op.drop_index(
-        "idx_ua_gruenvol2020_schluessel",
-        table_name="ua_gruenvolumen_2020_a_gruenvol2020",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS ua_gruenvolumen_2020_a_gruenvol2020_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS ua_gruenvolumen_2020_a_gruenvol2020"
-    )
-
-    # ua_stratlaerm_2022_aa_fp_gesamt2022
-    op.drop_index(
-        "idx_ua_stratlaerm2022_importid",
-        table_name="ua_stratlaerm_2022_aa_fp_gesamt2022",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS ua_stratlaerm_2022_aa_fp_gesamt2022_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS ua_stratlaerm_2022_aa_fp_gesamt2022"
-    )
-
-    # ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw
-    op.drop_index(
-        "idx_ua_einwdichte2025_entw_typklar",
-        table_name="ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw",
-    )
-    op.drop_index(
-        "idx_ua_einwdichte2025_entw_schluessel",
-        table_name="ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_entw"
-    )
-
-    # ua_einwohnerdichte_2025_ua_einwohnerdichte_2025
-    op.drop_index(
-        "idx_ua_einwdichte2025_typklar",
-        table_name="ua_einwohnerdichte_2025_ua_einwohnerdichte_2025",
-    )
-    op.drop_index(
-        "idx_ua_einwdichte2025_schluessel",
-        table_name="ua_einwohnerdichte_2025_ua_einwohnerdichte_2025",
-    )
-    op.execute(
-        "DROP INDEX IF EXISTS ua_einwohnerdichte_2025_ua_einwohnerdichte_2025_geom_gix"
-    )
-    op.execute(
-        "DROP TABLE IF EXISTS ua_einwohnerdichte_2025_ua_einwohnerdichte_2025"
-    )
-
-    # Existing indexes/tables for schulen_schulen
-    op.drop_index(
-        "idx_schulen_schulen_schulart",
-        table_name="schulen_schulen",
-    )
-
-    op.drop_index(
-        "idx_schulen_schulen_ortsteil",
-        table_name="schulen_schulen",
-    )
-
-    op.drop_index(
-        "idx_schulen_schulen_bezirk",
-        table_name="schulen_schulen",
-    )
-
-    op.execute(
-        "DROP INDEX IF EXISTS schulen_schulen_geom_gix"
-    )
-
-    op.execute(
-        "DROP TABLE IF EXISTS schulen_schulen"
-    )
+    # Drop in reverse dependency order — children before parents.
+    op.execute("DROP TABLE IF EXISTS transit_route_shapes")
+    op.execute("DROP TABLE IF EXISTS transit_routes")
+    op.execute("DROP TABLE IF EXISTS transit_stops")
+    op.execute("DROP TABLE IF EXISTS water_bodies")
+    op.execute("DROP TABLE IF EXISTS social_monitoring_2025")
+    op.execute("DROP TABLE IF EXISTS disabled_parking")
+    op.execute("DROP TABLE IF EXISTS hospitals")
+    op.execute("DROP TABLE IF EXISTS playgrounds")
+    op.execute("DROP TABLE IF EXISTS parks")
+    op.execute("DROP TABLE IF EXISTS green_volume_2020")
+    op.execute("DROP TABLE IF EXISTS street_noise_2022")
+    op.execute("DROP TABLE IF EXISTS population_density_2025")
+    op.execute("DROP TABLE IF EXISTS school_catchments")
+    op.execute("DROP TABLE IF EXISTS schools")
+    # PostGIS extension intentionally left installed.

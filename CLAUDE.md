@@ -48,6 +48,19 @@ services/backend/           → FastAPI app, domain-isolated layered architectur
     search/                 → Search domain (service, models, schemas — SearchParams)
     users/                  → Users domain (sessions, bookmarks — future)
 services/ingestion/         → Batch data ingestion, triggered by cron
+  src/
+    iron/, bronze/, silver/ → Listings pipeline (cards → raw JSON → typed listings)
+    scraper/                → Per-source Node scrapers (wg-gesucht, kleinanzeigen)
+    geo_context/            → Berlin geo context ETL (WFS + GTFS), separate from listings
+      extract/wfs.py        — BerlinGdiWfsClient (GetCapabilities + GetFeature)
+      extract/gtfs.py       — VbbGtfsClient (download zip → 5 needed tables)
+      transform/aliases.py  — German→English column maps per (dataset, layer)
+      transform/wfs.py      — reproject to 4326 + rename + filter to silver columns
+      transform/gtfs.py     — station collapse, modes/lines, canonical route shapes
+      load/postgis.py       — transactional truncate+insert
+      datasets.yaml         — source-of-truth catalog with status flags
+      run.py                — CLI: python -m geo_context.run [--only k1,k2]
+      icebox/               — parked code, not wired in (see icebox/README.md)
 nginx/                      → Reverse proxy (SPA at /, proxies /api/conversations + /api/agent (SSE), serves /tiles/)
 data/tiles/                 → Protomaps .pmtiles for MapLibre — mounted into nginx at /tiles/
 agent-compound-docs/        → Architecture decisions and deployment guide
@@ -56,8 +69,9 @@ agent-compound-docs/        → Architecture decisions and deployment guide
 ## Running the Project
 
 ```bash
-docker compose up --build        # Start all services at http://localhost
-docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
+docker compose up --build                                  # Start all services at http://localhost
+docker compose --profile ingestion run --rm ingestion      # Run listings ingestion manually
+docker compose --profile geo-context run --rm geo-context  # Run geo-context ETL (WFS + GTFS)
 ```
 
 ## API Conventions
@@ -86,6 +100,7 @@ docker compose --profile ingestion run --rm ingestion   # Run ingestion manually
 - Phoenix observability runs as a compose service in dev (UI at `http://localhost:6006`, SQLite persisted to the `phoenix_data` volume). `core/observability.py` builds the OTel pipeline explicitly — a `TracerProvider` with two span processors attached via `add_span_processor()`: `OpenInferenceSpanProcessor` (enrichment — tags Pydantic AI's native spans with `llm.*` / `tool.*` attributes so Phoenix renders them as chat UI) and `BatchSpanProcessor(HTTPSpanExporter(...))` (transport — batches and flushes over OTLP/HTTP to the Phoenix collector). The provider is registered globally via `trace.set_tracer_provider()`, then `Agent.instrument_all()` enables Pydantic AI's native span emission. The explicit-pipeline approach replaces `phoenix.otel.register()` because the latter's default exporter gets silently dropped the first time `add_span_processor` runs. Per-conversation grouping comes from `with using_session(session_id)` around the agent run in `chat/service.py`. Enable per-env via `PHOENIX_ENABLED` (defaults to true in dev compose; off everywhere else)
 - **No side effects at module import.** Process-wide setup (observability, connection pools, HTTPX clients, model warm-up) goes in the FastAPI `lifespan` context manager in `main.py`, with a paired teardown after `yield` if the resource needs flushing/closing. Module-level calls on import are surprising for tests and scripts that import `flat_chat.main` for non-serving purposes
 - **Shared dev DB: local-first, tailnet for refresh.** Everyone runs the full stack locally via the base `docker-compose.yml` (including their own Postgres on the docker bridge) — fast, offline-friendly, plain `docker compose up`. When their local DB gets stale they refresh from the team's canonical DB via `./scripts/refresh-db.sh`, which streams `pg_dump` from `flat-chat-db` on the tailnet into their local postgres container. **Only the host** loads the `docker-compose.host.yml` overlay (via `COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml` in their `.env`), which wraps the host's existing postgres with a Tailscale sidecar that registers as `flat-chat-db` on the tailnet. Teammates never spin up the sidecar and never spawn `flat-chat-db-N` collisions. See `agent-compound-docs/decisions/shared-dev-database.md`.
+- **Geo-context ETL is a separate pipeline.** `services/ingestion/src/geo_context/` ingests Berlin GDI WFS (schools, parks, noise, population density, hospitals, social monitoring, water bodies) + VBB GTFS (transit_stops, transit_routes, transit_route_shapes) on a different cadence (yearly → weekly) than listings (daily). It runs via a separate compose profile (`--profile geo-context`) and does not auto-run on `docker compose up`. See `services/ingestion/src/geo_context/README.md` and `agent-compound-docs/decisions/geo-context-pipeline.md`.
 - **TODO — listings are not auto-embedded.** Silver transformers don't populate the `embedding` column on the `Listing` table; semantic ranking via `sort_by=relevance` therefore degrades to recency. Run `python -m silver.embed` after `silver.run` to backfill embeddings. Replace with an inline step once we trust the throughput.
 - **TODO — immowelt and wohninberlin scrapers exist but have no silver transformer.** Their bronze rows accumulate but never enter `listings`. Add transformers in `services/ingestion/src/silver/sources/` and wire them into `_TRANSFORMERS` in `silver/transformer.py`.
 - **TODO — CopilotKit Web Inspector is hidden.** Because we use `agents__unsafe_dev_only` (direct AG-UI via `HttpAgent`) instead of a CopilotRuntime middleware, `/api/agent/info` returns 422 and the inspector renders a "Runtime error" banner. `services/frontend/src/main.tsx` passes `showDevConsole={false}` *and* a `MutationObserver` actively removes any `<cpk-web-inspector>` element from the DOM. To re-enable it for live debugging of AG-UI flows we either (a) add a CopilotRuntime middleware (Next.js-only today; Vite would need a custom server) or (b) stub `GET /api/agent/info` with a payload that satisfies CopilotKit's parser. Either is a non-trivial side project; the inspector is *not* needed for the chat to function — Phoenix at `:6006` covers most of the debugging needs.

@@ -2,6 +2,8 @@
 
 Three-tier data pipeline that scrapes Berlin apartment listings, dumps them raw into Postgres, and normalizes them into a single queryable table.
 
+> **Geo-context** (parks, schools, noise, transit, …) is a **separate** pipeline that runs on its own cadence — see [src/geo_context/README.md](src/geo_context/README.md).
+
 ```
 ┌──────────────────┐    pg     ┌──────────────┐
 │ cardscraper.js   │──────────▶│ iron_cards   │   raw card data from search/list pages

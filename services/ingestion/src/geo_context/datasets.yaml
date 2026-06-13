@@ -1,0 +1,173 @@
+# Source-of-truth for the geo-context ETL.
+#
+# Each WFS entry maps a (dataset, layer) on Berlin's GDI to a silver table.
+# The German→English column rename happens in geo_context/transform/aliases.py.
+#
+# status:
+#   stable     — verified end-to-end, expected to keep working
+#   wip        — code wired, output not yet sanity-checked in prod
+#   discovery  — layer name / schema discovered but not yet wired; enabled=false
+#   deprecated — kept for reference only, enabled=false
+#
+# enabled=false entries stay in the file for visibility but never run.
+
+wfs:
+  - key: schools
+    dataset: schulen
+    layer: schulen
+    table: schools
+    geom_type: Point
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/schulen"
+    update_cadence: yearly
+    description: "Individual schools (points) — name, type, operator, contact, address."
+
+  - key: school_catchments
+    dataset: schulen
+    layer: schulen_esb
+    table: school_catchments
+    geom_type: MultiPolygon
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/schulen"
+    update_cadence: yearly
+    description: "Primary-school catchment polygons (Einschulungsbereiche)."
+
+  - key: population_density_2025
+    dataset: ua_einwohnerdichte_2025
+    layer: ua_einwohnerdichte_2025
+    table: population_density_2025
+    geom_type: MultiPolygon
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/ua_einwohnerdichte_2025"
+    update_cadence: yearly
+    description: "Residents per planning area (LOR) with age-band breakdown."
+
+  - key: street_noise_2022
+    dataset: ua_stratlaerm_2022
+    layer: aa_fp_gesamt2022
+    table: street_noise_2022
+    geom_type: Point
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/ua_stratlaerm_2022"
+    update_cadence: "every 5 years (EU directive)"
+    description: "Strategic noise map — Lden/Lnight per source (street/rail/air)."
+
+  - key: green_volume_2020
+    dataset: ua_gruenvolumen_2020
+    layer: a_gruenvol2020
+    table: green_volume_2020
+    geom_type: MultiPolygon
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/ua_gruenvolumen_2020"
+    update_cadence: "every ~5 years"
+    description: "3D vegetation volume per block (LiDAR-derived) — how leafy."
+
+  - key: parks
+    dataset: gruenanlagen
+    layer: gruenanlagen
+    table: parks
+    geom_type: MultiPolygon
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/gruenanlagen"
+    update_cadence: quarterly
+    description: "Public parks and green spaces."
+
+  - key: playgrounds
+    dataset: gruenanlagen
+    layer: spielplaetze
+    table: playgrounds
+    geom_type: MultiPolygon
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/gruenanlagen"
+    update_cadence: quarterly
+    description: "Public playgrounds."
+
+  - key: hospitals_plan
+    dataset: krankenhaeuser
+    layer: plankrankenhaeuser
+    table: hospitals
+    geom_type: Point
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/krankenhaeuser"
+    update_cadence: rarely
+    description: "Krankenhausplan hospitals (~80 major facilities). Loads with tier='plan_hospital'."
+    extra:
+      tier: plan_hospital
+
+  - key: hospitals_other
+    dataset: krankenhaeuser
+    layer: weitere_krankenhaeuser
+    table: hospitals
+    geom_type: Point
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/krankenhaeuser"
+    update_cadence: rarely
+    description: "Smaller clinics + specialist hospitals. Loads with tier='other'."
+    extra:
+      tier: other
+
+  - key: disabled_parking
+    dataset: behindertenparkplaetze
+    layer: bpark
+    table: disabled_parking
+    geom_type: Point
+    enabled: true
+    status: stable
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/behindertenparkplaetze"
+    update_cadence: monthly
+    description: "Reserved disabled-parking spots with address and count."
+
+  - key: social_monitoring_2025
+    dataset: mss_2025
+    layer: mss2025_indizes_542
+    table: social_monitoring_2025
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/mss_2025"
+    update_cadence: yearly
+    description: "Monitoring Soziale Stadtentwicklung — Status/Dynamics/Social-Inequality indices per planning area."
+
+  - key: water_bodies
+    dataset: gewaesserkarte
+    layer: e_gew_gewaesser_fl
+    table: water_bodies
+    geom_type: Geometry
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/gewaesserkarte"
+    update_cadence: rarely
+    description: "All Berlin water body surfaces (lakes, Spree, Havel, canals)."
+
+# GTFS — public transit feed published by VBB (Verkehrsverbund Berlin-Brandenburg).
+# Powers transit_stops, transit_routes, transit_route_shapes via a single transform pass.
+gtfs:
+  feed_url: "https://www.vbb.de/vbbgtfs"
+  license: "CC BY 4.0 (VBB GTFS)"
+  update_cadence: weekly
+  enabled: true
+  outputs:
+    - table: transit_stops
+    - table: transit_routes
+    - table: transit_route_shapes

@@ -92,6 +92,20 @@ services:
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
 
+  # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
+  # Opt-in via `--profile geo-context`; does not run on `docker compose up`.
+  # See services/ingestion/src/geo_context/README.md for the runbook.
+  geo-context:
+    build: services/ingestion/
+    profiles:
+      - geo-context
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ["uv", "run", "--no-dev", "python", "-m", "geo_context.run"]
+
 volumes:
   postgres_data:
   frontend_dist:
