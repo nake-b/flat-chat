@@ -229,3 +229,4 @@ node_modules/
 data/scraped/
 # Protomaps tile extracts live alongside their README; only the README is tracked.
 data/tiles/*.pmtiles
+flat_chat_dump_*.pgdump
