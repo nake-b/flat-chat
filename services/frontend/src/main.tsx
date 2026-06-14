@@ -23,13 +23,14 @@ function Bootstrap() {
 
   useEffect(() => {
     let cancelled = false;
+    // Hover is client-local ephemera (zustand singleton). Reset synchronously
+    // on mount — before the createConversation() network round-trip — so a
+    // stale id from a prior thread can't ghost-highlight a card during the
+    // tens-of-ms gap between mount and agent allocation.
+    useHover.getState().reset();
     createConversation()
       .then((conv) => {
         if (cancelled) return;
-        // Hover is client-local ephemera (zustand singleton). Reset it when a
-        // new conversation is allocated so a stale id from a prior thread can't
-        // ghost-highlight a card in the new one.
-        useHover.getState().reset();
         setAgent(
           new HttpAgent({
             url: "/api/agent",
