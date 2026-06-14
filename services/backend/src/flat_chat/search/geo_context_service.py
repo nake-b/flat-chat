@@ -595,52 +595,73 @@ class GeoContextService:
     #     gets an answer to "what's the closest school")
     #   - k=2..k only included if within the per-dataset cap (so we never
     #     show "there's a park 20km away")
-    # Caps are in `distances.py`. Cemeteries handled in `_nearest_parks`
-    # and `_greenery_profile` per the threshold doc.
+    # Caps are in `distances.py`. The shared SQL skeleton lives in
+    # `_knn_within_cap` below; cemeteries / tier filters are passed via
+    # `where=`.
+
+    def _knn_within_cap(
+        self,
+        location: WKBElement,
+        geom_col,
+        columns: list,
+        *,
+        k: int,
+        cap_m: int,
+        where=None,
+    ) -> list:
+        """KNN ORDER BY with the "k=1 always, k=2..k within cap" gate.
+
+        Used by `_nearest_transit_stops` / `_nearest_schools` / `_nearest_parks`
+        / `_nearest_hospitals`. The caller passes the columns it needs and the
+        cap; the helper executes the query and applies the gate. Each row's
+        `distance_m` is exposed as an attribute on the returned Row.
+        """
+        distance_m = geo_func.ST_Distance(
+            cast(geom_col, Geography),
+            cast(location, Geography),
+        )
+        stmt = (
+            select(*columns, cast(distance_m, Integer).label("distance_m"))
+            .order_by(geom_col.op("<->")(location))
+            .limit(k)
+        )
+        if where is not None:
+            stmt = stmt.where(where)
+        rows = self.db.execute(stmt).all()
+        out = []
+        for i, row in enumerate(rows):
+            if i > 0 and row.distance_m > cap_m:
+                break
+            out.append(row)
+        return out
 
     def _nearest_transit_stops(
         self, location: WKBElement, *, k: int = 3
     ) -> list[NearestTransitStop]:
-        """Top-k nearest transit stops with decoded modes + walk minutes.
-
-        k=1 always returns; k=2..k only if within CAP_TRANSIT_STOPS_M to keep
-        the chip list useful ("there's a stop 1.5km away" beats "5km").
-        """
-        distance_m = geo_func.ST_Distance(
-            cast(TransitStop.geom, Geography),
-            cast(location, Geography),
-        )
-        stmt = (
-            select(
+        """Top-k nearest transit stops with decoded modes + walk minutes."""
+        rows = self._knn_within_cap(
+            location,
+            TransitStop.geom,
+            [
                 TransitStop.stop_id,
                 TransitStop.name,
                 TransitStop.modes_served,
                 TransitStop.lines_served,
-                cast(distance_m, Integer).label("distance_m"),
-            )
-            .order_by(TransitStop.geom.op("<->")(location))
-            .limit(k)
+            ],
+            k=k,
+            cap_m=CAP_TRANSIT_STOPS_M,
         )
-        rows = self.db.execute(stmt).all()
-        if not rows:
-            return []
-        out: list[NearestTransitStop] = []
-        for i, row in enumerate(rows):
-            d = int(row.distance_m)
-            # k=1 always; subsequent rows only if within the dataset cap.
-            if i > 0 and d > CAP_TRANSIT_STOPS_M:
-                break
-            out.append(
-                NearestTransitStop(
-                    stop_id=row.stop_id,
-                    name=row.name,
-                    modes=decode_modes(list(row.modes_served)),
-                    lines=list(row.lines_served),
-                    distance_m=d,
-                    walk_minutes=walk_minutes(d),
-                )
+        return [
+            NearestTransitStop(
+                stop_id=r.stop_id,
+                name=r.name,
+                modes=decode_modes(list(r.modes_served)),
+                lines=list(r.lines_served),
+                distance_m=r.distance_m,
+                walk_minutes=walk_minutes(r.distance_m),
             )
-        return out
+            for r in rows
+        ]
 
     def _school_catchment(
         self, location: WKBElement
@@ -671,38 +692,23 @@ class GeoContextService:
     def _nearest_schools(
         self, location: WKBElement, *, k: int = 3
     ) -> list[NearestSchool]:
-        """Top-k nearest schools. k=1 always; k=2..k within CAP_SCHOOLS_M."""
-        distance_m = geo_func.ST_Distance(
-            cast(School.geom, Geography),
-            cast(location, Geography),
+        """Top-k nearest schools."""
+        rows = self._knn_within_cap(
+            location,
+            School.geom,
+            [School.name, School.school_type, School.operator],
+            k=k,
+            cap_m=CAP_SCHOOLS_M,
         )
-        stmt = (
-            select(
-                School.name,
-                School.school_type,
-                School.operator,
-                cast(distance_m, Integer).label("distance_m"),
+        return [
+            NearestSchool(
+                name=r.name,
+                school_type=r.school_type,
+                operator=r.operator,
+                distance_m=r.distance_m,
             )
-            .order_by(School.geom.op("<->")(location))
-            .limit(k)
-        )
-        rows = self.db.execute(stmt).all()
-        if not rows:
-            return []
-        out: list[NearestSchool] = []
-        for i, row in enumerate(rows):
-            d = int(row.distance_m)
-            if i > 0 and d > CAP_SCHOOLS_M:
-                break
-            out.append(
-                NearestSchool(
-                    name=row.name,
-                    school_type=row.school_type,
-                    operator=row.operator,
-                    distance_m=d,
-                )
-            )
-        return out
+            for r in rows
+        ]
 
     def _nearest_parks(
         self, location: WKBElement, *, k: int = 2
@@ -714,38 +720,23 @@ class GeoContextService:
         not "🌳 Jüdischer Friedhof 200m"). They still contribute to
         `_greenery_profile` at 0.5 weight.
         """
-        distance_m = geo_func.ST_Distance(
-            cast(Park.geom, Geography),
-            cast(location, Geography),
+        rows = self._knn_within_cap(
+            location,
+            Park.geom,
+            [Park.name, Park.object_type, Park.cadastral_area_m2],
+            k=k,
+            cap_m=CAP_PARKS_M,
+            where=_not_cemetery(),
         )
-        stmt = (
-            select(
-                Park.name,
-                Park.object_type,
-                Park.cadastral_area_m2,
-                cast(distance_m, Integer).label("distance_m"),
+        return [
+            NearestPark(
+                name=r.name,
+                object_type=r.object_type,
+                distance_m=r.distance_m,
+                area_m2=r.cadastral_area_m2,
             )
-            .where(_not_cemetery())
-            .order_by(Park.geom.op("<->")(location))
-            .limit(k)
-        )
-        rows = self.db.execute(stmt).all()
-        if not rows:
-            return []
-        out: list[NearestPark] = []
-        for i, row in enumerate(rows):
-            d = int(row.distance_m)
-            if i > 0 and d > CAP_PARKS_M:
-                break
-            out.append(
-                NearestPark(
-                    name=row.name,
-                    object_type=row.object_type,
-                    distance_m=d,
-                    area_m2=row.cadastral_area_m2,
-                )
-            )
-        return out
+            for r in rows
+        ]
 
     def _nearest_playground(
         self, location: WKBElement
@@ -789,41 +780,26 @@ class GeoContextService:
         alongside Krankenhausplan facilities. `tier="plan_hospital"` filters
         to the emergency-care network.
         """
-        distance_m = geo_func.ST_Distance(
-            cast(Hospital.geom, Geography),
-            cast(location, Geography),
+        where = Hospital.tier == "plan_hospital" if tier == "plan_hospital" else None
+        rows = self._knn_within_cap(
+            location,
+            Hospital.geom,
+            [Hospital.name, Hospital.tier, Hospital.total_beds],
+            k=k,
+            cap_m=CAP_HOSPITALS_M,
+            where=where,
         )
-        stmt = (
-            select(
-                Hospital.name,
-                Hospital.tier,
-                Hospital.total_beds,
-                cast(distance_m, Integer).label("distance_m"),
+        # Tier is constrained by a CHECK to 'plan_hospital' / 'other'; the
+        # Literal-typed NearestHospital.tier accepts whichever Postgres hands back.
+        return [
+            NearestHospital(
+                name=r.name,
+                tier=r.tier,  # type: ignore[arg-type]
+                distance_m=r.distance_m,
+                total_beds=r.total_beds,
             )
-            .order_by(Hospital.geom.op("<->")(location))
-            .limit(k)
-        )
-        if tier == "plan_hospital":
-            stmt = stmt.where(Hospital.tier == "plan_hospital")
-        rows = self.db.execute(stmt).all()
-        if not rows:
-            return []
-        out: list[NearestHospital] = []
-        for i, row in enumerate(rows):
-            d = int(row.distance_m)
-            if i > 0 and d > CAP_HOSPITALS_M:
-                break
-            # Tier is constrained by the CHECK to 'plan_hospital' / 'other';
-            # cast to the Literal-typed field via str.
-            out.append(
-                NearestHospital(
-                    name=row.name,
-                    tier=row.tier,  # type: ignore[arg-type]
-                    distance_m=d,
-                    total_beds=row.total_beds,
-                )
-            )
-        return out
+            for r in rows
+        ]
 
     def _nearest_water(self, location: WKBElement) -> NearestWater | None:
         """Nearest water body within CAP_WATER_M, else None."""
