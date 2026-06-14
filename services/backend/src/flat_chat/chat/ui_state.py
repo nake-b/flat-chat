@@ -23,7 +23,8 @@ from datetime import datetime
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from flat_chat.search.geo_filters import ListingContext
+from flat_chat.search.buckets import DensityLabel, NoiseLabel
+from flat_chat.search.geo_filters import ListingContext, MssDynamics, MssStatus
 
 
 class UiApartment(BaseModel):
@@ -74,10 +75,15 @@ class UiApartment(BaseModel):
     walk_min_to_transit: int | None = None
     nearest_park_name: str | None = None
     nearest_park_m: int | None = None
-    noise_label: str | None = None
-    density_label: str | None = None
-    mss_status_label: str | None = None
-    mss_dynamics_label: str | None = None
+    # Narrowed to the canonical Literal types from `search/buckets.py` +
+    # `search/geo_filters.py` — the same producers (`bucket_noise`,
+    # `bucket_density`, `MSS_*_DE_TO_EN`) only ever emit values in the set.
+    # Pydantic surfaces any future drift at the boundary instead of letting
+    # the frontend's narrower TS types silently lose a switch-case branch.
+    noise_label: NoiseLabel | None = None
+    density_label: DensityLabel | None = None
+    mss_status_label: MssStatus | None = None
+    mss_dynamics_label: MssDynamics | None = None
 
     @classmethod
     def from_dataframe_row(cls, row: pd.Series) -> UiApartment:
