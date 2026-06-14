@@ -18,6 +18,7 @@ backend churn — and tools stay pure data mutators.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 import pandas as pd
@@ -87,45 +88,17 @@ class UiApartment(BaseModel):
 
     @classmethod
     def from_dataframe_row(cls, row: pd.Series) -> UiApartment:
-        """Project a single search-result row into the UI shape."""
-        return cls(
-            id=str(row["id"]),
-            lat=_opt_float(row.get("latitude")),
-            lng=_opt_float(row.get("longitude")),
-            price_warm_eur=_opt_float(row.get("price_warm_eur")),
-            price_cold_eur=_opt_float(row.get("price_cold_eur")),
-            nebenkosten_eur=_opt_float(row.get("nebenkosten_eur")),
-            kaution_eur=_opt_float(row.get("kaution_eur")),
-            rooms=_opt_float(row.get("rooms")),
-            bedrooms=_opt_int(row.get("bedrooms")),
-            area_sqm=_opt_float(row.get("area_sqm")),
-            floor=_opt_int(row.get("floor")),
-            floors_total=_opt_int(row.get("floors_total")),
-            available_from=_opt_iso(row.get("available_from")),
-            listing_type=_opt_str(row.get("listing_type")),
-            district=_opt_str(row.get("district")),
-            title=_opt_str(row.get("title")),
-            address=_opt_str(row.get("address")),
-            wbs_required=_opt_bool(row.get("wbs_required")),
-            is_furnished=_opt_bool(row.get("is_furnished")),
-            has_balcony=_opt_bool(row.get("has_balcony")),
-            has_kitchen=_opt_bool(row.get("has_kitchen")),
-            has_elevator=_opt_bool(row.get("has_elevator")),
-            has_garden=_opt_bool(row.get("has_garden")),
-            heating=_opt_str(row.get("heating")),
-            energy_consumption_kwh=_opt_float(row.get("energy_consumption_kwh")),
-            lister_type=_opt_str(row.get("lister_type")),
-            source_url=_opt_str(row.get("source_url")),
-            image_url=None,
-            nearest_transit_line=_opt_str(row.get("nearest_transit_line")),
-            walk_min_to_transit=_opt_int(row.get("walk_min_to_transit")),
-            nearest_park_name=_opt_str(row.get("nearest_park_name")),
-            nearest_park_m=_opt_int(row.get("nearest_park_m")),
-            noise_label=_opt_str(row.get("noise_label")),
-            density_label=_opt_str(row.get("density_label")),
-            mss_status_label=_opt_str(row.get("mss_status_label")),
-            mss_dynamics_label=_opt_str(row.get("mss_dynamics_label")),
-        )
+        """Project a single search-result row into the UI shape.
+
+        Driven by `_PROJECTORS` below — one tuple row per field. Adding a
+        new field is one row, not three lines of repetitive `_opt_X(row.get(...))`.
+        """
+        kwargs: dict[str, object] = {
+            field: caster(row.get(col)) for field, col, caster in _PROJECTORS
+        }
+        kwargs["id"] = str(row["id"])
+        kwargs["image_url"] = None  # Plumbed from raw.images JSONB later.
+        return cls(**kwargs)
 
 
 class UiState(BaseModel):
@@ -209,3 +182,44 @@ def _opt_iso(val: object) -> str | None:
         return val.isoformat()
     text = str(val)
     return text or None
+
+
+# Single source of truth for the DataFrame-row → UiApartment projection.
+# Tuple rows of (field_name, df_column_name, caster). `id` and `image_url`
+# are special-cased in `from_dataframe_row` (one required, one deferred).
+_PROJECTORS: tuple[tuple[str, str, Callable[[object], object]], ...] = (
+    ("lat", "latitude", _opt_float),
+    ("lng", "longitude", _opt_float),
+    ("price_warm_eur", "price_warm_eur", _opt_float),
+    ("price_cold_eur", "price_cold_eur", _opt_float),
+    ("nebenkosten_eur", "nebenkosten_eur", _opt_float),
+    ("kaution_eur", "kaution_eur", _opt_float),
+    ("rooms", "rooms", _opt_float),
+    ("bedrooms", "bedrooms", _opt_int),
+    ("area_sqm", "area_sqm", _opt_float),
+    ("floor", "floor", _opt_int),
+    ("floors_total", "floors_total", _opt_int),
+    ("available_from", "available_from", _opt_iso),
+    ("listing_type", "listing_type", _opt_str),
+    ("district", "district", _opt_str),
+    ("title", "title", _opt_str),
+    ("address", "address", _opt_str),
+    ("wbs_required", "wbs_required", _opt_bool),
+    ("is_furnished", "is_furnished", _opt_bool),
+    ("has_balcony", "has_balcony", _opt_bool),
+    ("has_kitchen", "has_kitchen", _opt_bool),
+    ("has_elevator", "has_elevator", _opt_bool),
+    ("has_garden", "has_garden", _opt_bool),
+    ("heating", "heating", _opt_str),
+    ("energy_consumption_kwh", "energy_consumption_kwh", _opt_float),
+    ("lister_type", "lister_type", _opt_str),
+    ("source_url", "source_url", _opt_str),
+    ("nearest_transit_line", "nearest_transit_line", _opt_str),
+    ("walk_min_to_transit", "walk_min_to_transit", _opt_int),
+    ("nearest_park_name", "nearest_park_name", _opt_str),
+    ("nearest_park_m", "nearest_park_m", _opt_int),
+    ("noise_label", "noise_label", _opt_str),
+    ("density_label", "density_label", _opt_str),
+    ("mss_status_label", "mss_status_label", _opt_str),
+    ("mss_dynamics_label", "mss_dynamics_label", _opt_str),
+)
