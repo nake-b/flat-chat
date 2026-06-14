@@ -231,6 +231,15 @@ def format_navigation_footer(view: LlmResultSetView, *, shown_end: int) -> str:
     return "\n" + "\n".join(lines)
 
 
+def _format_list_section(
+    items, heading: str, render
+) -> list[str]:
+    """Heading + bulleted rows for an optional list. Empty list → no output."""
+    if not items:
+        return []
+    return [heading, *(f"  - {render(x)}" for x in items)]
+
+
 def format_geo_context_prose(idx: int, context: ListingContext) -> str:
     """LLM-facing neighbourhood-context prose for one listing.
 
@@ -243,14 +252,12 @@ def format_geo_context_prose(idx: int, context: ListingContext) -> str:
     """
     parts: list[str] = [f"--- Listing #{idx} — neighbourhood context ---"]
 
-    if context.transit:
-        parts.append("Nearby transit:")
-        for stop in context.transit:
-            lines_served = ", ".join(stop.lines) if stop.lines else "—"
-            parts.append(
-                f"  - {stop.name} — {lines_served} "
-                f"({stop.distance_m}m, {stop.walk_minutes}min walk)"
-            )
+    parts.extend(_format_list_section(
+        context.transit,
+        "Nearby transit:",
+        lambda s: f"{s.name} — {', '.join(s.lines) if s.lines else '—'} "
+                  f"({s.distance_m}m, {s.walk_minutes}min walk)",
+    ))
 
     if context.school_catchment is not None:
         sc = context.school_catchment
@@ -258,18 +265,18 @@ def format_geo_context_prose(idx: int, context: ListingContext) -> str:
             f"Primary school catchment: {sc.school_name or sc.catchment_id}"
         )
 
-    if context.nearest_schools:
-        parts.append("Nearby schools:")
-        for s in context.nearest_schools:
-            parts.append(
-                f"  - {s.name or 'unnamed'} "
-                f"({s.school_type or 'unknown type'}) — {s.distance_m}m"
-            )
+    parts.extend(_format_list_section(
+        context.nearest_schools,
+        "Nearby schools:",
+        lambda s: f"{s.name or 'unnamed'} "
+                  f"({s.school_type or 'unknown type'}) — {s.distance_m}m",
+    ))
 
-    if context.nearest_parks:
-        parts.append("Nearby parks:")
-        for p in context.nearest_parks:
-            parts.append(f"  - {p.name or 'unnamed'} — {p.distance_m}m")
+    parts.extend(_format_list_section(
+        context.nearest_parks,
+        "Nearby parks:",
+        lambda p: f"{p.name or 'unnamed'} — {p.distance_m}m",
+    ))
 
     if context.nearest_playground is not None:
         pg = context.nearest_playground
@@ -277,12 +284,11 @@ def format_geo_context_prose(idx: int, context: ListingContext) -> str:
             f"Nearest playground: {pg.name or 'unnamed'} — {pg.distance_m}m"
         )
 
-    if context.nearest_hospitals:
-        parts.append("Hospitals nearby:")
-        for h in context.nearest_hospitals:
-            parts.append(
-                f"  - {h.name or 'unnamed'} ({h.tier}) — {h.distance_m}m"
-            )
+    parts.extend(_format_list_section(
+        context.nearest_hospitals,
+        "Hospitals nearby:",
+        lambda h: f"{h.name or 'unnamed'} ({h.tier}) — {h.distance_m}m",
+    ))
 
     if context.nearest_water is not None:
         w = context.nearest_water
