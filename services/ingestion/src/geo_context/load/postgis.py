@@ -13,6 +13,7 @@ and leaves the previous data intact.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import geopandas as gpd
@@ -23,6 +24,20 @@ from geoalchemy2 import Geometry
 logger = logging.getLogger(__name__)
 
 SILVER_SRID = 4326
+
+# Lowercase snake_case identifiers only — matches every silver table created
+# by migrations 0003/0004. Validating before interpolating into TRUNCATE
+# makes the f-string provably injection-safe even if the caller ever starts
+# passing dynamic names. Postgres won't bind identifiers via parameters,
+# so an allowlist regex is the standard mitigation.
+_SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _safe_ident(name: str) -> str:
+    if not _SAFE_IDENT.fullmatch(name):
+        raise ValueError(f"unsafe SQL identifier: {name!r}")
+    return name
+
 
 _GEOM_KIND_BY_TYPE: dict[str, str] = {
     "Point": "POINT",
@@ -38,7 +53,8 @@ _GEOM_KIND_BY_TYPE: dict[str, str] = {
 
 
 def _truncate(conn: sa.Connection, table_name: str) -> None:
-    conn.execute(sa.text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+    safe = _safe_ident(table_name)
+    conn.execute(sa.text(f'TRUNCATE TABLE "{safe}" RESTART IDENTITY CASCADE'))
 
 
 def _write_gdf(
