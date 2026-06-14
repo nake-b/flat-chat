@@ -23,10 +23,29 @@ import sys
 
 import httpx
 from sqlalchemy import select, update
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from db import get_session, get_table
 
 logger = logging.getLogger(__name__)
+
+# Status codes we retry on. 429 = rate limit (Jina's free tier especially);
+# 5xx = transient server-side. Everything else (incl. 4xx auth / bad-request)
+# is a real problem we want to surface, not paper over with retries.
+_RETRIABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _is_retriable(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRIABLE_STATUS
+    # httpx.ConnectError / ReadTimeout / RemoteProtocolError etc. are all
+    # subclasses of httpx.TransportError — retry these too.
+    return isinstance(exc, httpx.TransportError)
 
 # Jina v3 — 1024 dims, 8K token window. `retrieval.passage` is the listing-
 # side LoRA; the query side uses `retrieval.query` in the backend's search
@@ -63,8 +82,19 @@ def _build_text(row: dict) -> str:
     return text[:_MAX_TEXT_CHARS]
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential_jitter(initial=1, max=30),
+    retry=retry_if_exception(_is_retriable),
+    reraise=True,
+)
 def _embed_batch(client: httpx.Client, texts: list[str], api_key: str) -> list[list[float]]:
-    """POST a batch of texts to Jina /v1/embeddings and return their vectors."""
+    """POST a batch of texts to Jina /v1/embeddings and return their vectors.
+
+    Retries on 429 / 5xx and transport errors with exponential backoff +
+    jitter (up to 5 attempts, max 30 s wait). Non-retriable errors propagate
+    so the outer loop can decide whether to skip the batch.
+    """
     response = client.post(
         "/embeddings",
         json={"model": JINA_MODEL, "task": JINA_TASK, "input": texts},

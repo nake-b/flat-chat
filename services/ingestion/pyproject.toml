@@ -16,6 +16,7 @@ dependencies = [
     "pyproj",
     "pyyaml>=6.0",
     "pandas>=2.0",
+    "tenacity>=8.0",
 ]
 
 [dependency-groups]
