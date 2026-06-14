@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -53,7 +54,7 @@ class SearchParams(BaseModel):
     floor_min: int | None = None
     floor_max: int | None = None
     listing_type: str | None = None
-    available_by: str | None = None  # ISO date — available_from <= available_by
+    available_by: date | None = None  # available_from <= available_by
 
     # Amenities (None = don't filter; True/False = must have / must not have)
     wbs_required: bool | None = None

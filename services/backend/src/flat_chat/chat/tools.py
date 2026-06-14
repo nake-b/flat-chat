@@ -1,7 +1,7 @@
 from datetime import date
 
 from ag_ui.core import EventType, StateSnapshotEvent
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext, ToolReturn
+from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
 from flat_chat.chat.llm_context import LlmResultSetView, format_geo_context_prose
 from flat_chat.chat.state import ChatDeps
@@ -114,7 +114,7 @@ async def search_apartments(
     floor_min: int | None = None,
     floor_max: int | None = None,
     listing_type: str | None = None,
-    available_by: str | None = None,
+    available_by: date | None = None,
     # Amenities (tri-state: leave unset = don't filter)
     wbs_required: bool | None = None,
     is_furnished: bool | None = None,
@@ -173,8 +173,10 @@ async def search_apartments(
         listing_type: Optional raw listing-type filter (data is not yet
             normalized — values vary by source, e.g. "Etagenwohnung",
             "1 Room Flat"). Leave unset unless the user explicitly names one.
-        available_by: Latest acceptable move-in date as ISO `YYYY-MM-DD`.
+        available_by: Latest acceptable move-in date (ISO `YYYY-MM-DD`).
             Matches listings whose `available_from` is on or before this date.
+            Pydantic parses the string into a `date` automatically; bad
+            formats trigger a tool-retry with a clear error.
 
         wbs_required: Berlin Wohnberechtigungsschein (WBS) filter. Set to
             True if the user wants WBS-restricted listings (e.g. they hold a
@@ -261,14 +263,6 @@ async def search_apartments(
         sort_by: "relevance" (requires query — otherwise falls back to
             recent), "price", "area", or "recent".
     """
-    if available_by is not None:
-        try:
-            date.fromisoformat(available_by)
-        except ValueError as exc:
-            raise ModelRetry(
-                f"available_by must be ISO YYYY-MM-DD, got: {available_by!r}"
-            ) from exc
-
     params = SearchParams(
         query=query,
         price_warm_min=price_warm_min,
