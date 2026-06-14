@@ -19,6 +19,13 @@ from flat_chat.search.schemas import SearchParams, SortBy
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 
 
+# Pydantic AI parses each tool's docstring with `griffe` and lifts the `Args:`
+# bullets directly into the JSON schema sent to the LLM. The docstring IS the
+# schema description — no need (and no benefit) to wrap params in
+# `Annotated[..., Field(description=...)]`; that would double up the source of
+# truth. Keep arg descriptions in the docstring `Args:` section.
+
+
 _TOOL_PROTOCOL = """\
 <tool_protocol>
 There is ONE active result set per conversation. Listings are referenced by
