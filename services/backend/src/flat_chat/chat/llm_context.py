@@ -31,6 +31,14 @@ if TYPE_CHECKING:
     from flat_chat.chat.state import ChatDeps
     from flat_chat.search.geo_filters import ListingContext
 
+
+def xml_block(tag: str, body: str) -> str:
+    """Wrap `body` in `<tag>...</tag>`. Trims leading/trailing newlines only —
+    internal indentation is preserved (matters for the nested elements inside
+    `<current_state>`).
+    """
+    return f"<{tag}>\n{body.strip(chr(10))}\n</{tag}>"
+
 # Single source of truth for the column order used in CSV-style listings shown
 # to the LLM. Detail view (prose) handles its own field order via _PROSE_FIELDS.
 _LIST_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -323,16 +331,13 @@ def build_dynamic_state_prompt(deps: ChatDeps) -> str:
     view = deps.session.result_set
     state = deps.state
 
-    blocks: list[str] = []
-    blocks.append(_current_state_block(view))
+    blocks: list[str] = [_current_state_block(view)]
 
     if state.active_id is not None:
         focus_idx = _index_for_active(state)
         if focus_idx is not None:
             blocks.append(
-                "<user_focus>\n"
-                f"  <expanded_card>{focus_idx}</expanded_card>\n"
-                "</user_focus>"
+                xml_block("user_focus", f"  <expanded_card>{focus_idx}</expanded_card>")
             )
 
     return "\n".join(blocks)
@@ -340,11 +345,10 @@ def build_dynamic_state_prompt(deps: ChatDeps) -> str:
 
 def _current_state_block(view: LlmResultSetView | None) -> str:
     if view is None:
-        return (
-            "<current_state>\n"
+        return xml_block(
+            "current_state",
             "  <total>0</total>\n"
-            "  <note>No search has run yet in this conversation.</note>\n"
-            "</current_state>"
+            "  <note>No search has run yet in this conversation.</note>",
         )
 
     filters = view.params.model_dump(exclude_none=True, exclude_defaults=True)
@@ -353,16 +357,13 @@ def _current_state_block(view: LlmResultSetView | None) -> str:
     filters_json = json.dumps(filters, default=str, sort_keys=True)
 
     lines = [
-        "<current_state>",
         f"  <total>{view.total}</total>",
         f"  <order>{view.order_label()}</order>",
         f"  <filters>{filters_json}</filters>",
     ]
-    if view.notes:
-        for note in view.notes:
-            lines.append(f"  <note>{note}</note>")
-    lines.append("</current_state>")
-    return "\n".join(lines)
+    for note in view.notes:
+        lines.append(f"  <note>{note}</note>")
+    return xml_block("current_state", "\n".join(lines))
 
 
 def _index_for_active(state) -> int | None:
