@@ -20,6 +20,7 @@ Layout:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ from flat_chat.search.schemas import SearchParams
 
 if TYPE_CHECKING:
     from flat_chat.chat.state import ChatDeps
+    from flat_chat.chat.ui_state import UiState
     from flat_chat.search.geo_filters import ListingContext
 
 
@@ -231,8 +233,10 @@ def format_navigation_footer(view: LlmResultSetView, *, shown_end: int) -> str:
     return "\n" + "\n".join(lines)
 
 
-def _format_list_section(
-    items, heading: str, render
+def _format_list_section[T](
+    items: list[T] | None,
+    heading: str,
+    render: Callable[[T], str],
 ) -> list[str]:
     """Heading + bulleted rows for an optional list. Empty list → no output."""
     if not items:
@@ -339,12 +343,14 @@ def build_dynamic_state_prompt(deps: ChatDeps) -> str:
 
     blocks: list[str] = [_current_state_block(view)]
 
-    if state.active_id is not None:
-        focus_idx = _index_for_active(state)
-        if focus_idx is not None:
-            blocks.append(
-                xml_block("user_focus", f"  <expanded_card>{focus_idx}</expanded_card>")
-            )
+    # `_index_for_active` returns None when no card is expanded OR when the
+    # active_id no longer maps to a row in the current result set (stale id
+    # after a refining search). Both should suppress the focus block.
+    focus_idx = _index_for_active(state)
+    if focus_idx is not None:
+        blocks.append(
+            xml_block("user_focus", f"  <expanded_card>{focus_idx}</expanded_card>")
+        )
 
     return "\n".join(blocks)
 
@@ -372,8 +378,10 @@ def _current_state_block(view: LlmResultSetView | None) -> str:
     return xml_block("current_state", "\n".join(lines))
 
 
-def _index_for_active(state) -> int | None:
+def _index_for_active(state: UiState) -> int | None:
     """Map UiState.active_id back to a 1-based index in the result set."""
+    if state.active_id is None:
+        return None
     for i, apt in enumerate(state.results, start=1):
         if apt.id == state.active_id:
             return i
