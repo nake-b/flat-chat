@@ -41,6 +41,8 @@ from .distances import (
     CAP_SCHOOLS_M,
     CAP_TRANSIT_STOPS_M,
     CAP_WATER_M,
+    GREENERY_LEAFY_RADIUS_M,
+    GREENERY_VERY_LEAFY_RADIUS_M,
     resolve_near_spec,
     walk_minutes,
 )
@@ -376,7 +378,11 @@ class GeoContextService:
         panel where we only enrich one listing at a time. Documented in
         threshold doc §4.
         """
-        radius_m = 150 if min_greenery == "very_leafy" else 300
+        radius_m = (
+            GREENERY_VERY_LEAFY_RADIUS_M
+            if min_greenery == "very_leafy"
+            else GREENERY_LEAFY_RADIUS_M
+        )
         subq = (
             select(Park.id)
             .where(

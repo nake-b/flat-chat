@@ -46,6 +46,11 @@ CAP_HOSPITALS_M: int = 5000
 CAP_WATER_M: int = 2000
 CAP_TRANSIT_STOPS_M: int = 1500
 
+# Greenery filter radii (WHO Europe rule, threshold doc §4). Used in the
+# cheap proxy filter inside `GeoContextService._apply_greenery_filter`.
+GREENERY_LEAFY_RADIUS_M: int = 300
+GREENERY_VERY_LEAFY_RADIUS_M: int = 150
+
 # Pedestrian walking speed for walk-minute conversion (UI chips).
 # Adult average ~5 km/h, also used by EAÖ German transit-planning standards.
 # See thresholds doc §2.
