@@ -74,6 +74,14 @@ class BerlinGdiWfsClient:
         logger.info("wfs %s: discovered %d layers", dataset, len(layers))
         return layers
 
+    # WFS 2.0 servers commonly cap responses around 10k features per request.
+    # Berlin GDI doesn't publish its limit; this page size + the explicit
+    # pagination loop below avoid silent truncation regardless.
+    PAGE_SIZE: int = 10_000
+    # Refuse to keep paginating past this in a single layer fetch — a
+    # runaway query should fail loudly, not eat memory.
+    MAX_FEATURES: int = 200_000
+
     def fetch_layer(
         self,
         dataset: str,
@@ -81,8 +89,14 @@ class BerlinGdiWfsClient:
         *,
         src_crs: int = 25833,
     ) -> gpd.GeoDataFrame:
-        """GetFeature → GeoJSON → GeoDataFrame (still in src_crs)."""
-        params = {
+        """GetFeature → GeoJSON → GeoDataFrame (still in src_crs).
+
+        Paginates via ``count`` / ``startIndex`` so layers larger than the
+        server's response cap come back whole. The loop terminates when a
+        page returns fewer features than ``PAGE_SIZE`` (covers servers that
+        don't report ``numberMatched`` reliably).
+        """
+        base_params = {
             "service": "WFS",
             "version": "2.0.0",
             "request": "GetFeature",
@@ -90,20 +104,49 @@ class BerlinGdiWfsClient:
             "outputFormat": "application/json",
         }
         logger.info("wfs %s/%s: fetching", dataset, layer)
-        resp = requests.get(
-            self._endpoint(dataset),
-            params=params,
-            timeout=self.http_timeout_s,
-        )
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
 
-        data = resp.json()
-        features = data.get("features") or []
-        if not features:
+        all_features: list[dict] = []
+        start_index = 0
+        while True:
+            params = {
+                **base_params,
+                "count": str(self.PAGE_SIZE),
+                "startIndex": str(start_index),
+            }
+            resp = requests.get(
+                self._endpoint(dataset),
+                params=params,
+                timeout=self.http_timeout_s,
+            )
+            resp.raise_for_status()
+            resp.encoding = "utf-8"
+
+            data = resp.json()
+            features = data.get("features") or []
+            page_n = len(features)
+            logger.info(
+                "wfs %s/%s: page startIndex=%d returned %d features",
+                dataset,
+                layer,
+                start_index,
+                page_n,
+            )
+            if page_n == 0:
+                break
+            all_features.extend(features)
+            if len(all_features) > self.MAX_FEATURES:
+                raise RuntimeError(
+                    f"wfs {dataset}/{layer}: exceeded MAX_FEATURES "
+                    f"({self.MAX_FEATURES}) — refusing to keep paginating"
+                )
+            if page_n < self.PAGE_SIZE:
+                break
+            start_index += page_n
+
+        if not all_features:
             logger.warning("wfs %s/%s: zero features returned", dataset, layer)
             return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{src_crs}")
 
-        gdf = gpd.GeoDataFrame.from_features(features, crs=f"EPSG:{src_crs}")
-        logger.info("wfs %s/%s: %d features", dataset, layer, len(gdf))
+        gdf = gpd.GeoDataFrame.from_features(all_features, crs=f"EPSG:{src_crs}")
+        logger.info("wfs %s/%s: %d features total", dataset, layer, len(gdf))
         return gdf

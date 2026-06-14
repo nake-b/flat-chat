@@ -5,8 +5,13 @@ Usage:
     python -m geo_context.run --only schools,parks
     python -m geo_context.run --skip-gtfs   # WFS only
 
-Each (dataset, layer) is wrapped in its own try/except — a single layer
-failing does not abort the run. Exit code 1 if any layer failed.
+Each target table is wrapped in a single ``engine.begin()`` block so a
+multi-layer family (e.g. ``hospitals = plan + other``) is all-or-nothing:
+if the second layer fails after the first wrote, the whole family rolls
+back instead of leaving the table half-populated. The GTFS triplet
+(routes / stops / route_shapes) is wrapped the same way. A failure in one
+table family does not abort other families. Exit code 1 if any family
+failed.
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from db import engine
 from .config import Catalog, WfsDataset, load_catalog
 from .extract.gtfs import VbbGtfsClient
 from .extract.wfs import BerlinGdiWfsClient
-from .load.postgis import load_append, load_dataframe, load_replace, to_pg_array
+from .load.postgis import _write_append, _write_dataframe, _write_replace, to_pg_array
 from .transform.gtfs import transform_gtfs
 from .transform.wfs import transform_wfs_layer
 
@@ -47,91 +52,96 @@ def _run_wfs(
         by_table.setdefault(ds.table, []).append(ds)
 
     for table, entries in by_table.items():
-        # First entry truncates; subsequent entries append. Done across the
-        # whole table so multi-source tables (hospitals) start fresh.
-        first = True
-        for ds in entries:
-            try:
-                gdf = wfs_client.fetch_layer(ds.dataset, ds.layer)
-                if gdf.empty:
-                    logger.warning("%s/%s: empty, skipping", ds.dataset, ds.layer)
-                    continue
-                extra = dict(ds.extra) if ds.extra else None
-                transformed = transform_wfs_layer(
-                    gdf,
-                    ds.dataset,
-                    ds.layer,
-                    extra_columns=extra,
-                )
-                if first:
-                    load_replace(
-                        transformed,
-                        ds.table,
-                        engine,
-                        geom_type=ds.geom_type,
+        # All layers feeding one target table commit together inside a single
+        # transaction. A mid-family failure (e.g. hospitals_other after
+        # hospitals_plan wrote) rolls back the partial state so the next run
+        # starts from a clean previous-good snapshot.
+        family_ok = 0
+        family_fail_keys: list[str] = []
+        try:
+            with engine.begin() as conn:
+                first = True
+                for ds in entries:
+                    gdf = wfs_client.fetch_layer(ds.dataset, ds.layer)
+                    if gdf.empty:
+                        logger.warning(
+                            "%s/%s: empty, skipping", ds.dataset, ds.layer
+                        )
+                        continue
+                    extra = dict(ds.extra) if ds.extra else None
+                    transformed = transform_wfs_layer(
+                        gdf,
+                        ds.dataset,
+                        ds.layer,
+                        extra_columns=extra,
                     )
-                    first = False
-                else:
-                    load_append(
-                        transformed,
-                        ds.table,
-                        engine,
-                        geom_type=ds.geom_type,
-                    )
-                ok += 1
-                logger.info("OK %s → %s", ds.key, ds.table)
-            except Exception:
-                fail += 1
-                logger.error(
-                    "FAIL %s (%s/%s):\n%s",
-                    ds.key,
-                    ds.dataset,
-                    ds.layer,
-                    traceback.format_exc(),
-                )
+                    if first:
+                        _write_replace(
+                            conn,
+                            transformed,
+                            ds.table,
+                            geom_type=ds.geom_type,
+                        )
+                        first = False
+                    else:
+                        _write_append(
+                            conn,
+                            transformed,
+                            ds.table,
+                            geom_type=ds.geom_type,
+                        )
+                    family_ok += 1
+                    logger.info("OK %s → %s", ds.key, ds.table)
+            ok += family_ok
+        except Exception:
+            # Whole family rolled back — count every layer in the family as
+            # failed so the summary line tells the truth.
+            fail += len(entries)
+            family_fail_keys = [ds.key for ds in entries]
+            logger.error(
+                "FAIL table=%s (layers=%s) — rolled back:\n%s",
+                table,
+                ",".join(family_fail_keys),
+                traceback.format_exc(),
+            )
     return ok, fail
 
 
 def _run_gtfs(catalog: Catalog) -> tuple[int, int]:
     if not catalog.gtfs.enabled:
         return 0, 0
-    ok, fail = 0, 0
     try:
         client = VbbGtfsClient()
         tables = client.fetch_feed(catalog.gtfs.feed_url)
         outputs = transform_gtfs(tables)
 
-        # Order matters: routes before route_shapes (FK).
-        load_dataframe(outputs["transit_routes"], "transit_routes", engine)
-        ok += 1
-        # Geopandas' default COPY-based writer can't serialize Python lists
-        # into Postgres array literals — pre-format them as text.
-        stops = outputs["transit_stops"].copy()
-        stops["modes_served"] = stops["modes_served"].apply(
-            lambda v: to_pg_array(v, kind="int")
-        )
-        stops["lines_served"] = stops["lines_served"].apply(
-            lambda v: to_pg_array(v, kind="text")
-        )
-        load_replace(
-            stops,
-            "transit_stops",
-            engine,
-            geom_type="Point",
-        )
-        ok += 1
-        load_replace(
-            outputs["transit_route_shapes"],
-            "transit_route_shapes",
-            engine,
-            geom_type="LineString",
-        )
-        ok += 1
+        # All three transit_* tables commit together. They're a foreign-key
+        # family (routes ← route_shapes) and the agent's tools assume the
+        # set is internally consistent — never ship one without the others.
+        with engine.begin() as conn:
+            # Order matters: routes before route_shapes (FK).
+            _write_dataframe(conn, outputs["transit_routes"], "transit_routes")
+            # Geopandas' default COPY-based writer can't serialize Python
+            # lists into Postgres array literals — pre-format them as text.
+            stops = outputs["transit_stops"].copy()
+            stops["modes_served"] = stops["modes_served"].apply(
+                lambda v: to_pg_array(v, kind="int")
+            )
+            stops["lines_served"] = stops["lines_served"].apply(
+                lambda v: to_pg_array(v, kind="text")
+            )
+            _write_replace(conn, stops, "transit_stops", geom_type="Point")
+            _write_replace(
+                conn,
+                outputs["transit_route_shapes"],
+                "transit_route_shapes",
+                geom_type="LineString",
+            )
         logger.info("OK gtfs → transit_stops, transit_routes, transit_route_shapes")
+        return 3, 0
     except Exception:
-        fail += 1
-        logger.error("FAIL gtfs:\n%s", traceback.format_exc())
-    return ok, fail
+        logger.error("FAIL gtfs (rolled back):\n%s", traceback.format_exc())
+        return 0, 3
 
 
 def main(argv: list[str] | None = None) -> int:

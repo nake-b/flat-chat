@@ -1,13 +1,15 @@
 """PostGIS loaders for geo_context.
 
-Two modes:
-- `load_replace`: TRUNCATE + INSERT in one transaction. Used for tables
-  fed by a single source (most of them).
-- `load_append`: INSERT without truncate. Used when multiple WFS layers
-  feed the same table (hospitals: plan_hospital + other).
+Two layers of API:
 
-Both wrap the write in `engine.begin()` so a mid-write failure rolls back
-and leaves the previous data intact.
+- ``_write_replace`` / ``_write_append`` / ``_write_dataframe`` take an
+  existing ``sa.Connection`` and do not open their own transaction. Use
+  these when multiple loads must commit together (e.g. hospitals_plan +
+  hospitals_other → ``hospitals``, or the GTFS triplet) so a mid-family
+  failure rolls the whole family back.
+- ``load_replace`` / ``load_append`` / ``load_dataframe`` are thin wrappers
+  that open ``engine.begin()`` for a single-table call. Single-table
+  callers keep the simple ``engine`` signature.
 """
 
 from __future__ import annotations
@@ -37,7 +39,6 @@ def _safe_ident(name: str) -> str:
     if not _SAFE_IDENT.fullmatch(name):
         raise ValueError(f"unsafe SQL identifier: {name!r}")
     return name
-
 
 _GEOM_KIND_BY_TYPE: dict[str, str] = {
     "Point": "POINT",
@@ -111,6 +112,81 @@ def to_pg_array(values: Any, *, kind: str) -> str | None:
     raise ValueError(f"unsupported kind: {kind!r}")
 
 
+def _write_replace(
+    conn: sa.Connection,
+    gdf: gpd.GeoDataFrame,
+    table_name: str,
+    *,
+    geom_type: str = "Point",
+    chunksize: int = 5000,
+    extra_dtype: dict[str, Any] | None = None,
+) -> int:
+    """Truncate + append inside an EXISTING transaction. Caller owns commit."""
+    if gdf.empty:
+        logger.warning("write_replace %s: empty GeoDataFrame, skipping", table_name)
+        return 0
+    _truncate(conn, table_name)
+    _write_gdf(
+        gdf,
+        table_name,
+        conn,
+        geom_type=geom_type,
+        chunksize=chunksize,
+        extra_dtype=extra_dtype,
+    )
+    logger.info("write_replace %s: wrote %d rows", table_name, len(gdf))
+    return len(gdf)
+
+
+def _write_append(
+    conn: sa.Connection,
+    gdf: gpd.GeoDataFrame,
+    table_name: str,
+    *,
+    geom_type: str = "Point",
+    chunksize: int = 5000,
+    extra_dtype: dict[str, Any] | None = None,
+) -> int:
+    """Append rows inside an EXISTING transaction. Caller owns commit."""
+    if gdf.empty:
+        logger.warning("write_append %s: empty GeoDataFrame, skipping", table_name)
+        return 0
+    _write_gdf(
+        gdf,
+        table_name,
+        conn,
+        geom_type=geom_type,
+        chunksize=chunksize,
+        extra_dtype=extra_dtype,
+    )
+    logger.info("write_append %s: appended %d rows", table_name, len(gdf))
+    return len(gdf)
+
+
+def _write_dataframe(
+    conn: sa.Connection,
+    df: pd.DataFrame,
+    table_name: str,
+    *,
+    chunksize: int = 5000,
+) -> int:
+    """Truncate + append for a non-spatial DataFrame inside an EXISTING transaction."""
+    if df.empty:
+        logger.warning("write_dataframe %s: empty DataFrame, skipping", table_name)
+        return 0
+    _truncate(conn, table_name)
+    df.to_sql(
+        table_name,
+        conn,
+        if_exists="append",
+        index=False,
+        chunksize=chunksize,
+        method="multi",
+    )
+    logger.info("write_dataframe %s: wrote %d rows", table_name, len(df))
+    return len(df)
+
+
 def load_replace(
     gdf: gpd.GeoDataFrame,
     table_name: str,
@@ -120,22 +196,16 @@ def load_replace(
     chunksize: int = 5000,
     extra_dtype: dict[str, Any] | None = None,
 ) -> int:
-    """Truncate the target table, then append rows in one transaction."""
-    if gdf.empty:
-        logger.warning("load_replace %s: empty GeoDataFrame, skipping", table_name)
-        return 0
+    """Single-table TRUNCATE + INSERT in one transaction (convenience wrapper)."""
     with engine.begin() as conn:
-        _truncate(conn, table_name)
-        _write_gdf(
+        return _write_replace(
+            conn,
             gdf,
             table_name,
-            conn,
             geom_type=geom_type,
             chunksize=chunksize,
             extra_dtype=extra_dtype,
         )
-    logger.info("load_replace %s: wrote %d rows", table_name, len(gdf))
-    return len(gdf)
 
 
 def load_append(
@@ -147,21 +217,16 @@ def load_append(
     chunksize: int = 5000,
     extra_dtype: dict[str, Any] | None = None,
 ) -> int:
-    """Append rows without touching existing data."""
-    if gdf.empty:
-        logger.warning("load_append %s: empty GeoDataFrame, skipping", table_name)
-        return 0
+    """Single-table append in one transaction (convenience wrapper)."""
     with engine.begin() as conn:
-        _write_gdf(
+        return _write_append(
+            conn,
             gdf,
             table_name,
-            conn,
             geom_type=geom_type,
             chunksize=chunksize,
             extra_dtype=extra_dtype,
         )
-    logger.info("load_append %s: appended %d rows", table_name, len(gdf))
-    return len(gdf)
 
 
 def load_dataframe(
@@ -171,19 +236,6 @@ def load_dataframe(
     *,
     chunksize: int = 5000,
 ) -> int:
-    """Truncate + append for a plain (non-spatial) DataFrame, e.g. transit_routes."""
-    if df.empty:
-        logger.warning("load_dataframe %s: empty DataFrame, skipping", table_name)
-        return 0
+    """Single-table TRUNCATE + INSERT for a non-spatial DataFrame (wrapper)."""
     with engine.begin() as conn:
-        _truncate(conn, table_name)
-        df.to_sql(
-            table_name,
-            conn,
-            if_exists="append",
-            index=False,
-            chunksize=chunksize,
-            method="multi",
-        )
-    logger.info("load_dataframe %s: wrote %d rows", table_name, len(df))
-    return len(df)
+        return _write_dataframe(conn, df, table_name, chunksize=chunksize)
