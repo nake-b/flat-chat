@@ -567,10 +567,16 @@ class GeoContextService:
     def context_for(self, location: WKBElement) -> ListingContext:
         """Return the full ListingContext blob for a single listing's location.
 
-        Runs ~12 sub-queries sequentially. Each respects the `k=1 always
-        returns, k=2..k only within cap` rule for the per-dataset caps in
-        `distances.py`. Cemeteries are excluded from `nearest_parks` and
-        weighted 0.5 in `greenery`.
+        ⚠️ SINGLE-LISTING ONLY — never call this in a loop over a result set.
+        Runs ~12 sub-queries sequentially including the heavy
+        `_greenery_profile` (ST_Area ∘ ST_Intersection on a 300m buffer).
+        Only caller today: `SearchService.get_listing_details(id)`, invoked
+        from the `open_listing` agent tool. If you need geo-context per
+        result row, use the lateral chips wired up in `apply_chips`.
+
+        Runs respect the `k=1 always returns, k=2..k only within cap` rule
+        for per-dataset caps in `distances.py`. Cemeteries are excluded from
+        `nearest_parks` and weighted 0.5 in `greenery`.
 
         v1 is sequential; can be wrapped in `asyncio.gather` later if
         latency becomes a concern.
@@ -854,9 +860,14 @@ class GeoContextService:
     ) -> GreeneryProfile | None:
         """Greenery composite: WHO Europe 300m radius, cemeteries at 0.5 weight.
 
-        ⚠️ Heavy query — runs ST_Area(ST_Intersection(...)) across all parks
-        and playgrounds within ~300m. Acceptable here because context_for
-        runs for a single listing at a time. Threshold doc §4 + §5.
+        ⚠️ HEAVY — runs ST_Area(ST_Intersection(...)) across every park /
+        playground intersecting a 300m buffer. ~O(parks_in_buffer) per call.
+        Only safe per single listing — never wrap this in a loop. The only
+        caller is `context_for`, which itself runs once per
+        `open_listing(indices=[k])` agent tool call. If you ever need
+        greenery per result row, build a cheap lateral version in
+        `apply_chips` (the existing cheap proxy in
+        `_apply_greenery_filter` is the right shape). Threshold doc §4 + §5.
 
         Note: ST_Buffer on a geography returns geography too; cast back to
         geometry so it composes with the parks `MULTIPOLYGON(4326)` geom in
