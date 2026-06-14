@@ -8,9 +8,11 @@ import { create } from "zustand";
 interface HoverStore {
   hoverId: string | null;
   setHover: (id: string | null) => void;
+  reset: () => void;
 }
 
 export const useHover = create<HoverStore>((set) => ({
   hoverId: null,
   setHover: (id) => set({ hoverId: id }),
+  reset: () => set({ hoverId: null }),
 }));
