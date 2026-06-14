@@ -51,6 +51,14 @@ CAP_TRANSIT_STOPS_M: int = 1500
 GREENERY_LEAFY_RADIUS_M: int = 300
 GREENERY_VERY_LEAFY_RADIUS_M: int = 150
 
+# Noise coverage gate. `street_noise_2022` is a ~10m raster of modelled
+# receivers along every Berlin road/rail — 91% of well-geocoded listings
+# have a sample within 100m. 200m is the defensive ceiling: if no sample
+# is that close, the listing is treated as "unknown noise" and the filter
+# optimistically includes it. Stops listings with bad coordinates (e.g. a
+# 0/0 sentinel) from matching a noise reading 5,000 km away.
+NOISE_COVERAGE_RADIUS_M: int = 200
+
 # Pedestrian walking speed for walk-minute conversion (UI chips).
 # Adult average ~5 km/h, also used by EAÖ German transit-planning standards.
 # See thresholds doc §2.

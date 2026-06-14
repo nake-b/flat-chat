@@ -22,7 +22,7 @@ and `transit.py` — see those modules and the threshold doc.
 
 from geoalchemy2 import Geography, WKBElement
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import Float, Integer, Select, and_, cast, func, select, true
+from sqlalchemy import Float, Integer, Select, and_, cast, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from .buckets import (
@@ -43,6 +43,7 @@ from .distances import (
     CAP_WATER_M,
     GREENERY_LEAFY_RADIUS_M,
     GREENERY_VERY_LEAFY_RADIUS_M,
+    NOISE_COVERAGE_RADIUS_M,
     resolve_near_spec,
     walk_minutes,
 )
@@ -350,20 +351,32 @@ class GeoContextService:
         `noisy` as a filter — it's the *opposite* of what renters ask for.
 
         Implementation: a correlated subquery that picks the single
-        nearest `street_noise_2022` point (KNN ORDER BY <->) and requires
-        its lden to satisfy the cutoff.
+        nearest `street_noise_2022` point (KNN ORDER BY <->) within
+        ``NOISE_COVERAGE_RADIUS_M`` and requires its lden to satisfy the
+        cutoff. The distance gate makes the semantics defensive: if no
+        sample is within range (gap in the noise raster, or a listing with
+        garbage coordinates), the subquery returns NULL and the listing is
+        *optimistically included* — we won't claim a listing is noisy when
+        we have no nearby reading.
         """
         cutoff = (
             NOISE_QUIET_MAX_LDEN if max_noise == "quiet" else NOISE_LIVELY_MAX_LDEN
         )
         subq = (
             select(StreetNoise2022.noise_total_lden)
+            .where(
+                geo_func.ST_DWithin(
+                    cast(StreetNoise2022.geom, Geography),
+                    cast(Listing.location, Geography),
+                    NOISE_COVERAGE_RADIUS_M,
+                )
+            )
             .order_by(StreetNoise2022.geom.op("<->")(Listing.location))
             .limit(1)
             .correlate(Listing)
             .scalar_subquery()
         )
-        return stmt.where(subq < cutoff)
+        return stmt.where(or_(subq.is_(None), subq < cutoff))
 
     def _apply_greenery_filter(self, stmt: Select, min_greenery) -> Select:
         """Filter proxy for greenery — keep cheap, defer the composite.
