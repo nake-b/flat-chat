@@ -342,6 +342,10 @@ async def search_apartments(
     )
 
 
+# TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
+# `select_listing` / `pan_map_to` pair, called in parallel by the LLM, once
+# the Generative-UI pattern-3 frontend tools land. See CLAUDE.md "Deferred /
+# nice-to-have" → "Parallel tool-call patterns for split commands."
 @toolset.tool
 async def open_listing(
     ctx: RunContext[ChatDeps],
