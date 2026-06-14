@@ -229,11 +229,11 @@ def main() -> None:
             batch_size=args.batch_size, limit=args.limit, dry_run=args.dry_run
         )
     except RuntimeError as exc:
-        print(f"Silver embed: {exc}", file=sys.stderr)
+        logger.error("Silver embed: %s", exc)
         sys.exit(1)
 
     verb = "would embed" if args.dry_run else "embedded"
-    print(f"Silver embed: {verb} {n} listing(s)")
+    logger.info("Silver embed: %s %d listing(s)", verb, n)
 
 
 if __name__ == "__main__":

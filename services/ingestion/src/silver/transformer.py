@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -9,6 +11,8 @@ from sqlalchemy.orm import Session
 from db import get_table
 
 from .sources import kleinanzeigen, wg_gesucht
+
+logger = logging.getLogger(__name__)
 
 _TRANSFORMERS = {
     "wg-gesucht": wg_gesucht.to_listing_row,
@@ -54,6 +58,6 @@ def transform(session: Session) -> int:
 
     if skipped:
         for src, n in skipped.items():
-            print(f"skipped {n} rows from unknown source: {src!r}")
+            logger.warning("skipped %d rows from unknown source: %r", n, src)
 
     return count
