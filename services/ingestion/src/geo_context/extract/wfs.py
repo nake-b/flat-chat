@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import geopandas as gpd
+import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
@@ -86,19 +88,26 @@ class BerlinGdiWfsClient:
     # never approach this; if one ever does, that's the bug we want to catch.
     MAX_FEATURES: int = 10_000_000
 
-    def fetch_layer(
+    def iter_layer_pages(
         self,
         dataset: str,
         layer: str,
         *,
         src_crs: int = 25833,
-    ) -> gpd.GeoDataFrame:
-        """GetFeature → GeoJSON → GeoDataFrame (still in src_crs).
+    ) -> Iterator[gpd.GeoDataFrame]:
+        """Paginated GetFeature, yielding one page as a GeoDataFrame at a time.
 
-        Paginates via ``count`` / ``startIndex`` so layers larger than the
-        server's response cap come back whole. The loop terminates when a
-        page returns fewer features than ``PAGE_SIZE`` (covers servers that
-        don't report ``numberMatched`` reliably).
+        Bounded-memory streaming variant. The loader uses this to drive a
+        per-page transform → write pipeline so a 3.8M-row raster (street
+        noise) doesn't have to materialise as one giant in-memory frame
+        before any row hits Postgres. Each yielded frame is independent;
+        the caller decides whether to TRUNCATE+INSERT on the first page or
+        just INSERT subsequent ones.
+
+        Terminates when a page returns fewer features than ``PAGE_SIZE``
+        (covers servers that don't report ``numberMatched`` reliably).
+        Raises ``RuntimeError`` if the running total crosses
+        ``MAX_FEATURES`` — runaway-query guard.
         """
         base_params = {
             "service": "WFS",
@@ -109,7 +118,7 @@ class BerlinGdiWfsClient:
         }
         logger.info("wfs %s/%s: fetching", dataset, layer)
 
-        all_features: list[dict] = []
+        seen_total = 0
         start_index = 0
         while True:
             params = {
@@ -136,21 +145,41 @@ class BerlinGdiWfsClient:
                 page_n,
             )
             if page_n == 0:
-                break
-            all_features.extend(features)
-            if len(all_features) >= self.MAX_FEATURES:
+                return
+            page_gdf = gpd.GeoDataFrame.from_features(
+                features, crs=f"EPSG:{src_crs}"
+            )
+            yield page_gdf
+            seen_total += page_n
+            if seen_total >= self.MAX_FEATURES:
                 raise RuntimeError(
                     f"wfs {dataset}/{layer}: reached MAX_FEATURES "
                     f"({self.MAX_FEATURES}) — refusing to keep paginating"
                 )
             if page_n < self.PAGE_SIZE:
-                break
+                return
             start_index += page_n
 
-        if not all_features:
+    def fetch_layer(
+        self,
+        dataset: str,
+        layer: str,
+        *,
+        src_crs: int = 25833,
+    ) -> gpd.GeoDataFrame:
+        """Whole-layer convenience wrapper around ``iter_layer_pages``.
+
+        Materialises every page into one big GeoDataFrame. Fine for small
+        datasets (schools, hospitals, parks) and the existing pagination
+        tests; the bulk loader uses ``iter_layer_pages`` directly to avoid
+        the memory blow-up.
+        """
+        pages = list(self.iter_layer_pages(dataset, layer, src_crs=src_crs))
+        if not pages:
             logger.warning("wfs %s/%s: zero features returned", dataset, layer)
             return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{src_crs}")
-
-        gdf = gpd.GeoDataFrame.from_features(all_features, crs=f"EPSG:{src_crs}")
+        gdf = gpd.GeoDataFrame(
+            pd.concat(pages, ignore_index=True), crs=f"EPSG:{src_crs}"
+        )
         logger.info("wfs %s/%s: %d features total", dataset, layer, len(gdf))
         return gdf

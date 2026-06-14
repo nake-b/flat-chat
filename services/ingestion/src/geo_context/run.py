@@ -60,38 +60,52 @@ def _run_wfs(
         family_fail_keys: list[str] = []
         try:
             with engine.begin() as conn:
-                first = True
+                # Streaming write: first page of the first layer TRUNCATEs;
+                # everything else appends in the same transaction. Memory
+                # stays bounded to one page (10k rows) regardless of how big
+                # the source layer is — the noise raster (3.8M points) would
+                # otherwise materialise as a single ~3 GiB DataFrame and OOM
+                # the container.
+                table_initialized = False
                 for ds in entries:
-                    gdf = wfs_client.fetch_layer(ds.dataset, ds.layer)
-                    if gdf.empty:
+                    extra = dict(ds.extra) if ds.extra else None
+                    layer_rows = 0
+                    for page_gdf in wfs_client.iter_layer_pages(
+                        ds.dataset, ds.layer
+                    ):
+                        if page_gdf.empty:
+                            continue
+                        transformed = transform_wfs_layer(
+                            page_gdf,
+                            ds.dataset,
+                            ds.layer,
+                            extra_columns=extra,
+                        )
+                        if not table_initialized:
+                            _write_replace(
+                                conn,
+                                transformed,
+                                ds.table,
+                                geom_type=ds.geom_type,
+                            )
+                            table_initialized = True
+                        else:
+                            _write_append(
+                                conn,
+                                transformed,
+                                ds.table,
+                                geom_type=ds.geom_type,
+                            )
+                        layer_rows += len(transformed)
+                    if layer_rows == 0:
                         logger.warning(
                             "%s/%s: empty, skipping", ds.dataset, ds.layer
                         )
                         continue
-                    extra = dict(ds.extra) if ds.extra else None
-                    transformed = transform_wfs_layer(
-                        gdf,
-                        ds.dataset,
-                        ds.layer,
-                        extra_columns=extra,
-                    )
-                    if first:
-                        _write_replace(
-                            conn,
-                            transformed,
-                            ds.table,
-                            geom_type=ds.geom_type,
-                        )
-                        first = False
-                    else:
-                        _write_append(
-                            conn,
-                            transformed,
-                            ds.table,
-                            geom_type=ds.geom_type,
-                        )
                     family_ok += 1
-                    logger.info("OK %s → %s", ds.key, ds.table)
+                    logger.info(
+                        "OK %s → %s (%d rows)", ds.key, ds.table, layer_rows
+                    )
             ok += family_ok
         except Exception:
             # Whole family rolled back — count every layer in the family as
