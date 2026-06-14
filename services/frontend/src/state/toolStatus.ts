@@ -29,7 +29,7 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
     complete: (_a, result) => firstLine(result) || "Page loaded.",
   },
 
-  get_result_details: {
+  open_listing: {
     executing: (a: { indices?: number[] }) =>
       `Looking up listing #${a?.indices?.[0] ?? "?"}…`,
     complete: (a: { indices?: number[] }) =>

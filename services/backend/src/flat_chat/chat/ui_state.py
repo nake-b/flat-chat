@@ -1,13 +1,13 @@
 """Frontend-facing mirror of the active result set.
 
-`ResultSet` (in `state.py`) owns LLM-facing prose/CSV/detail formatting; the
-agent reads from it. `UiState` is the parallel projection the React frontend
-reads via AG-UI shared state — typed apartments with lat/lng and the currently
-expanded card id.
+`LlmResultSetView` (in `chat/llm_context.py`) owns LLM-facing prose/CSV/detail
+formatting; the agent reads from it. `UiState` is the parallel projection the
+React frontend reads via AG-UI shared state — typed apartments with lat/lng
+and the currently expanded card id.
 
 The two projections share source data (the DataFrame from
 `SearchService.search()`) but never collapse into one: the LLM never sees
-`UiState`, the UI never sees `ResultSet`.
+`UiState`, the UI never sees `LlmResultSetView`.
 
 Status-pill copy is NOT mirrored here. The frontend derives lifecycle labels
 directly from AG-UI tool-call events via a tool-name → label registry

@@ -418,13 +418,13 @@ def test_search_with_near_water() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Detail tool — get_result_details(indices) is the single detail entrypoint.
+# Detail tool — open_listing(indices) is the single detail entrypoint.
 # Single-index calls also fetch geo context + populate active_listing_context.
 # ---------------------------------------------------------------------------
 
 
-def test_get_result_details_single_index_populates_active_context() -> None:
-    """`get_result_details(indices=[1])` → context blob attached to UiState."""
+def test_open_listing_single_index_populates_active_context() -> None:
+    """`open_listing(indices=[1])` → context blob attached to UiState."""
     deps, fake = _build_deps()
     # Seed a result set so state.results has at least one apartment.
     seed = _scripted_model(
@@ -437,7 +437,7 @@ def test_get_result_details_single_index_populates_active_context() -> None:
 
     # Now drill into listing 1 — single index triggers context fetch.
     drill = _scripted_model(
-        "get_result_details",
+        "open_listing",
         {"indices": [1]},
     )
     _run(drill, deps, "show me listing 1")
@@ -451,7 +451,7 @@ def test_get_result_details_single_index_populates_active_context() -> None:
     assert transit[0].walk_minutes == 4
 
 
-def test_get_result_details_multi_index_skips_context_fetch() -> None:
+def test_open_listing_multi_index_skips_context_fetch() -> None:
     """Multi-index calls only anchor active_id; no geo context fetched."""
     deps, fake = _build_deps()
     seed = _scripted_model("search_apartments", {"districts": ["Kreuzberg"]})
@@ -459,7 +459,7 @@ def test_get_result_details_multi_index_skips_context_fetch() -> None:
     fake.last_details_id = None  # reset
 
     drill = _scripted_model(
-        "get_result_details",
+        "open_listing",
         {"indices": [1]},  # only one listing in canned set; still tests single-path
     )
     _run(drill, deps, "show me listing 1")

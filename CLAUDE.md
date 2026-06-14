@@ -34,14 +34,19 @@ services/backend/           → FastAPI app, domain-isolated layered architectur
                               chat.py     — POST create conversation, GET history (no message-send)
                               agent.py    — POST /api/agent — AG-UI streaming via AGUIAdapter
     chat/                   → Chat domain
-                              agent.py    — Agent(toolsets=[toolset]), INSTRUCTIONS, dynamic instructions
-                              tools.py    — FunctionToolset[ChatDeps]() + @toolset.tool (mirrors into UiState)
-                              state.py    — ChatSession, ResultSet (LLM-facing), ChatDeps (StateHandler protocol)
-                              ui_state.py — UiState / UiApartment (frontend mirror)
-                              sessions.py — SessionStore Protocol + InMemorySessionStore
-                              service.py  — ChatService — dispatches AG-UI run + persists state/history
-                              schemas.py  — API response models
-                              providers/  — chat-model dispatch (single provider seam)
+                              agent.py     — Agent(toolsets=[toolset]), role-level XML INSTRUCTIONS,
+                                             @agent.instructions → build_dynamic_state_prompt
+                              tools.py     — FunctionToolset[ChatDeps] + @toolset.tool + @toolset.instructions
+                                             (tool-protocol guidance + phrase map live here)
+                              llm_context.py — LlmResultSetView (LLM-facing view), format_navigation_footer,
+                                             format_geo_context_prose, build_dynamic_state_prompt.
+                                             Owns every byte the LLM sees about result data.
+                              state.py     — ChatSession, ChatDeps (pure data; no formatting)
+                              ui_state.py  — UiState / UiApartment (frontend mirror)
+                              sessions.py  — SessionStore Protocol + InMemorySessionStore
+                              service.py   — ChatService — dispatches AG-UI run + persists state/history
+                              schemas.py   — API response models
+                              providers/   — chat-model dispatch (single provider seam)
                                 __init__.py  — build_chat_model() orchestrator (key-presence only)
                                 anthropic.py — direct Anthropic + prompt caching
                                 azure.py     — Azure OpenAI Service
@@ -90,9 +95,10 @@ docker compose --profile geo-context run --rm geo-context  # Run geo-context ETL
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
 - LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `FunctionToolset[ChatDeps]` for tools (no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection
-- Conversation state lives in `ChatSession` (history + `ResultSet` + `UiState`), held by a `SessionStore` Protocol — `InMemorySessionStore` today, swap for DB-backed later
-- `ResultSet` (in `chat/state.py`) owns every listing-formatting concern shown to the LLM — `summary` (prose top-N), `page` (CSV bulk), `detail` (prose full fields), `describe_for_instructions` (one-line state). Every list-style response ends with an explicit navigation footer. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
-- `UiState` (in `chat/ui_state.py`) is the parallel frontend mirror — a Pydantic model of typed apartments + `active_id`. `ChatDeps` exposes it as a `state: UiState` dataclass field so it satisfies the Pydantic AI `StateHandler` protocol; `AGUIAdapter` sets it per request from the AG-UI envelope. Tools mutate both `ResultSet` (LLM-facing prose) and `state` (UI-facing structured data) on every call.
+- Conversation state lives in `ChatSession` (history + `LlmResultSetView` + `UiState`), held by a `SessionStore` Protocol — `InMemorySessionStore` today, swap for DB-backed later
+- **LLM-facing string composition is centralised in `chat/llm_context.py`** — `LlmResultSetView` (the active search wrapped with `summary` / `page` / `detail` formatting), `format_navigation_footer` (free function so the data class doesn't reference tool names), `format_geo_context_prose` (single-listing neighbourhood prose), and `build_dynamic_state_prompt` (per-turn `<current_state>` + `<user_focus>` XML blocks). Nothing outside this module composes prose for the LLM. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
+- **Three-layer prompt composition.** Pydantic AI assembles the system prompt as: agent `instructions=` (role-level, XML-tagged: `<role>` / `<ui_rendering>` / `<user_references>` / `<honesty>` / `<neutrality>`), then `@agent.instructions` (`build_dynamic_state_prompt` — per-turn `<current_state>` + optional `<user_focus>`), then `@toolset.instructions` (`<tool_protocol>` + `<phrase_map>` — co-located with the tools they describe). Renaming a tool is one atomic edit (function name + the protocol/phrase-map text in `tools.py`). The static layers are large enough for prompt caching to matter — verified: ~5600 cached prefix tokens per turn against Anthropic with `cache_instructions=True` + `cache_tool_definitions=True`.
+- `UiState` (in `chat/ui_state.py`) is the parallel frontend mirror — a Pydantic model of typed apartments + `active_id` + `active_listing_context`. `ChatDeps` exposes it as a `state: UiState` dataclass field so it satisfies the Pydantic AI `StateHandler` protocol; `AGUIAdapter` sets it per request from the AG-UI envelope. Tools mutate both `LlmResultSetView` (LLM-facing prose) and `state` (UI-facing structured data) on every call.
 - Status-pill copy ("Searching Kreuzberg…", "Found 12 listings…", "Thinking…") is NOT mirrored in `UiState`. The frontend derives lifecycle labels directly from AG-UI tool-call events via a tool-name → label registry (`services/frontend/src/state/toolStatus.ts`) consumed by `useCopilotAction` per backend tool; the Thinking phase is rendered via `useCoAgentStateRender` and suppresses itself while any tool pill is executing. See `agent-compound-docs/decisions/frontend-stack.md` §Status-pill lifecycle.
 - **State events are not auto-emitted** by Pydantic AI's AG-UI adapter — `deps.state` mutations alone are invisible to the frontend. To push state to the UI, tools must return `ToolReturn(return_value=…, metadata=[StateSnapshotEvent(snapshot=state.model_dump())])`. The adapter yields any `BaseEvent` in `ToolReturn.metadata` into the SSE stream alongside the regular `TOOL_CALL_RESULT`. See the `_return_with_state` helper in `chat/tools.py` and `agent-compound-docs/decisions/frontend-stack.md`.
 - All cross-layer wiring goes through FastAPI `Depends` (`core/dependencies.py`) — no module-level singletons in the request path other than the session store
@@ -151,6 +157,7 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 ## Deferred / nice-to-have (post-MVP)
 
 - **Agent-callable frontend tools** (AG-UI Generative-UI pattern 3) — e.g. `pan_map_to(lat, lng)`, `expand_card(id)`, `highlight_kiez(name)` exposed via CopilotKit's `useCopilotAction` so the agent can drive the UI directly instead of only via shared state. Worth revisiting once the chat ↔ map shared-state loop is solid; powerful for things like "zoom to where I'm looking" or guided tours.
+- **Parallel tool-call patterns for split commands.** Pydantic AI and Anthropic both support multiple `tool_use` blocks in a single LLM response — independent tools execute in parallel without a second model round-trip. When we ship pattern-3 frontend tools (above), revisit splitting bundled tools like the current `open_listing` into pure-query (`get_listing_prose`) + pure-command (`select_listing` / `pan_map_to`) pairs the LLM calls in parallel. Until then, keep bundled tools — splitting now would require coaching the LLM to always call both, and coordination misses (calls one, forgets the other) would silently break UX. See `agent-compound-docs/decisions/llm-tool-result-design.md` for the dual-purpose rationale on `open_listing`.
 - **Pricing pins** — replace the plain circle marker on the map with HTML/SVG pins that display the warm-rent number. Turns the map into a free price-density visualization at zoom-out and lets clusters report a price range instead of just a count.
 - **Filter UI** — none for MVP (conversational thesis). If user testing surfaces real friction with sliders/checkboxes, add a slim sort/filter bar above the card strip — keep it secondary to chat, never above.
 - **Self-hosted Protomaps Berlin tiles** — nginx and the `data/tiles/` volume are already wired (`/tiles/` location with Range + CORS). Drop a `berlin.pmtiles` extract in (see `data/tiles/README.md`) and swap the demo style URL in `MapPane.tsx` to switch off the CartoCDN demo style.
@@ -254,6 +261,44 @@ from flat_chat.chat.tools import toolset
 agent = Agent(deps_type=ChatDeps, toolsets=[toolset], instructions=...)
 ```
 
+#### Toolset instructions
+
+A `FunctionToolset` can carry its own LLM guidance via `instructions=` (static)
+or `@toolset.instructions` (dynamic, with `RunContext`). Pydantic AI appends
+toolset instructions AFTER `agent.instructions` when composing the system
+prompt — so the right factoring is:
+
+- **Agent** owns role-level prose: who you are, what UI you're talking to,
+  honesty rules, neutrality, persona.
+- **Toolset** owns tool-protocol prose: the mental model for the tools, when
+  to call which, plus any phrase-map / cheat sheet that translates user
+  speech into structured arguments. Co-locating tool-name knowledge with
+  the tool implementations means renaming a tool is one atomic edit.
+
+```python
+# chat/tools.py
+toolset: FunctionToolset[ChatDeps] = FunctionToolset()
+
+@toolset.instructions
+def tool_protocol_instructions() -> str:
+    return """\
+<tool_protocol>
+There is ONE active result set per conversation. Listings are referenced by
+1-based indices. To refine, call `search_apartments` again with ALL filters
+you want to keep (omitted args are dropped). ...
+</tool_protocol>
+
+<phrase_map>
+  - "near U-Bahn" → transit: {modes: ["u_bahn"]}
+  - "up-and-coming" → mss: {status_min: "disadvantaged", dynamics: "improving"}
+  ...
+</phrase_map>
+"""
+```
+
+XML-tagged sections (Anthropic's recommended delimiter) help Claude attend
+to each section independently and keep the cached prefix stable.
+
 Below is the older `@agent.tool` form — still valid for standalone agents,
 but use `FunctionToolset` when tools live in a separate module:
 
@@ -277,7 +322,14 @@ def calculate_commute(origin: str, destination: str) -> str:
     """Calculate commute time between two Berlin addresses."""
     return "25 minutes by U-Bahn"
 
-# Flat parameters preferred over nested objects for better LLM compatibility
+# Flat parameters preferred over nested objects for better LLM compatibility.
+# Carve-out: one level of nesting is acceptable when a single concept has
+# internal combinatorial structure that would otherwise inflate the parameter
+# count 4–5×. Example: this project's `transit: TransitFilter` (modes, lines,
+# stop_name, distance) and `mss: MssFilter` (status_min, dynamics) — flat
+# alternatives would add ~20 prefixed params. Compensate with rich
+# docstrings + a phrase-map on the toolset (see "Toolset instructions"
+# below).
 
 # ModelRetry for retry with guidance
 from pydantic_ai import ModelRetry

@@ -1,7 +1,10 @@
-from ag_ui.core import EventType, StateSnapshotEvent
-from pydantic_ai import FunctionToolset, RunContext, ToolReturn
+from datetime import date
 
-from flat_chat.chat.state import ChatDeps, ResultSet
+from ag_ui.core import EventType, StateSnapshotEvent
+from pydantic_ai import FunctionToolset, ModelRetry, RunContext, ToolReturn
+
+from flat_chat.chat.llm_context import LlmResultSetView, format_geo_context_prose
+from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.ui_state import UiApartment
 from flat_chat.search.buckets import DensityLabel, GreeneryLabel, NoiseLabel
 from flat_chat.search.geo_filters import (
@@ -14,6 +17,71 @@ from flat_chat.search.geo_filters import (
 from flat_chat.search.schemas import SearchParams, SortBy
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
+
+
+_TOOL_PROTOCOL = """\
+<tool_protocol>
+There is ONE active result set per conversation. Listings are referenced by
+1-based indices into it — the same numbers shown on the card strip.
+Indices are stable until the next `search_apartments` call.
+
+Tools:
+  - `search_apartments(...)` — run or REPLACE the active result set. To
+    refine, call again with ALL filters you want to keep (omitted args are
+    dropped). Never volunteer a filter the user did not explicitly ask for.
+  - `open_listing(indices=[k])` — open the detail panel for listing #k AND
+    attach the neighbourhood-context blob (transit, schools, parks, noise,
+    MSS, hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
+    prose; UI focus anchors to the first index. NEVER pass UUIDs, external
+    IDs, or anything that isn't a 1-based number visible on the cards.
+  - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
+    Indices in the CSV are absolute (1..N of the whole result set), not
+    page-local.
+
+After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight
+of what stands out (transit, noise, neighbourhood character) — the detail
+panel renders structured data; your reply calls out what matters. Don't
+stay silent after the tool completes.
+</tool_protocol>
+
+<phrase_map>
+Use these as templates when translating user phrases into structured
+filters for `search_apartments`:
+  - "near U-Bahn"               → transit: {modes: ["u_bahn"]}
+  - "on U8" / "served by U8"    → transit: {lines: ["U8"], distance: "very_near"}
+  - "S+U Wittenau" / "near
+    Wittenau station"           → transit: {stop_name: "Wittenau"}
+  - "within 5 min walk of an
+    S-Bahn"                     → transit: {modes: ["s_bahn"], distance: 400}
+  - "quiet" / "quiet street"    → max_noise: "quiet"
+  - "leafy" / "lots of
+    greenery"                   → min_greenery: "leafy"
+  - "park nearby"               → near_park: "near"
+  - "family-friendly" /
+    "good for kids"             → near_park: "near", near_playground: "near",
+                                  max_noise: "quiet"
+  - "affluent neighbourhood"    → mss: {status_min: "affluent"}
+  - "stable affluent area"      → mss: {status_min: "affluent",
+                                        dynamics: "stable"}
+  - "up-and-coming" /
+    "gentrifying"               → mss: {status_min: "disadvantaged",
+                                        dynamics: "improving"}
+  - "near a Grundschule"        → school: {school_type: "Grundschule"}
+  - "near a lake" /
+    "by the water"              → near_water: "near"
+</phrase_map>
+"""
+
+
+@toolset.instructions
+def tool_protocol_instructions() -> str:
+    """Toolset-scoped guidance: how to use these tools, with a phrase map.
+
+    Pydantic AI appends this after `agent.instructions` when composing the
+    system prompt — co-locating tool guidance with the tool implementations
+    means renaming a tool is one atomic edit (function name + this text).
+    """
+    return _TOOL_PROTOCOL
 
 
 @toolset.tool
@@ -186,6 +254,14 @@ async def search_apartments(
         sort_by: "relevance" (requires query — otherwise falls back to
             recent), "price", "area", or "recent".
     """
+    if available_by is not None:
+        try:
+            date.fromisoformat(available_by)
+        except ValueError as exc:
+            raise ModelRetry(
+                f"available_by must be ISO YYYY-MM-DD, got: {available_by!r}"
+            ) from exc
+
     params = SearchParams(
         query=query,
         price_warm_min=price_warm_min,
@@ -223,7 +299,7 @@ async def search_apartments(
         sort_by=sort_by,
     )
 
-    # Surface soft-fallback signals to the LLM via ResultSet.notes — these
+    # Surface soft-fallback signals to the LLM via LlmResultSetView.notes — these
     # also flow back to the user. The service silently degrades, so this is
     # the user-facing voice for those degradations.
     notes: list[str] = []
@@ -239,7 +315,7 @@ async def search_apartments(
 
     df = await ctx.deps.search_service.search(params)
 
-    # Drop listings without coordinates BEFORE building ResultSet + UiState so
+    # Drop listings without coordinates BEFORE building the view + UiState so
     # all three counts (chat prose, cards, map) agree — the map can only render
     # markers for apartments with lat/lng, and silently dropping them downstream
     # caused user-visible count mismatches. The filter belongs at the tool layer;
@@ -247,7 +323,7 @@ async def search_apartments(
     df = df.dropna(subset=["latitude", "longitude"])
     df = df.reset_index(drop=True)
 
-    ctx.deps.session.result_set = ResultSet(df=df, params=params, notes=notes)
+    ctx.deps.session.result_set = LlmResultSetView(df=df, params=params, notes=notes)
 
     # Mirror into the frontend-facing UiState. The agent never reads from
     # ctx.deps.state — it's exclusively for the UI to render the map + cards.
@@ -266,20 +342,26 @@ async def search_apartments(
 
 
 @toolset.tool
-async def get_result_details(
+async def open_listing(
     ctx: RunContext[ChatDeps],
     indices: list[int],
 ) -> ToolReturn | str:
-    """Show full details for specific listings from the current result set.
+    """Open a listing's detail panel AND return its full info.
 
-    This is the SINGLE detail entrypoint. Listings are referenced by their
-    1-based index in the current result set — the same number the user sees
-    on each card. Indices are stable until the next `search_apartments` call.
+    Dual purpose by design: this is both a data-fetch (returns prose so the
+    LLM can reason and write a highlight) and a UI command (sets
+    `active_id`, opens the right-hand detail panel, attaches the
+    neighbourhood-context blob for the Neighbourhood-context UI block).
+
+    Listings are referenced by their 1-based index in the current result
+    set — the same number the user sees on each card. Indices are stable
+    until the next `search_apartments` call.
 
     Single-index call (`indices=[k]`) opens the detail panel for listing #k
     AND attaches the neighbourhood-context blob (transit, schools, parks,
-    noise, MSS, hospitals). Multi-index calls (`indices=[k, m, …]`) just
-    return prose for comparison; no context fetch.
+    noise, MSS, hospitals). Multi-index calls (`indices=[k, m, …]`) anchor
+    UI focus to the first index but return prose for all; no geo-context
+    fetch (use it for side-by-side comparison).
 
     Args:
         indices: 1-based positions referring to the most recent search/page
@@ -306,7 +388,7 @@ async def get_result_details(
             detail = ctx.deps.search_service.get_listing_details(active.id)
             if detail is not None:
                 ctx.deps.state.active_listing_context = detail.context
-                geo_prose = "\n\n" + _format_geo_context_prose(
+                geo_prose = "\n\n" + format_geo_context_prose(
                     first, detail.context
                 )
 
@@ -320,8 +402,12 @@ async def get_result_page(
     ctx: RunContext[ChatDeps],
     page: int = 1,
     page_size: int = 10,
-) -> ToolReturn | str:
+) -> str:
     """Show a compact page of the current result set.
+
+    Pure read of `LlmResultSetView` — does not mutate UiState, so no snapshot
+    is emitted. The agent uses this to peek beyond the top-5 shown by the
+    initial `search_apartments` summary.
 
     Args:
         page: 1-based page number.
@@ -331,91 +417,7 @@ async def get_result_page(
     if rs is None:
         return "No active search results. Run search_apartments first."
 
-    return _return_with_state(
-        return_value=rs.page(page, page_size), ui_state=ctx.deps.state
-    )
-
-
-def _format_geo_context_prose(idx: int, context) -> str:
-    """LLM-facing neighbourhood-context prose for one listing.
-
-    Appended to the standard `rs.detail([idx])` output by `get_result_details`
-    when called with a single index. Mirrors what the frontend renders in the
-    Neighbourhood-context detail-panel block, but as text the LLM can quote
-    when the user asks follow-up questions about transit / schools / noise /
-    MSS. Sections only render when they have data — partial backend wiring
-    produces partial prose, never empty headings.
-    """
-    parts: list[str] = [f"--- Listing #{idx} — neighbourhood context ---"]
-
-    if context.transit:
-        parts.append("Nearby transit:")
-        for stop in context.transit:
-            lines = ", ".join(stop.lines) if stop.lines else "—"
-            parts.append(
-                f"  - {stop.name} — {lines} "
-                f"({stop.distance_m}m, {stop.walk_minutes}min walk)"
-            )
-
-    if context.school_catchment is not None:
-        sc = context.school_catchment
-        parts.append(
-            f"Primary school catchment: {sc.school_name or sc.catchment_id}"
-        )
-
-    if context.nearest_schools:
-        parts.append("Nearby schools:")
-        for s in context.nearest_schools:
-            parts.append(
-                f"  - {s.name or 'unnamed'} "
-                f"({s.school_type or 'unknown type'}) — {s.distance_m}m"
-            )
-
-    if context.nearest_parks:
-        parts.append("Nearby parks:")
-        for p in context.nearest_parks:
-            parts.append(f"  - {p.name or 'unnamed'} — {p.distance_m}m")
-
-    if context.nearest_playground is not None:
-        pg = context.nearest_playground
-        parts.append(
-            f"Nearest playground: {pg.name or 'unnamed'} — {pg.distance_m}m"
-        )
-
-    if context.nearest_hospitals:
-        parts.append("Hospitals nearby:")
-        for h in context.nearest_hospitals:
-            parts.append(
-                f"  - {h.name or 'unnamed'} ({h.tier}) — {h.distance_m}m"
-            )
-
-    if context.nearest_water is not None:
-        w = context.nearest_water
-        parts.append(
-            f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
-        )
-
-    character_bits: list[str] = []
-    if context.noise is not None and context.noise.label is not None:
-        character_bits.append(f"street noise: {context.noise.label}")
-    if context.greenery is not None and context.greenery.label is not None:
-        character_bits.append(f"greenery: {context.greenery.label}")
-    if context.density is not None and context.density.label is not None:
-        character_bits.append(f"density: {context.density.label}")
-    if context.mss is not None and context.mss.status_label is not None:
-        mss_bits = [context.mss.status_label]
-        if context.mss.dynamics_label is not None:
-            mss_bits.append(context.mss.dynamics_label)
-        character_bits.append(
-            f"Sozialmonitoring: {' · '.join(mss_bits)}"
-        )
-    if character_bits:
-        parts.append("Neighbourhood character: " + ", ".join(character_bits))
-
-    if context.disabled_parking_count > 0:
-        count = context.disabled_parking_count
-        parts.append(f"Disabled parking nearby: {count} spots within 300m")
-    return "\n".join(parts)
+    return rs.page(page, page_size)
 
 
 def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:
