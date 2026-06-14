@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from dataclasses import dataclass
 
 import pandas as pd
 from geoalchemy2 import Geography
@@ -10,10 +12,31 @@ from pydantic_ai import Embedder
 from sqlalchemy import cast, func, or_, select
 from sqlalchemy.orm import Session
 
+from flat_chat.search.buckets import bucket_density, bucket_noise
+from flat_chat.search.distances import walk_minutes
+from flat_chat.search.geo_context_service import (
+    MSS_DYNAMICS_DE_TO_EN,
+    MSS_STATUS_DE_TO_EN,
+    GeoContextService,
+)
+from flat_chat.search.geo_filters import ListingContext
 from flat_chat.search.models import Listing
 from flat_chat.search.schemas import SearchParams
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ListingWithContext:
+    """A single listing plus its full geo-context blob.
+
+    Returned by `SearchService.get_listing_details(listing_id)` and consumed
+    by the `get_listing_details` agent tool, which formats the listing fields
+    for the LLM prose and mirrors `context` into `UiState.active_listing_context`.
+    """
+
+    listing: Listing
+    context: ListingContext
 
 # Pandas-facing column names returned to the agent / formatting layer.
 # These are intentionally distinct from the DB column names — see _ORM_ATTR
@@ -56,6 +79,22 @@ RESULT_COLUMNS = [
     # Geo (for the map; UiApartment maps these to lat/lng)
     "latitude",
     "longitude",
+    # Geo-context chips — populated by GeoContextService.apply_chips() via
+    # LATERAL joins. Always present in the DataFrame (None when the listing
+    # has no nearby data or no location). Labels (walk_min, noise_label,
+    # density_label, mss_*_label) are derived in Python from the SQL-emitted
+    # raw values immediately below in the record-building loop.
+    "nearest_transit_line",
+    "nearest_transit_m",
+    "walk_min_to_transit",
+    "nearest_park_name",
+    "nearest_park_m",
+    "noise_total_lden",
+    "noise_label",
+    "persons_per_hectare",
+    "density_label",
+    "mss_status_label",
+    "mss_dynamics_label",
 ]
 
 # Pandas column -> ORM attribute name on Listing. Only entries that differ.
@@ -67,10 +106,40 @@ _ORM_ATTR = {
     "source_url": "listing_url",
 }
 
+# Chip column labels emitted by GeoContextService.apply_chips() — must match
+# the `.label(...)` calls there. Derived labels (walk_min_to_transit,
+# noise_label, density_label, mss_*_label) are computed in Python from these.
+_CHIP_COLUMNS_FROM_SQL = (
+    "nearest_transit_line",
+    "nearest_transit_m",
+    "nearest_park_name",
+    "nearest_park_m",
+    "noise_total_lden",
+    "persons_per_hectare",
+    "mss_status_de",
+    "mss_dynamics_de",
+)
+
+# Columns derived in Python after pulling SQL chips — kept out of the loop's
+# `record[col] = getattr(listing, ...)` pass and computed explicitly below.
+_DERIVED_LABEL_COLUMNS = (
+    "walk_min_to_transit",
+    "noise_label",
+    "density_label",
+    "mss_status_label",
+    "mss_dynamics_label",
+)
+
 
 class SearchService:
-    def __init__(self, db: Session, embedder: Embedder | None = None):
+    def __init__(
+        self,
+        db: Session,
+        geo: GeoContextService,
+        embedder: Embedder | None = None,
+    ):
         self.db = db
+        self.geo = geo
         self.embedder = embedder
 
     async def search(self, params: SearchParams) -> pd.DataFrame:
@@ -150,6 +219,11 @@ class SearchService:
                 )
             )
 
+        # Geo-context: pre-filter predicates (only those the user set) +
+        # always-on chip LATERAL joins. Cheap thanks to GIST indexes.
+        stmt = self.geo.apply_filters(stmt, params)
+        stmt = self.geo.apply_chips(stmt)
+
         # Resolve the effective sort. Be explicit when "relevance" can't be
         # honored — the user-facing note is generated in tools.py; here we
         # just log for ops visibility and degrade cleanly.
@@ -197,14 +271,84 @@ class SearchService:
         records = []
         for row in rows:
             listing = row[0]
+            mapping = row._mapping
+            # Listing attributes (skip chip columns — they come from `mapping`).
             record = {
-                col: getattr(listing, _ORM_ATTR.get(col, col)) for col in RESULT_COLUMNS
+                col: getattr(listing, _ORM_ATTR.get(col, col))
+                for col in RESULT_COLUMNS
+                if col not in _CHIP_COLUMNS_FROM_SQL
+                and col not in _DERIVED_LABEL_COLUMNS
             }
-            score = round(1 - float(row[1]), 4) if has_score else None
-            record["similarity_score"] = score
+            if has_score:
+                record["similarity_score"] = round(
+                    1 - float(mapping["similarity_score"]), 4
+                )
+            else:
+                record["similarity_score"] = None
+            # Chip columns from the LATERAL joins. None-safe via `.get`.
+            for chip in _CHIP_COLUMNS_FROM_SQL:
+                record[chip] = mapping.get(chip)
+            # Derived label columns — Python-side translations of the raw SQL
+            # values. Each label is owned by a single helper (walk_minutes,
+            # bucket_noise, bucket_density, MSS_*_DE_TO_EN) so the threshold
+            # doc remains the single source of truth.
+            transit_m = record.get("nearest_transit_m")
+            record["walk_min_to_transit"] = (
+                walk_minutes(int(transit_m)) if transit_m is not None else None
+            )
+            record["noise_label"] = bucket_noise(record.get("noise_total_lden"))
+            record["density_label"] = bucket_density(
+                record.get("persons_per_hectare")
+            )
+            record["mss_status_label"] = MSS_STATUS_DE_TO_EN.get(
+                record.get("mss_status_de") or ""
+            )
+            record["mss_dynamics_label"] = MSS_DYNAMICS_DE_TO_EN.get(
+                record.get("mss_dynamics_de") or ""
+            )
+            # Drop the German-label columns now that we've translated them —
+            # downstream (UiApartment) only consumes the EN labels. Keeping
+            # the DE values out of the DataFrame prevents accidental leakage
+            # into the LLM-facing surface.
+            record.pop("mss_status_de", None)
+            record.pop("mss_dynamics_de", None)
             records.append(record)
 
         return pd.DataFrame(records)
+
+    def get_listing_details(self, listing_id: str) -> ListingWithContext | None:
+        """Fetch a listing and its full geo-context blob.
+
+        Returns None if the listing isn't found (the caller — the agent tool
+        — surfaces this to the LLM as a not-found message rather than
+        raising). Accepts the id as a string (the UiApartment-facing form);
+        coerces to UUID before the lookup because Listing.id is typed
+        `uuid.UUID(as_uuid=True)` and SQLAlchemy's `db.get` does not coerce
+        strings — it silently returns None on a type mismatch.
+
+        Builds the location expression from `listing.latitude` /
+        `listing.longitude` rather than handing `listing.location`
+        (`WKBElement`) to the geo helpers — when GeoAlchemy2 binds a
+        WKBElement inline it produces `ST_GeomFromEWKT('<hex>')`, but the
+        binary hex isn't valid EWKT and Postgres rejects with "invalid
+        geometry". Rebuilding from lat/lon sidesteps the issue and matches
+        the pattern the existing `near_lat`/`near_lon` filter uses.
+        """
+        try:
+            pk = uuid.UUID(listing_id)
+        except (TypeError, ValueError):
+            return None
+        listing = self.db.get(Listing, pk)
+        if listing is None:
+            return None
+        if listing.latitude is None or listing.longitude is None:
+            return ListingWithContext(listing=listing, context=ListingContext())
+        loc_expr = geo_func.ST_SetSRID(
+            geo_func.ST_MakePoint(listing.longitude, listing.latitude),
+            4326,
+        )
+        context = self.geo.context_for(loc_expr)
+        return ListingWithContext(listing=listing, context=context)
 
     async def _embed(self, text: str) -> list[float]:
         assert self.embedder is not None, "_embed called without embedder"

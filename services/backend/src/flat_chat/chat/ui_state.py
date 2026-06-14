@@ -23,6 +23,8 @@ from datetime import datetime
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from flat_chat.search.geo_filters import ListingContext
+
 
 class UiApartment(BaseModel):
     """A single listing as the frontend renders it on the map and in cards."""
@@ -64,6 +66,18 @@ class UiApartment(BaseModel):
     source_url: str | None = None
     # Image plumbing deferred — populated from raw.images JSONB in a later change.
     image_url: str | None = None
+    # Geo-context chips — populated by GeoContextService.apply_chips() via
+    # LATERAL joins during search. None when no nearby data or no location.
+    # All English labels — German source labels never leak past the service
+    # boundary (MSS_*_DE_TO_EN handles the translation in service.py).
+    nearest_transit_line: str | None = None
+    walk_min_to_transit: int | None = None
+    nearest_park_name: str | None = None
+    nearest_park_m: int | None = None
+    noise_label: str | None = None
+    density_label: str | None = None
+    mss_status_label: str | None = None
+    mss_dynamics_label: str | None = None
 
     @classmethod
     def from_dataframe_row(cls, row: pd.Series) -> UiApartment:
@@ -97,6 +111,14 @@ class UiApartment(BaseModel):
             lister_type=_opt_str(row.get("lister_type")),
             source_url=_opt_str(row.get("source_url")),
             image_url=None,
+            nearest_transit_line=_opt_str(row.get("nearest_transit_line")),
+            walk_min_to_transit=_opt_int(row.get("walk_min_to_transit")),
+            nearest_park_name=_opt_str(row.get("nearest_park_name")),
+            nearest_park_m=_opt_int(row.get("nearest_park_m")),
+            noise_label=_opt_str(row.get("noise_label")),
+            density_label=_opt_str(row.get("density_label")),
+            mss_status_label=_opt_str(row.get("mss_status_label")),
+            mss_dynamics_label=_opt_str(row.get("mss_dynamics_label")),
         )
 
 
@@ -115,6 +137,10 @@ class UiState(BaseModel):
 
     active_id: str | None = None
     """The id of the card currently expanded into detail view, if any."""
+
+    active_listing_context: ListingContext | None = None
+    """Full geo-context blob for the active listing — populated when the
+    agent calls `get_listing_details(id)`. Cleared on next search."""
 
 
 def _opt_float(val: object) -> float | None:

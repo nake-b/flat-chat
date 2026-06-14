@@ -3,6 +3,14 @@ from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
 from flat_chat.chat.state import ChatDeps, ResultSet
 from flat_chat.chat.ui_state import UiApartment
+from flat_chat.search.buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from flat_chat.search.geo_filters import (
+    HospitalFilter,
+    MssFilter,
+    NearSpec,
+    SchoolFilter,
+    TransitFilter,
+)
 from flat_chat.search.schemas import SearchParams, SortBy
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
@@ -39,6 +47,17 @@ async def search_apartments(
     has_kitchen: bool | None = None,
     has_elevator: bool | None = None,
     has_images: bool | None = None,
+    # Geo-context (Berlin Sozialmonitoring / transit / parks / noise / ...)
+    transit: TransitFilter | None = None,
+    school: SchoolFilter | None = None,
+    hospital: HospitalFilter | None = None,
+    mss: MssFilter | None = None,
+    near_park: NearSpec | None = None,
+    near_playground: NearSpec | None = None,
+    near_water: NearSpec | None = None,
+    max_noise: NoiseLabel | None = None,
+    min_greenery: GreeneryLabel | None = None,
+    density: DensityLabel | None = None,
     sort_by: SortBy = "relevance",
 ) -> ToolReturn:
     """Search for apartments in Berlin. Replaces the current result set.
@@ -95,6 +114,75 @@ async def search_apartments(
             returns all listings — leave unset unless the user explicitly
             asks for photos only.
 
+        transit: Filter by proximity to public transit. Pass as an object
+            like `{"modes": ["u_bahn"], "distance": "near"}`. Fields:
+              - `distance`: how close — one of `"next_to"` (≤150m),
+                `"very_near"` (≤400m), `"near"` (≤650m, default),
+                `"walking_distance"` (≤1200m), `"bike_distance"` (≤2500m),
+                or an int (meters).
+              - `modes`: which service types must be reachable, any of
+                `"u_bahn"`, `"s_bahn"`, `"tram"`, `"bus"`, `"ferry"`,
+                `"regional"`, `"mainline"`. OR semantics (any-of).
+              - `lines`: specific line names like `["U8", "S5"]` — match
+                stops whose `lines_served` contains any of these.
+              - `stop_name`: substring match on stop name (e.g.
+                `"Wittenau"` matches "S+U Wittenau").
+            Examples: "near U-Bahn" → `{"modes": ["u_bahn"]}`. "On U8" →
+            `{"lines": ["U8"], "distance": "very_near"}`. "5 min walk from
+            S-Bahn" → `{"modes": ["s_bahn"], "distance": 400}`.
+
+        school: Filter by proximity to a school. Pass as
+            `{"distance": "near"}` for "near a school", or
+            `{"school_type": "Grundschule"}` to require a primary school
+            (Berlin Schulverzeichnis categories — "Grundschule", "Gymnasium",
+            "ISS", "Berufsschule"; free-text substring match). Example:
+            "Grundschule nearby" → `{"school_type": "Grundschule"}`.
+
+        hospital: Filter by proximity to a hospital. Pass as
+            `{"distance": "walking_distance"}`. `tier` defaults to
+            `"plan_hospital"` (the Krankenhausplan emergency-care network —
+            what users usually mean); use `"any"` to include specialty
+            clinics too. Example: "hospital nearby" →
+            `{"distance": "walking_distance"}`.
+
+        mss: Filter by neighbourhood socioeconomic character
+            (Sozialmonitoring). Fields:
+              - `status_min`: minimum status floor — one of
+                `"disadvantaged"`, `"lower-income"` (default), `"mixed"`,
+                `"affluent"`. `"mixed"` matches mixed AND affluent areas.
+              - `dynamics`: exact trend match — one of `"improving"`,
+                `"stable"`, `"slipping"` (the last is counterintuitive — it
+                means improving slower than the citywide trend).
+            Neutral labels, not value judgements. Examples:
+            "affluent neighbourhood" → `{"status_min": "affluent"}`.
+            "up-and-coming" → `{"status_min": "disadvantaged",
+            "dynamics": "improving"}` (the classic gentrification signature).
+
+        near_park: Require a non-cemetery park within this distance.
+            Same `NearSpec` ladder as `transit.distance` — `"next_to"` /
+            `"very_near"` / `"near"` / `"walking_distance"` /
+            `"bike_distance"`, or an int. Example: "park nearby" →
+            `"near"`.
+
+        near_playground: Require a playground within this distance.
+            Same ladder. Example: "playground for the kids" → `"near"`.
+
+        near_water: Require a water body (lake / river / canal) within
+            this distance. Same ladder.
+
+        max_noise: Maximum Lden noise level. `"quiet"` (< 55 dB, WHO
+            health-threshold) or `"lively"` (< 65 dB, normal urban band).
+            Example: "quiet street" → `"quiet"`.
+
+        min_greenery: Minimum greenery level (WHO Europe rule: ≥0.5 ha
+            green within 300m = leafy; ≥1 ha or ≥0.5 ha within 150m =
+            very_leafy). `"leafy"` or `"very_leafy"`. Example: "leafy
+            neighbourhood" → `"leafy"`.
+
+        density: Population density bucket. `"sparse"` (<50 persons/ha,
+            suburban feel), `"moderate"` (50-150, typical urban European),
+            `"dense"` (≥150, inner-city Kreuzberg/Neukölln norm).
+
         sort_by: "relevance" (requires query — otherwise falls back to
             recent), "price", "area", or "recent".
     """
@@ -122,6 +210,16 @@ async def search_apartments(
         has_kitchen=has_kitchen,
         has_elevator=has_elevator,
         has_images=has_images,
+        transit=transit,
+        school=school,
+        hospital=hospital,
+        mss=mss,
+        near_park=near_park,
+        near_playground=near_playground,
+        near_water=near_water,
+        max_noise=max_noise,
+        min_greenery=min_greenery,
+        density=density,
         sort_by=sort_by,
     )
 
@@ -155,8 +253,11 @@ async def search_apartments(
     # ctx.deps.state — it's exclusively for the UI to render the map + cards.
     # Status-pill copy is owned entirely by the frontend (state/toolStatus.ts);
     # tools push data only.
-    ctx.deps.state.results = [UiApartment.from_dataframe_row(row) for _, row in df.iterrows()]
+    ctx.deps.state.results = [
+        UiApartment.from_dataframe_row(row) for _, row in df.iterrows()
+    ]
     ctx.deps.state.active_id = None
+    ctx.deps.state.active_listing_context = None
 
     return _return_with_state(
         return_value=ctx.deps.session.result_set.summary(),
@@ -171,23 +272,47 @@ async def get_result_details(
 ) -> ToolReturn | str:
     """Show full details for specific listings from the current result set.
 
+    This is the SINGLE detail entrypoint. Listings are referenced by their
+    1-based index in the current result set — the same number the user sees
+    on each card. Indices are stable until the next `search_apartments` call.
+
+    Single-index call (`indices=[k]`) opens the detail panel for listing #k
+    AND attaches the neighbourhood-context blob (transit, schools, parks,
+    noise, MSS, hospitals). Multi-index calls (`indices=[k, m, …]`) just
+    return prose for comparison; no context fetch.
+
     Args:
-        indices: 1-based positions referring to the most recent search/page output.
+        indices: 1-based positions referring to the most recent search/page
+            output. NEVER pass UUIDs, external IDs, or anything that isn't a
+            simple 1-based number visible to the user.
     """
     rs = ctx.deps.session.result_set
     if rs is None:
         return "No active search results. Run search_apartments first."
 
-    # Single-index calls are a UI "expand this card" hint — open the detail
-    # panel for that listing. Multi-index calls snap active_id to the first
-    # index in the batch so the UI has a consistent anchor (the first card
-    # the user asked about).
+    # Anchor the detail panel to indices[0] regardless of count, so the UI
+    # has a consistent "the first card the user asked about" anchor.
     first = indices[0]
     pos = first - 1
+    geo_prose = ""
     if 0 <= pos < len(ctx.deps.state.results):
-        ctx.deps.state.active_id = ctx.deps.state.results[pos].id
+        active = ctx.deps.state.results[pos]
+        ctx.deps.state.active_id = active.id
+        # Single-index calls fetch the geo-context blob and surface it both
+        # in UiState (so the frontend Neighbourhood panel renders) AND in
+        # the tool's return value (so the LLM can answer follow-up questions
+        # about transit / schools / noise / MSS without re-fetching).
+        if len(indices) == 1:
+            detail = ctx.deps.search_service.get_listing_details(active.id)
+            if detail is not None:
+                ctx.deps.state.active_listing_context = detail.context
+                geo_prose = "\n\n" + _format_geo_context_prose(
+                    first, detail.context
+                )
 
-    return _return_with_state(return_value=rs.detail(indices), ui_state=ctx.deps.state)
+    return _return_with_state(
+        return_value=rs.detail(indices) + geo_prose, ui_state=ctx.deps.state
+    )
 
 
 @toolset.tool
@@ -209,6 +334,88 @@ async def get_result_page(
     return _return_with_state(
         return_value=rs.page(page, page_size), ui_state=ctx.deps.state
     )
+
+
+def _format_geo_context_prose(idx: int, context) -> str:
+    """LLM-facing neighbourhood-context prose for one listing.
+
+    Appended to the standard `rs.detail([idx])` output by `get_result_details`
+    when called with a single index. Mirrors what the frontend renders in the
+    Neighbourhood-context detail-panel block, but as text the LLM can quote
+    when the user asks follow-up questions about transit / schools / noise /
+    MSS. Sections only render when they have data — partial backend wiring
+    produces partial prose, never empty headings.
+    """
+    parts: list[str] = [f"--- Listing #{idx} — neighbourhood context ---"]
+
+    if context.transit:
+        parts.append("Nearby transit:")
+        for stop in context.transit:
+            lines = ", ".join(stop.lines) if stop.lines else "—"
+            parts.append(
+                f"  - {stop.name} — {lines} "
+                f"({stop.distance_m}m, {stop.walk_minutes}min walk)"
+            )
+
+    if context.school_catchment is not None:
+        sc = context.school_catchment
+        parts.append(
+            f"Primary school catchment: {sc.school_name or sc.catchment_id}"
+        )
+
+    if context.nearest_schools:
+        parts.append("Nearby schools:")
+        for s in context.nearest_schools:
+            parts.append(
+                f"  - {s.name or 'unnamed'} "
+                f"({s.school_type or 'unknown type'}) — {s.distance_m}m"
+            )
+
+    if context.nearest_parks:
+        parts.append("Nearby parks:")
+        for p in context.nearest_parks:
+            parts.append(f"  - {p.name or 'unnamed'} — {p.distance_m}m")
+
+    if context.nearest_playground is not None:
+        pg = context.nearest_playground
+        parts.append(
+            f"Nearest playground: {pg.name or 'unnamed'} — {pg.distance_m}m"
+        )
+
+    if context.nearest_hospitals:
+        parts.append("Hospitals nearby:")
+        for h in context.nearest_hospitals:
+            parts.append(
+                f"  - {h.name or 'unnamed'} ({h.tier}) — {h.distance_m}m"
+            )
+
+    if context.nearest_water is not None:
+        w = context.nearest_water
+        parts.append(
+            f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
+        )
+
+    character_bits: list[str] = []
+    if context.noise is not None and context.noise.label is not None:
+        character_bits.append(f"street noise: {context.noise.label}")
+    if context.greenery is not None and context.greenery.label is not None:
+        character_bits.append(f"greenery: {context.greenery.label}")
+    if context.density is not None and context.density.label is not None:
+        character_bits.append(f"density: {context.density.label}")
+    if context.mss is not None and context.mss.status_label is not None:
+        mss_bits = [context.mss.status_label]
+        if context.mss.dynamics_label is not None:
+            mss_bits.append(context.mss.dynamics_label)
+        character_bits.append(
+            f"Sozialmonitoring: {' · '.join(mss_bits)}"
+        )
+    if character_bits:
+        parts.append("Neighbourhood character: " + ", ".join(character_bits))
+
+    if context.disabled_parking_count > 0:
+        count = context.disabled_parking_count
+        parts.append(f"Disabled parking nearby: {count} spots within 300m")
+    return "\n".join(parts)
 
 
 def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:

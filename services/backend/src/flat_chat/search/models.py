@@ -45,7 +45,7 @@ class IronCard(Base):
     )
     detail_scraped_at: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
 
-    raw_listings: Mapped[list["RawListing"]] = relationship(back_populates="iron_card")
+    raw_listings: Mapped[list[RawListing]] = relationship(back_populates="iron_card")
 
 
 class RawListing(Base):
@@ -75,8 +75,8 @@ class RawListing(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
 
-    iron_card: Mapped["IronCard | None"] = relationship(back_populates="raw_listings")
-    listing: Mapped["Listing | None"] = relationship(back_populates="raw_listing")
+    iron_card: Mapped[IronCard | None] = relationship(back_populates="raw_listings")
+    listing: Mapped[Listing | None] = relationship(back_populates="raw_listing")
 
 
 class Listing(Base):
@@ -88,7 +88,9 @@ class Listing(Base):
 
     __tablename__ = "listings"
     __table_args__ = (
-        UniqueConstraint("source_name", "external_id", name="uq_listing_source_external"),
+        UniqueConstraint(
+            "source_name", "external_id", name="uq_listing_source_external"
+        ),
         Index("ix_listings_source_name", "source_name"),
         Index("ix_listings_rooms", "rooms"),
         Index("ix_listings_cold_rent_eur", "cold_rent_eur"),
@@ -212,4 +214,4 @@ class Listing(Base):
         onupdate=func.now(),
     )
 
-    raw_listing: Mapped["RawListing | None"] = relationship(back_populates="listing")
+    raw_listing: Mapped[RawListing | None] = relationship(back_populates="listing")

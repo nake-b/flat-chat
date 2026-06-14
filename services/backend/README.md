@@ -72,10 +72,16 @@ src/flat_chat/
 │       ├── __init__.py  # build_chat_model() — @lru_cache; picks provider from settings
 │       └── anthropic.py # AnthropicModel + prompt caching settings
 └── search/
-    ├── models.py        # Listing SQLAlchemy model (HNSW + functional GIST indexes)
-    ├── schemas.py       # SearchParams (Literal sort_by, Field-bounded limit/radius_km)
-    └── service.py       # SearchService — structured + vector + geo (Geography cast)
-tests/                   # Test suite (pytest)
+    ├── models.py              # Listing SQLAlchemy model (HNSW + functional GIST indexes)
+    ├── geo_models.py          # SQLAlchemy mirrors of the 14 geo-context silver tables
+    ├── schemas.py             # SearchParams (Literal sort_by, Field-bounded limit/radius_km)
+    ├── geo_filters.py         # Pydantic filter schemas (TransitFilter/SchoolFilter/HospitalFilter/MssFilter) + ListingContext shape
+    ├── distances.py           # Distance bucket constants + walk-minute helper + per-dataset caps
+    ├── buckets.py             # Noise / density / greenery bucket classifiers (absolute WHO/EU thresholds)
+    ├── transit.py             # GTFS Extended mode codes ↔ English enum mapping
+    ├── service.py             # SearchService — structured + vector + geo; composes GeoContextService
+    └── geo_context_service.py # Internal seam owning all geo-context table access (predicates, chip LATERALs, context_for)
+tests/                         # Test suite (pytest)
 ```
 
 Key idioms:
@@ -84,6 +90,29 @@ Key idioms:
 - **`ChatDeps` satisfies the AG-UI `StateHandler` protocol** by exposing a `state: UiState` dataclass field. The `AGUIAdapter` sets this from each incoming request and streams JSON Patch deltas of subsequent tool mutations back to the frontend.
 - **Domain services take `db: Session` in the constructor** — framework-agnostic; works in FastAPI, scripts, and tests.
 - **All cross-layer wiring goes through FastAPI `Depends`** in `core/dependencies.py`. No module-level singletons in the request path beyond the session store.
+- **`GeoContextService` is the internal seam for the 14 geo-context silver tables.** `SearchService` is the agent-facing facade; it composes `GeoContextService` for (a) pre-filter SQL predicates (`filter_predicates(params)`), (b) always-on per-card chip `LATERAL` joins (`chip_joins()`), and (c) the fat per-listing context blob returned by `get_listing_details` (`context_for(location)`). The agent only ever sees `SearchService`. See [Geo-context interpretation defaults](#geo-context-interpretation-defaults).
+
+## Geo-context interpretation defaults
+
+The agent translates natural phrases like "near a school", "quiet street", "affluent neighbourhood" into structured filters using a fixed set of numeric thresholds and labels. Every constant traces to an external authority (WHO, EU END, urban planning literature, Berlin Senate docs). The full audit trail with sources and Berlin-delta rationale lives at [`agent-compound-docs/decisions/geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md) — read it before changing any threshold.
+
+Quick reference:
+
+| Concept | Default(s) | Authority |
+|---|---|---|
+| Walking distance buckets | `next_to=150m`, `very_near=400m`, **`near=650m`** (default), `walking_distance=1200m`, `bike_distance=2500m` | CNU pedestrian shed, German "fußläufig" (DWDS), Calthorpe TOD |
+| Pedestrian speed | `1.4 m/s` (used for walk-minute conversion) | WHO/EAÖ standard adult walking speed |
+| Noise (Lden, dB) | `quiet < 55`, `lively 55–65`, `noisy ≥ 65` | WHO 2018 + EU END thresholds |
+| Greenery | `leafy = ≥0.5 ha green ≤300m`; `very_leafy = doubled` | WHO Europe / 3-30-300 rule |
+| Cemeteries (Friedhöfe) | Counted in green amenity at **0.5 weight**; NEVER shown as the `nearest_park` chip | Senate policy + cultural usage; gloomy-perception caveat |
+| Density (persons/ha) | `sparse < 50`, `moderate 50–150`, `dense ≥ 150` | General urban planning |
+| Transit modes (tool-facing) | `u_bahn / s_bahn / tram / bus / ferry / regional / mainline` (English enum) | GTFS Extended Route Types (DB stores ints, tool surface uses strings) |
+| MSS status labels | German → English: `hoch → affluent`, `mittel → mixed`, `niedrig → lower-income`, `sehr niedrig → disadvantaged` | Berlin Senate Sozialmonitoring 2023 methodology |
+| MSS dynamics labels | `positiv → improving`, `stabil → stable`, `negativ → slipping` (counter-intuitive — measures relative-to-citywide trend) | Same |
+
+**Agent neutrality requirement**: MSS labels are *not* value judgements. `affluent` is not a recommendation; `disadvantaged` is not a warning. The agent's `INSTRUCTIONS` enforces neutral framing — never volunteer opinions about neighbourhood status.
+
+**Rule**: when adding a new constant, add a row to the threshold doc *first*, then write the code that references it. Constants without an entry there are technical debt.
 
 ## Configuration
 

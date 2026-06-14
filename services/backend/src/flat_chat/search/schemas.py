@@ -2,6 +2,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from .geo_filters import (
+    HospitalFilter,
+    MssFilter,
+    NearSpec,
+    SchoolFilter,
+    TransitFilter,
+)
+
 SortBy = Literal["relevance", "price", "area", "recent"]
 
 
@@ -13,6 +22,11 @@ class SearchParams(BaseModel):
     didn't ask, `True` means must have, `False` means must not have. The
     SearchService translates `True/False` into the corresponding WHERE
     clause; `None` is a no-op.
+
+    Geo-context fields (transit / school / hospital / mss / near_* / max_noise
+    / min_greenery / density) are bundled or flat depending on whether they
+    take multiple inputs. See `agent-compound-docs/decisions/
+    geo-context-thresholds.md` for the threshold spec.
     """
 
     query: str | None = None
@@ -49,6 +63,20 @@ class SearchParams(BaseModel):
     has_elevator: bool | None = None
 
     has_images: bool | None = None
+
+    # Geo-context filters — see threshold doc for defaults and label vocab.
+    # Bundled (multiple inputs each):
+    transit: TransitFilter | None = None
+    school: SchoolFilter | None = None
+    hospital: HospitalFilter | None = None
+    mss: MssFilter | None = None
+    # Flat (single concept each):
+    near_park: NearSpec | None = None
+    near_playground: NearSpec | None = None
+    near_water: NearSpec | None = None
+    max_noise: NoiseLabel | None = None
+    min_greenery: GreeneryLabel | None = None
+    density: DensityLabel | None = None
 
     sort_by: SortBy = "relevance"
     limit: int = Field(default=50, ge=1, le=200)

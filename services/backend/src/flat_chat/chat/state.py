@@ -199,9 +199,15 @@ class ResultSet:
             lines.append("All results shown above. To explore further:")
         else:
             lines.append(f"{remaining} more available. To explore further:")
-            lines.append("  • get_result_page(page=N)         — next page (10 per page)")
-        lines.append("  • get_result_details(indices=[N]) — full info for specific listings")
-        lines.append("  • search_apartments(...)          — refine with new filters or query")
+            lines.append(
+                "  • get_result_page(page=N)         — next page (10 per page)"
+            )
+        lines.append(
+            "  • get_result_details(indices=[N]) — full info for specific listings"
+        )
+        lines.append(
+            "  • search_apartments(...)          — refine with new filters or query"
+        )
         return "\n" + "\n".join(lines)
 
 
