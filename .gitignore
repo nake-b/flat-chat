@@ -68,6 +68,9 @@ instance/
 # Scrapy stuff:
 .scrapy
 scraper/node_modules/
+# Per-run scraper debug dumps (HTML snapshot + headless screenshot).
+**/*-debug-*.html
+**/*-debug-*.png
 
 # Sphinx documentation
 docs/_build/
