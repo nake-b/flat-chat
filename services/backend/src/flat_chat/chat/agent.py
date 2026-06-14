@@ -85,6 +85,12 @@ def _neutrality_block() -> str:
     )
 
 
+# Evaluated once at import time so the cached prompt prefix is a stable byte
+# sequence (Anthropic prompt caching needs bit-identical bytes across turns).
+# The `_*_block()` helpers MUST stay pure — no settings reads, no env vars, no
+# date.today() — or a process restart would silently change the cached prefix
+# behind the cache layer's back. Anything dynamic belongs in
+# `build_dynamic_state_prompt` instead, which Pydantic AI evaluates per turn.
 INSTRUCTIONS = "\n\n".join(
     [
         _role_block(),
