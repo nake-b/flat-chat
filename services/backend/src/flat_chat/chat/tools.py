@@ -377,6 +377,11 @@ async def open_listing(
     if rs is None:
         return "No active search results. Run search_apartments first."
 
+    # Clear unconditionally on entry so a stale blob from a prior single-index
+    # call can't leak into a subsequent multi-index / out-of-range / no-detail
+    # response. Only the single-index success path repopulates it below.
+    ctx.deps.state.active_listing_context = None
+
     # Anchor the detail panel to indices[0] regardless of count, so the UI
     # has a consistent "the first card the user asked about" anchor.
     first = indices[0]
