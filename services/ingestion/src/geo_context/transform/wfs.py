@@ -53,13 +53,18 @@ def transform_wfs_layer(
     # Repair self-intersecting / invalid polygons via shapely make_valid.
     # No-op for geometries that are already valid. PostGIS would otherwise
     # accept them silently and break later ST_Contains / ST_Intersects calls.
-    projected = projected.assign(
-        **{
-            projected.geometry.name: projected.geometry.apply(
-                lambda g: make_valid(g) if isinstance(g, BaseGeometry) and not g.is_valid else g
-            )
-        }
-    )
+    # Points / MultiPoints can't be invalid (a Point is just an (x,y)), so
+    # skip the Python-level apply entirely for those layers — saves ~3.8M
+    # function calls on the noise raster.
+    geom_types = set(projected.geometry.geom_type.unique())
+    if not geom_types.issubset({"Point", "MultiPoint"}):
+        projected = projected.assign(
+            **{
+                projected.geometry.name: projected.geometry.apply(
+                    lambda g: make_valid(g) if isinstance(g, BaseGeometry) and not g.is_valid else g
+                )
+            }
+        )
 
     # 2. Rename + 3. drop unaliased columns.
     # Keep the geometry column always; drop everything else not in rename_map.
