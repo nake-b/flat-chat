@@ -76,7 +76,7 @@ def test_fetch_layer_terminates_on_empty_first_page() -> None:
 def test_fetch_layer_raises_when_exceeding_max_features() -> None:
     client = BerlinGdiWfsClient()
     client.PAGE_SIZE = 5
-    client.MAX_FEATURES = 6
+    client.MAX_FEATURES = 10  # second page would push us *to* the cap → must raise
     pages = [_page(5, start=0), _page(5, start=5)]
     with patch("geo_context.extract.wfs.requests.get") as mock_get:
         mock_get.side_effect = [_fake_response(p) for p in pages]

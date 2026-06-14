@@ -79,8 +79,12 @@ class BerlinGdiWfsClient:
     # pagination loop below avoid silent truncation regardless.
     PAGE_SIZE: int = 10_000
     # Refuse to keep paginating past this in a single layer fetch — a
-    # runaway query should fail loudly, not eat memory.
-    MAX_FEATURES: int = 200_000
+    # runaway query should fail loudly, not eat memory. Sized for the
+    # strategic noise map (`street_noise_2022`), which is a 10m raster of
+    # modelled receivers along every road/rail line in Berlin — empirically
+    # ~3–6M points. Headroom over that. Smaller datasets (schools, hospitals)
+    # never approach this; if one ever does, that's the bug we want to catch.
+    MAX_FEATURES: int = 10_000_000
 
     def fetch_layer(
         self,
@@ -134,9 +138,9 @@ class BerlinGdiWfsClient:
             if page_n == 0:
                 break
             all_features.extend(features)
-            if len(all_features) > self.MAX_FEATURES:
+            if len(all_features) >= self.MAX_FEATURES:
                 raise RuntimeError(
-                    f"wfs {dataset}/{layer}: exceeded MAX_FEATURES "
+                    f"wfs {dataset}/{layer}: reached MAX_FEATURES "
                     f"({self.MAX_FEATURES}) — refusing to keep paginating"
                 )
             if page_n < self.PAGE_SIZE:
