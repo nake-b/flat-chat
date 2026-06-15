@@ -94,6 +94,15 @@ the top of `enrich_listings.py` — same values as
 because the ingestion service intentionally does NOT import from the
 backend.
 
+Planned: three new families (`nearby_transit`, `nearby_schools`,
+`nearby_hospitals`) populating per-listing neighbour tables (top-K=5 ∪
+within-R rows per family). Replaces the current `transit_top3` /
+`schools_top3` / `hospitals_top2` JSONB blobs. Restores
+multi-row-attribute filters (lines / stop_name / school_type /
+hospital tier) that the current chip+blob shape can't express. Full
+plan in
+[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+
 ## Platinum embedding
 
 `platinum/embed.py` calls Jina v3 (`https://api.jina.ai/v1/embeddings`)

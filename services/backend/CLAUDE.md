@@ -108,6 +108,14 @@ proximity search; it hits the functional GiST index.
 The 12-query `open_listing` fan-out is gone — replaced by one PK lookup
 through `ListingService.get(id)`.
 
+Known precision gaps from this layout: `transit.lines` /
+`transit.stop_name` currently see only the nearest stop; `school` and
+`hospital` filters silently ignore `distance` + sub-type args. Planned
+fix via per-family neighbour tables in
+[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+Same doc captures the `max_noise` NULL-semantics one-liner and the
+gold-completeness drift probe.
+
 Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md).
 
 ## LLM prompt assembly
