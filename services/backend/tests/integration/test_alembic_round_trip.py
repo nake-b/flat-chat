@@ -30,7 +30,7 @@ from alembic import command
 from alembic.config import Config
 
 # Bump this when a new migration is added; the round-trip should land here.
-LATEST_REVISION = "0005_gold_platinum"
+LATEST_REVISION = "0006_spatial_junction_tables"
 
 _TEST_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 

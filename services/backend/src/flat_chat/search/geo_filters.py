@@ -41,21 +41,27 @@ class TransitFilter(BaseModel):
 
 
 class SchoolFilter(BaseModel):
-    """Filter listings by proximity to a school.
+    """Filter listings by proximity to (or catchment of) a school.
 
-    `school_type` matches against the Berlin Schulverzeichnis category
-    (e.g. "Grundschule", "Gymnasium", "ISS", "Berufsschule"). Left as
-    free-text since the source vocabulary is open.
+    Two intents this filter expresses:
 
-    Note: post-refactor the school filter is satisfied by checking whether
-    the listing has a non-null `school_catchment` blob in gold (the
-    listing falls inside a primary-school catchment). For a stricter
-    proximity filter we'd add an indexed `nearest_school_m` column to
-    gold — deferred until needed.
+    - **Proximity** (default): "near a school within X meters", optionally
+      filtered by `school_type`. `school_type` matches against the Berlin
+      Schulverzeichnis category (e.g. "Grundschule", "Gymnasium", "ISS",
+      "Berufsschule") via case-insensitive substring; the vocabulary is
+      open so we don't enumerate it.
+    - **Catchment membership**: set `requires_catchment=True` for the
+      legal-attendance question ("which primary school is this kid
+      assigned to?"). Berlin tiles primary catchments across the whole
+      city, so this filter is usually combined with proximity for
+      meaningful narrowing.
+
+    Both checks AND together when both are requested.
     """
 
     distance: NearSpec = "near"
     school_type: str | None = None
+    requires_catchment: bool = False
 
 
 class HospitalFilter(BaseModel):

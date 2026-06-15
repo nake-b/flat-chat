@@ -17,12 +17,32 @@ from __future__ import annotations
 
 import uuid
 
+from flat_chat.listings.models import (
+    ListingNearbyHospital,
+    ListingNearbyPark,
+    ListingNearbyPlayground,
+    ListingNearbySchool,
+    ListingNearbyTransit,
+    ListingNearbyWater,
+)
 from flat_chat.listings.service import ListingService
 
 from ..conftest import DB_REQUIRED
-from ..fixtures.factories import gold_row as _gold_row
-from ..fixtures.factories import listing_row as _listing_row
-from ..fixtures.factories import with_session
+from ..fixtures.factories import (
+    gold_row as _gold_row,
+)
+from ..fixtures.factories import (
+    listing_row as _listing_row,
+)
+from ..fixtures.factories import (
+    nearby_hospital_row,
+    nearby_park_row,
+    nearby_playground_row,
+    nearby_school_row,
+    nearby_transit_row,
+    nearby_water_row,
+    with_session,
+)
 
 pytestmark = DB_REQUIRED
 
@@ -44,25 +64,7 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
         nearest_transit_m=200,
         nearest_transit_lines=["U1", "U8"],
         nearest_transit_name="U Kottbusser Tor",
-        transit_top3=[
-            {
-                "stop_id": "900100001",
-                "name": "U Kottbusser Tor",
-                "modes": [400],  # u_bahn
-                "lines": ["U1", "U8"],
-                "distance_m": 200,
-            }
-        ],
         school_catchment={"school_name": "GS Lenau"},
-        schools_top3=[
-            {"name": "GS Lenau", "school_type": "Grundschule", "distance_m": 300}
-        ],
-        parks_top2=[{"name": "Görlitzer Park", "distance_m": 400}],
-        playground={"name": "Mariannenplatz", "distance_m": 250},
-        hospitals_top2=[
-            {"name": "Urban", "tier": "plan_hospital", "distance_m": 900}
-        ],
-        water={"name": "Landwehrkanal", "water_kind": "canal", "distance_m": 500},
         noise_profile={"total_lden": 60.0},
         greenery_profile={"green_m2_within_300m": 6000.0},
         density_profile={
@@ -72,11 +74,50 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
         mss_profile={"status": "mixed", "dynamics": "improving"},
         disabled_parking_count=3,
     )
+    junctions = [
+        (
+            ListingNearbyTransit,
+            nearby_transit_row(
+                listing["id"],
+                stop_id="900100001",
+                name="U Kottbusser Tor",
+                modes=[400],
+                lines=["U1", "U8"],
+                distance_m=200,
+            ),
+        ),
+        (
+            ListingNearbySchool,
+            nearby_school_row(
+                listing["id"], name="GS Lenau", school_type="Grundschule", distance_m=300
+            ),
+        ),
+        (
+            ListingNearbyPark,
+            nearby_park_row(listing["id"], name="Görlitzer Park", distance_m=400),
+        ),
+        (
+            ListingNearbyPlayground,
+            nearby_playground_row(listing["id"], name="Mariannenplatz", distance_m=250),
+        ),
+        (
+            ListingNearbyHospital,
+            nearby_hospital_row(
+                listing["id"], name="Urban", tier="plan_hospital", distance_m=900
+            ),
+        ),
+        (
+            ListingNearbyWater,
+            nearby_water_row(
+                listing["id"], name="Landwehrkanal", water_kind="canal", distance_m=500
+            ),
+        ),
+    ]
 
     async def body(session):
         return await ListingService(session).get(listing["id"])
 
-    detail = with_session(async_db_url, [(listing, gold)], body)
+    detail = with_session(async_db_url, [(listing, gold)], body, junctions=junctions)
 
     assert detail is not None
     # Listing-tier fields project through directly.

@@ -1,9 +1,15 @@
-"""CLI orchestrator for the gold layer (`listings_geo_context`).
+"""CLI orchestrator for the gold layer.
+
+Populates `listings_geo_context` (scalar / field facts) + six junction
+tables (`listings_nearby_transit`, `listings_nearby_schools`,
+`listings_nearby_hospitals`, `listings_nearby_parks`,
+`listings_nearby_playgrounds`, `listings_nearby_water`) — see
+`agent-compound-docs/decisions/spatial-neighbor-tables.md`.
 
 Usage:
-    python -m gold.run                          # run every chip family
-    python -m gold.run --only transit,parks     # subset
-    python -m gold.run --skip-detail-blobs      # scalar chips only (faster)
+    python -m gold.run                                 # every family
+    python -m gold.run --only nearby_transit,noise     # subset
+    python -m gold.run --only chip_scalars             # rebuild card chips only
 
 Each chip family runs in its own ``engine.begin()`` block, so a failure in
 one family (e.g. greenery computation hits a bad geometry) doesn't abort

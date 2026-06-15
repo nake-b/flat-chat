@@ -82,26 +82,35 @@ flag:
 
 ```bash
 docker compose --profile gold run --rm gold                       # all
-docker compose --profile gold run --rm gold --only transit,parks  # subset
+docker compose --profile gold run --rm gold --only nearby_transit,noise  # subset
 ```
 
-Family names: `transit`, `parks`, `playground`, `schools`, `hospitals`,
-`water`, `noise`, `greenery`, `density`, `mss`, `disabled_parking`.
+Family names (in `CHIP_FAMILIES` run order):
 
-Threshold constants (cap distances per family) are duplicated inline at
+**Junction-table fillers** — populate `listings_nearby_*` with top-K=5 ∪
+all-within-R per listing:
+- `nearby_transit` (R=5 km), `nearby_schools` (R=5 km),
+  `nearby_hospitals` (R=12 km), `nearby_parks` (R=5 km, cemeteries
+  excluded), `nearby_playgrounds` (R=3 km), `nearby_water` (R=6 km).
+
+**Derived chip scalars** — read from the junction tables:
+- `chip_scalars` (nearest_transit_* + nearest_park_* on
+  `listings_geo_context`).
+
+**Scalar / field fillers** — properties of the listing's location:
+- `noise` (50 m coverage gate; out → NULL; search optimistic-includes),
+  `greenery` (300 m composite m²), `density` (LOR ppl/ha),
+  `mss` (Sozialmonitoring labels), `school_catchment` (polygon
+  membership), `disabled_parking` (count within 300 m).
+
+Threshold constants (radii, gate distances) are duplicated inline at
 the top of `enrich_listings.py` — same values as
 `services/backend/src/flat_chat/listings/thresholds.py`. Kept inline
 because the ingestion service intentionally does NOT import from the
 backend.
 
-Planned: three new families (`nearby_transit`, `nearby_schools`,
-`nearby_hospitals`) populating per-listing neighbour tables (top-K=5 ∪
-within-R rows per family). Replaces the current `transit_top3` /
-`schools_top3` / `hospitals_top2` JSONB blobs. Restores
-multi-row-attribute filters (lines / stop_name / school_type /
-hospital tier) that the current chip+blob shape can't express. Full
-plan in
-[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+See [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md)
+for the junction-table rationale + the 50 m noise-gate sources.
 
 ## Platinum embedding
 

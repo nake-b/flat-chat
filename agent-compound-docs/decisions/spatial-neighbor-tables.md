@@ -1,6 +1,8 @@
-# Spatial neighbour tables — restoring old search precision
+# Spatial junction tables — restoring old search precision
 
-**Status:** Planned. No implementation yet. Sequenced for after `feat/gold-platinum-medallion-and-tests` lands on `main`.
+**Status:** Implemented in `feat/spatial-junction-tables`. Migration 0006 + 6 junction tables + ETL + search rewire + tests landed June 2026.
+
+The names "junction tables" / "POI features" / "scalar features" come from the discussion below and are now the canonical vocabulary in this codebase.
 
 **Related docs:**
 - [`gold-platinum-layers.md`](gold-platinum-layers.md) — the medallion layout this builds on
@@ -122,85 +124,50 @@ Considered and rejected. A `MATERIALIZED VIEW` would work correctness-wise but l
 
 The `lines` / `stop_name` / `school_type` / `hospital.tier` filters can't be expressed correctly against a fixed-K JSONB blob. Whatever K we pick, an attribute-driven question ("is there *any* U8 stop nearby, regardless of whether it's the closest?") is a multi-row question that a single chip + a tiny blob can't answer. The neighbour table is the smallest structural change that makes those filters correct.
 
-## What this doesn't fix
+## Resolved alongside (bundled into the same PR)
 
-Two related concerns share the same root cause (gold cached at write-time, search reads cached state) but **are NOT addressed by neighbour tables** and need separate fixes:
+Two related concerns shared the same root cause (gold cached at write-time, search reads cached state). Both landed with this work:
 
-1. **`max_noise` NULL semantics**: gold's `noise_total_lden` is NULL for listings without a nearby noise sample. The old filter explicitly included NULL (`or_(subq IS NULL, subq < cutoff)`). The new filter is plain `noise_total_lden < cutoff`, which silently excludes NULL rows. Fix: revert to the optimistic `or_(is_(None), < cutoff)` predicate — one line. Separate concern; doesn't need a table.
+1. **`max_noise` NULL semantics + 50 m gold-side gate**: gold's old `enrich_noise` had no distance cap, so `noise_total_lden` carried readings from kilometres away for bad-coords listings. Restored the gate at **50 m** (line-source attenuation: ~3 dB per doubling, so 50 m → 100 m drops ~3 dB; 50 m matches the standard mobile-noise-mapping aggregation radius per research literature). With the gate, NULL means "no trusted reading"; the search filter now uses `or_(IS NULL, < cutoff)` to optimistic-include those listings. Sources: [ScienceDirect — mobile noise mapping](https://www.sciencedirect.com/science/article/abs/pii/S0003682X14000693), [ScienceDirect — CNOSSOS-EU validation](https://www.sciencedirect.com/science/article/pii/S0003682X22000664), [MDPI — high-precision noise mapping](https://www.mdpi.com/2220-9964/11/8/441).
 
-2. **Stale-gold drift detector**: a new listing without a gold row is invisible to every geo filter (NULL predicates exclude it). The chain triggers (`silver.run` → `gold.run`, `geo_context.run` → `gold.run`) cover the standard daily flow, but ad-hoc workflows can land listings in silver without a gold row. Add a simple completeness probe to `/api/health` or as a startup log line:
-   ```sql
-   SELECT COUNT(*) FROM listings l
-   LEFT JOIN listings_geo_context lgc ON lgc.listing_id = l.id
-   WHERE l.location IS NOT NULL AND lgc.listing_id IS NULL;
-   ```
-   Non-zero = drift. Separate concern; doesn't need a table.
+2. **Stale-gold drift detector**: `/api/health?extended=true` now surfaces `gold_orphans` — count of silver listings with no `listings_geo_context` row. Non-zero means silver ran but the gold chain didn't. Doesn't fail the health check; just exposes the number.
 
-Also out of scope here: H3 / quadkey indexing (relevant only if we scale beyond Berlin), and refinement-cache integration of pandas (deferred per [`session-state-design.md`](session-state-design.md)).
+Still out of scope: H3 / quadkey indexing (relevant only if we scale beyond Berlin), and refinement-cache integration of pandas (deferred per [`session-state-design.md`](session-state-design.md)).
 
-## Implementation phases
+## What landed (June 2026)
 
-This is the planned sequence. **No implementation yet** — this doc is the plan.
+| Layer | File | Change |
+|---|---|---|
+| Migration | `services/backend/alembic/versions/0006_spatial_junction_tables.py` | Six `listings_nearby_*` tables (transit / schools / hospitals / parks / playgrounds / water) with `PK(listing_id, feature_id)` + B-tree `(listing_id, distance_m)` + per-family attribute indexes (GIN on transit `modes` / `lines`, B-tree on school `school_type`, hospital `tier`). Drops 6 redundant JSONB columns from `listings_geo_context`. |
+| ORM | `services/backend/src/flat_chat/listings/models.py` | Six `ListingNearby*` classes. |
+| Gold ETL | `services/ingestion/src/gold/enrich_listings.py` | `enrich_nearby_*` (6 new families) populate `top-K=5 ∪ all-within-R` per listing. `enrich_chip_scalars` derives `nearest_transit_*` / `nearest_park_*` from the junction tables. `enrich_noise` gets the **50 m coverage gate** restored. |
+| Search | `services/backend/src/flat_chat/search/service.py` | 6 `_apply_X_filter` methods now EXISTS-against the matching junction table; attribute filters (transit modes/lines/stop_name, school type, hospital tier) work end-to-end. `max_noise` uses `or_(IS NULL, < cutoff)`. |
+| Search shape | `services/backend/src/flat_chat/search/geo_filters.py` | `SchoolFilter` gets `requires_catchment: bool = False` so the catchment-membership question and the proximity question coexist. |
+| Detail panel | `services/backend/src/flat_chat/listings/service.py` | Per-junction-family top-N fetches replace the old JSONB-blob parses. Output Pydantic shapes unchanged. |
+| Drift probe | `services/backend/src/flat_chat/main.py` | `GET /api/health?extended=true` returns `gold_orphans`. |
+| Tests | `tests/integration/test_search_service.py`, `test_listing_service.py`, `test_search_null_geo_fields.py`, `tests/fixtures/factories.py` (6 new `nearby_*_row` helpers) | Junction-row-backed regression tests for every filter shape; optimistic-include test for `max_noise`. |
 
-### Phase 1 — Schema + ETL for transit, schools, hospitals (priority families)
+### Storage radii per family
 
-These three have the actual user-visible behaviour gaps.
+| family | R |
+|---|---|
+| transit | 5 km |
+| schools | 5 km |
+| hospitals | 12 km |
+| parks | 5 km |
+| playgrounds | 3 km |
+| water | 6 km |
 
-- New migration `0006_spatial_neighbor_tables.py`:
-  - `listings_nearby_transit` (`listing_id`, `stop_id`, `distance_m`, `modes`, `lines`, `name`, `rank` SMALLINT) with `(listing_id, distance_m)` B-tree, GIN on `modes`, GIN on `lines`.
-  - `listings_nearby_schools` (`listing_id`, `school_id`, `distance_m`, `school_type`, `name`, `rank`) with `(listing_id, distance_m)` B-tree, B-tree on `school_type`.
-  - `listings_nearby_hospitals` (`listing_id`, `hospital_id`, `distance_m`, `tier`, `name`, `rank`) with `(listing_id, distance_m)` B-tree, B-tree on `tier`.
-- Drop now-redundant JSONB columns from `listings_geo_context`: `transit_top3`, `schools_top3`, `hospitals_top2`. Keep the chip scalars (`nearest_transit_m`, `nearest_transit_lines`, `nearest_transit_name`, etc.) — they remain useful for cheap unfiltered card rendering.
-- New gold ETL functions in `services/ingestion/src/gold/enrich_listings.py`:
-  - `enrich_nearby_transit` — `INSERT INTO listings_nearby_transit SELECT … FROM listings l, transit_stops ts WHERE ST_DWithin(…, 3000) OR rank <= 5`. Done per listing inside a `LATERAL`. Computes `rank` via window function ordered by distance.
-  - `enrich_nearby_schools` — same shape, R=3000.
-  - `enrich_nearby_hospitals` — same shape but R=10000 (people travel further to hospitals than to U-Bahn).
-- Register each in `CHIP_FAMILIES` in `services/ingestion/src/gold/run.py` under new family names: `nearby_transit`, `nearby_schools`, `nearby_hospitals`. The existing `transit`/`schools`/`hospitals` families that fill the JSONB blobs go away.
+Generous on purpose — search-time predicates (`distance_m <= resolve_near_spec(spec)`) do the actual cutoff. Disk math at the 5000-listing project cap: ~300 MB total across the six junction tables. Trivial.
 
-### Phase 2 — Rewire filters to query the neighbour tables
+### What stays scalar (chip columns on `listings_geo_context`)
 
-- `services/backend/src/flat_chat/search/service.py:_apply_transit_filter` — replace the JSONB containment + nearest-only logic with EXISTS-against-`listings_nearby_transit` parameterised on `distance` / `modes` / `lines` / `stop_name`. Restores old-correct semantics.
-- New `_apply_school_filter` reads from `listings_nearby_schools` and honours `f.distance` + `f.school_type`. The current catchment-membership check (`school_catchment IS NOT NULL`) stays as a separate filter path — keep both because they answer different questions:
-  - **Catchment membership** = "what primary school does the kid at this address attend?" (legal/admin question; polygon containment).
-  - **Nearest school by type** = "is there a Gymnasium / ISS / Berufsschule near here?" (proximity question; needs the neighbour table).
-  - Surface both in `SchoolFilter`: keep `school_type` + `distance` (proximity) and add a separate `requires_catchment: bool = False` flag (catchment containment).
-- `_apply_hospital_filter` reads from `listings_nearby_hospitals` and honours `f.distance` + `f.tier`. `tier="plan_hospital"` (default) is the emergency-care intent.
+Field-shaped facts that don't have a POI-set structure — one value per location:
 
-### Phase 3 — Update `ListingService.get` to assemble detail from neighbour tables
-
-The detail panel currently reads `transit_top3` / `schools_top3` / `hospitals_top2` JSONB blobs. With those gone, it pulls the same shape via:
-
-```python
-nearby = await db.execute(
-    select(listings_nearby_transit).where(
-        listings_nearby_transit.c.listing_id == listing_id
-    ).order_by(listings_nearby_transit.c.rank).limit(3)
-)
-```
-
-Same Pydantic projection layer (`_parse_transit_top3` etc.) — just sourced from rows instead of JSONB. The Pydantic models in `listings/context.py` don't need to change.
-
-### Phase 4 — Fix the two non-table concerns
-
-These are quick and don't need a migration:
-
-- **Noise NULL semantics**: change `_apply_noise_filter` predicate to `or_(noise_total_lden.is_(None), noise_total_lden < cutoff)`. Restores old optimistic-include behaviour.
-- **Gold drift probe**: add a `check_gold_completeness()` async helper called from `/api/health`'s extended check, or emit as a startup log warning if non-zero. Implementation: a single `SELECT COUNT(*)` on the left-join.
-
-### Phase 5 — Tests, docs
-
-- Integration tests in `tests/integration/test_search_neighbour_filters.py`:
-  - "near U8" matches a listing whose nearest stop is U1 but a U8 is 400m away (the case that fails today).
-  - "near a Gymnasium" matches only listings with a Gymnasium in radius.
-  - "near a plan_hospital" + tier='any' returns a superset of tier='plan_hospital'.
-- Update [`gold-platinum-layers.md`](gold-platinum-layers.md) to mention the neighbour tables as a sibling concept to the chip scalars.
-- Update [`geo-context-thresholds.md`](geo-context-thresholds.md) with the per-family R radius table (Transit=3km, Schools=3km, Hospitals=10km).
-- Drop the "lost precision" caveats in this file once the rewire lands.
-
-### Phases 6 (optional) — Parks / playgrounds / water
-
-The current scalar chips (`nearest_park_m`, `playground.distance_m`, `water.distance_m`) answer the user-facing filter correctly because none of those filters takes attribute arguments. Only worth adding `listings_nearby_parks` etc. if a future filter wants "any park named X within Y meters" or "any Schwimmbad-class playground". Defer until that demand exists; revisit during the optional "filter UI / chips" workstream.
-
-## Decision
-
-**Approved by user** in the discussion that produced this doc (June 2026). Sequenced for after `feat/gold-platinum-medallion-and-tests` lands on `main`. Implementation lives on a follow-up branch; tests cover the regression direction so a future refactor can't silently re-narrow these filters.
+- `noise_total_lden` (50 m gate restored)
+- `persons_per_hectare`
+- `mss_status`, `mss_dynamics`
+- `school_catchment` (polygon-containment fact; combined with the school junction via `requires_catchment`)
+- `greenery_profile.green_m2_within_300m` (composite aggregate)
+- `disabled_parking_count`
+- `nearest_transit_*` / `nearest_park_*` — denormalised summary derived from the junction tables by `enrich_chip_scalars`, used by the card-row projection for label rendering.

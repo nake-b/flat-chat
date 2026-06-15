@@ -266,19 +266,21 @@ class ListingGeoContext(Base):
     mss_status: Mapped[str | None] = mapped_column(Text)
     mss_dynamics: Mapped[str | None] = mapped_column(Text)
 
-    # Detail-panel JSONB blobs (shape mirrors `listings.context` models)
-    transit_top3: Mapped[list | None] = mapped_column(JSONB)
+    # Scalar / field detail blobs — properties of the listing's location,
+    # not POI sets. Frozen at gold-build time; one PK lookup feeds the
+    # detail panel.
     school_catchment: Mapped[dict | None] = mapped_column(JSONB)
-    schools_top3: Mapped[list | None] = mapped_column(JSONB)
-    parks_top2: Mapped[list | None] = mapped_column(JSONB)
-    playground: Mapped[dict | None] = mapped_column(JSONB)
-    hospitals_top2: Mapped[list | None] = mapped_column(JSONB)
-    water: Mapped[dict | None] = mapped_column(JSONB)
     noise_profile: Mapped[dict | None] = mapped_column(JSONB)
     greenery_profile: Mapped[dict | None] = mapped_column(JSONB)
     density_profile: Mapped[dict | None] = mapped_column(JSONB)
     mss_profile: Mapped[dict | None] = mapped_column(JSONB)
     disabled_parking_count: Mapped[int | None] = mapped_column(Integer)
+
+    # POI-set detail blobs (`transit_top3` / `schools_top3` / `parks_top2`
+    # / `playground` / `hospitals_top2` / `water`) used to live here.
+    # Dropped in 0006; the junction tables (`listings_nearby_*`) are the
+    # canonical source now. See
+    # `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
 
     enriched_at: Mapped[str] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
@@ -318,3 +320,143 @@ class ListingEmbedding(Base):
     )
 
     listing: Mapped[Listing] = relationship(back_populates="embedding_row")
+
+
+# =========================================================================
+# POI junction tables — one row per `(listing × feature)` pair within R.
+# Populated by `services/ingestion/src/gold/`. The search hot-path queries
+# them with EXISTS + B-tree predicates on `(listing_id, distance_m)`. The
+# detail panel reads top-N by `rank` via `ListingService.get`.
+# =========================================================================
+
+
+class ListingNearbyTransit(Base):
+    """Junction: listing × transit stop within R = 5 km."""
+
+    __tablename__ = "listings_nearby_transit"
+    __table_args__ = (
+        Index("ix_lnt_listing_distance", "listing_id", "distance_m"),
+        Index("ix_lnt_modes", "modes", postgresql_using="gin"),
+        Index("ix_lnt_lines", "lines", postgresql_using="gin"),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    stop_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    modes: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    lines: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbySchool(Base):
+    """Junction: listing × school within R = 5 km."""
+
+    __tablename__ = "listings_nearby_schools"
+    __table_args__ = (
+        Index("ix_lns_listing_distance", "listing_id", "distance_m"),
+        Index(
+            "ix_lns_school_type",
+            "school_type",
+            postgresql_where=text("school_type IS NOT NULL"),
+        ),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    school_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    school_type: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyHospital(Base):
+    """Junction: listing × hospital within R = 12 km."""
+
+    __tablename__ = "listings_nearby_hospitals"
+    __table_args__ = (
+        Index("ix_lnh_listing_distance", "listing_id", "distance_m"),
+        Index(
+            "ix_lnh_tier",
+            "tier",
+            postgresql_where=text("tier IS NOT NULL"),
+        ),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    hospital_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    tier: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyPark(Base):
+    """Junction: listing × park within R = 5 km. Cemeteries excluded at ETL."""
+
+    __tablename__ = "listings_nearby_parks"
+    __table_args__ = (
+        Index("ix_lnp_listing_distance", "listing_id", "distance_m"),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    park_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    object_type: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyPlayground(Base):
+    """Junction: listing × playground within R = 3 km."""
+
+    __tablename__ = "listings_nearby_playgrounds"
+    __table_args__ = (
+        Index("ix_lnpg_listing_distance", "listing_id", "distance_m"),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    playground_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyWater(Base):
+    """Junction: listing × water body within R = 6 km."""
+
+    __tablename__ = "listings_nearby_water"
+    __table_args__ = (
+        Index("ix_lnw_listing_distance", "listing_id", "distance_m"),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    water_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    water_kind: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)

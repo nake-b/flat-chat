@@ -1,19 +1,28 @@
 """NULL-handling regression suite for `SearchService` geo filters.
 
 `test_search_service.py` covers the happy paths — seed a row that matches,
-assert it comes back. This file covers the *other* axis: a listing has a
-gold row, but one geo column is NULL (the gold ETL couldn't resolve a
-value for that source — e.g. listing outside Berlin's noise coverage
-polygon).
+assert it comes back. This file covers the *other* axis: what happens when
+the underlying gold value is NULL or the junction table has no row.
 
-Today's contract: each geo filter is a strict B-tree predicate on the
-relevant gold scalar. A NULL on that scalar makes the predicate NULL → the
-row is dropped. If anyone ever rewrites this to "treat NULL as optimistic
-pass", these tests fail loudly.
+Today's contract per filter kind:
 
-Why this matters: a silent "NULL passes" refactor would resurface garbage
-listings (e.g. miscoded coords with no resolvable noise sample) in
-constrained searches, eroding the user's trust in the filter set.
+  - **POI filters** (transit / schools / hospitals / parks / playgrounds
+    / water): EXISTS against the per-listing junction table. A listing
+    with no junction rows for that family fails the EXISTS → row drops.
+  - **Scalar / field filters** with strict comparison (`mss_status IN
+    (...)`, `density < cutoff`, `min_greenery >= cutoff`): NULL on the
+    column makes the predicate NULL → row drops. Strict semantics.
+  - **`max_noise`** — optimistic-include: `or_(IS NULL, < cutoff)`. A
+    listing whose nearest noise sample is >50 m away (post-gate NULL)
+    PASSES the "quiet" filter. We don't claim a listing is loud when we
+    have no nearby reading. Locks the optimistic-include semantics so a
+    future "drop the NULL branch for performance" refactor surfaces
+    immediately.
+
+Why this matters: silent semantics shifts on NULL rows are easy to
+introduce and hard to spot in production until a user reports "why
+isn't my listing showing up under filter X." These tests fail loudly
+when that happens.
 """
 
 from __future__ import annotations
@@ -22,21 +31,34 @@ from flat_chat.search.geo_filters import MssFilter, TransitFilter
 from flat_chat.search.schemas import SearchParams
 
 from ..conftest import DB_REQUIRED
-from ..fixtures.factories import drive_search as _drive
-from ..fixtures.factories import gold_row as _gold_row
-from ..fixtures.factories import listing_row as _listing_row
+from ..fixtures.factories import (
+    drive_search as _drive,
+)
+from ..fixtures.factories import (
+    gold_row as _gold_row,
+)
+from ..fixtures.factories import (
+    listing_row as _listing_row,
+)
 
 pytestmark = DB_REQUIRED
 
 
-def test_null_noise_total_lden_drops_listing_from_quiet_filter(async_db_url):
-    """Gold row exists but `noise_total_lden` is NULL. `max_noise=quiet`
-    must NOT return the listing — a strict `<` against NULL is NULL."""
-    with_noise = _listing_row()
-    no_noise = _listing_row()
+def test_null_noise_optimistic_includes_listing_in_quiet_filter(async_db_url):
+    """`noise_total_lden IS NULL` → PASSES `max_noise="quiet"`.
+
+    Optimistic-include semantics: NULL means "no trusted noise reading
+    within the 50 m gate (gold-side)", typically a listing with bad
+    coordinates. We don't claim a listing is loud when we have no
+    nearby sample; the predicate is `or_(IS NULL, < cutoff)`.
+    """
+    quiet = _listing_row()
+    null_noise = _listing_row()
+    loud = _listing_row()
     seeds = [
-        (with_noise, _gold_row(with_noise["id"], noise_total_lden=45.0)),
-        (no_noise, _gold_row(no_noise["id"], noise_total_lden=None)),
+        (quiet, _gold_row(quiet["id"], noise_total_lden=45.0)),
+        (null_noise, _gold_row(null_noise["id"], noise_total_lden=None)),
+        (loud, _gold_row(loud["id"], noise_total_lden=70.0)),
     ]
 
     async def body(service):
@@ -44,11 +66,13 @@ def test_null_noise_total_lden_drops_listing_from_quiet_filter(async_db_url):
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(with_noise["id"]) in ids
-    assert str(no_noise["id"]) not in ids
+    assert str(quiet["id"]) in ids
+    assert str(null_noise["id"]) in ids
+    assert str(loud["id"]) not in ids
 
 
 def test_null_density_drops_listing_from_sparse_filter(async_db_url):
+    """`persons_per_hectare IS NULL` → strict `< 50` returns NULL → row drops."""
     sparse = _listing_row()
     null_density = _listing_row()
     seeds = [
@@ -65,26 +89,18 @@ def test_null_density_drops_listing_from_sparse_filter(async_db_url):
     assert str(null_density["id"]) not in ids
 
 
-def test_null_transit_distance_drops_listing_from_transit_filter(async_db_url):
-    """`nearest_transit_m IS NULL` → strict `<= near` returns NULL → row
-    drops. Notably the service applies an explicit `.is_not(None)`
-    guard (see `_apply_transit_filter`); without it, asyncpg can still
-    short-circuit a NULL comparison to NULL but explicitness matters."""
-    near = _listing_row()
-    null_transit = _listing_row()
-    seeds = [
-        (near, _gold_row(near["id"], nearest_transit_m=200)),
-        (null_transit, _gold_row(null_transit["id"], nearest_transit_m=None)),
-    ]
+def test_missing_transit_junction_row_drops_listing_from_transit_filter(async_db_url):
+    """A listing with NO `listings_nearby_transit` row fails EXISTS → drops."""
+    no_transit = _listing_row()
+    seeds = [(no_transit, _gold_row(no_transit["id"]))]
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(distance="near"))
         results, _ = await service.search(params)
-        return {r.id for r in results}
+        return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(near["id"]) in ids
-    assert str(null_transit["id"]) not in ids
+    assert str(no_transit["id"]) not in ids
 
 
 def test_null_mss_status_drops_listing_from_status_floor(async_db_url):
@@ -106,21 +122,14 @@ def test_null_mss_status_drops_listing_from_status_floor(async_db_url):
     assert str(null_mss["id"]) not in ids
 
 
-def test_null_park_distance_drops_listing_from_near_park_filter(async_db_url):
-    """The `_apply_geo_context_filters` near_park branch explicitly
-    layers `nearest_park_m IS NOT NULL` alongside the threshold compare
-    — confirm that guard does what it says."""
-    near = _listing_row()
-    null_park = _listing_row()
-    seeds = [
-        (near, _gold_row(near["id"], nearest_park_m=200)),
-        (null_park, _gold_row(null_park["id"], nearest_park_m=None)),
-    ]
+def test_missing_park_junction_row_drops_listing_from_near_park_filter(async_db_url):
+    """A listing with NO `listings_nearby_parks` row fails EXISTS → drops."""
+    no_park = _listing_row()
+    seeds = [(no_park, _gold_row(no_park["id"]))]
 
     async def body(service):
         results, _ = await service.search(SearchParams(near_park="near"))
-        return {r.id for r in results}
+        return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(near["id"]) in ids
-    assert str(null_park["id"]) not in ids
+    assert str(no_park["id"]) not in ids

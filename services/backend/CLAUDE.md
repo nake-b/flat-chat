@@ -106,17 +106,22 @@ no per-row spatial work. The only spatial predicate that survives is
 proximity search; it hits the functional GiST index.
 
 The 12-query `open_listing` fan-out is gone — replaced by one PK lookup
-through `ListingService.get(id)`.
+through `ListingService.get(id)` + 6 small top-N reads from the
+junction tables.
 
-Known precision gaps from this layout: `transit.lines` /
-`transit.stop_name` currently see only the nearest stop; `school` and
-`hospital` filters silently ignore `distance` + sub-type args. Planned
-fix via per-family neighbour tables in
+**POI filters** (transit / schools / hospitals / parks / playgrounds /
+water) use EXISTS-against the matching `listings_nearby_*` junction
+table. Attribute filters (transit modes/lines/stop_name, school_type,
+hospital tier) work end-to-end. **Scalar/field filters** (mss /
+max_noise / min_greenery / density) read chip columns on
+`listings_geo_context`. `max_noise` is optimistic-include via
+`or_(IS NULL, < cutoff)` — paired with the 50 m coverage gate inside
+`enrich_noise`. See
 [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
-Same doc captures the `max_noise` NULL-semantics one-liner and the
-gold-completeness drift probe.
 
-Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md).
+`GET /api/health?extended=true` reports `gold_orphans` for drift detection.
+
+Decision docs: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md), [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
 
 ## LLM prompt assembly
 

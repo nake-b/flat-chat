@@ -28,8 +28,7 @@ from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
 from pgvector.sqlalchemy import Vector
 from pydantic_ai import Embedder
-from sqlalchemy import ARRAY, Select, Text, cast, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ARRAY, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import UiApartment
@@ -40,7 +39,17 @@ from flat_chat.listings.labels import (
     resolve_near_spec,
     walk_minutes,
 )
-from flat_chat.listings.models import Listing, ListingEmbedding, ListingGeoContext
+from flat_chat.listings.models import (
+    Listing,
+    ListingEmbedding,
+    ListingGeoContext,
+    ListingNearbyHospital,
+    ListingNearbyPark,
+    ListingNearbyPlayground,
+    ListingNearbySchool,
+    ListingNearbyTransit,
+    ListingNearbyWater,
+)
 from flat_chat.listings.thresholds import (
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
@@ -49,7 +58,12 @@ from flat_chat.listings.thresholds import (
     NOISE_QUIET_MAX_LDEN,
 )
 
-from .geo_filters import MSS_STATUS_RANK, TransitFilter
+from .geo_filters import (
+    MSS_STATUS_RANK,
+    HospitalFilter,
+    SchoolFilter,
+    TransitFilter,
+)
 from .schemas import SearchParams
 
 logger = logging.getLogger(__name__)
@@ -240,71 +254,71 @@ class SearchService:
     def _apply_geo_context_filters(
         self, stmt: Select, params: SearchParams
     ) -> Select:
-        """Filters that read off `listings_geo_context` (gold).
+        """Geo-context filters.
 
-        All B-tree predicates against pre-computed scalars. None of the
-        old LATERAL/EXISTS spatial subqueries — those work happens once
-        at gold-ETL time.
+        Two shapes:
+          - **POI filters** (transit, schools, hospitals, near_park,
+            near_playground, near_water): EXISTS against the per-listing
+            junction table populated by `gold.enrich_nearby_*`. Honours
+            any per-family attribute filter (modes, lines, school_type,
+            hospital tier, ...). See
+            `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
+          - **Scalar / field filters** (mss, max_noise, min_greenery,
+            density): B-tree / JSONB-extract predicates on the
+            denormalised columns of `listings_geo_context`.
         """
         lgc = ListingGeoContext
 
-        # Transit — distance threshold + line/mode/name predicates
+        # ----- POI filters via junction tables -----
+
         if params.transit is not None:
             stmt = self._apply_transit_filter(stmt, params.transit)
 
-        # School filter — listings inside any catchment (school_catchment
-        # JSONB non-null). Distance/type are kept in spec for now but the
-        # post-refactor implementation only checks catchment membership.
         if params.school is not None:
-            stmt = stmt.where(lgc.school_catchment.is_not(None))
+            stmt = self._apply_school_filter(stmt, params.school)
 
-        # Hospital filter — gold's hospitals_top2 is non-null if any
-        # hospital was within the cap distance.
         if params.hospital is not None:
-            stmt = stmt.where(lgc.hospitals_top2.is_not(None))
+            stmt = self._apply_hospital_filter(stmt, params.hospital)
+
+        if params.near_park is not None:
+            stmt = self._apply_near_park_filter(stmt, params.near_park)
+
+        if params.near_playground is not None:
+            stmt = self._apply_near_playground_filter(stmt, params.near_playground)
+
+        if params.near_water is not None:
+            stmt = self._apply_near_water_filter(stmt, params.near_water)
+
+        # ----- Scalar / field filters on listings_geo_context -----
 
         # MSS — status floor + optional dynamics. Status floor uses the
         # ordered ranking from `MSS_STATUS_RANK` so "lower-income" matches
         # lower-income, mixed, and affluent.
         if params.mss is not None:
             min_rank = MSS_STATUS_RANK[params.mss.status_min]
-            # Inline the rank → English-label set so the WHERE is a plain
-            # IN against the indexed mss_status column.
             allowed = [k for k, v in MSS_STATUS_RANK.items() if v >= min_rank]
             stmt = stmt.where(lgc.mss_status.in_(allowed))
             if params.mss.dynamics is not None:
                 stmt = stmt.where(lgc.mss_dynamics == params.mss.dynamics)
 
-        # Near-park / near-playground / near-water filters — distance cutoff
-        if params.near_park is not None:
-            stmt = stmt.where(
-                lgc.nearest_park_m.is_not(None),
-                lgc.nearest_park_m <= resolve_near_spec(params.near_park),
-            )
-        if params.near_playground is not None:
-            radius = resolve_near_spec(params.near_playground)
-            # Playground JSONB stores distance_m; cast and compare. We
-            # could also pull this onto a dedicated indexed column if
-            # this filter sees real use.
-            stmt = stmt.where(
-                lgc.playground["distance_m"].as_integer() <= radius
-            )
-        if params.near_water is not None:
-            radius = resolve_near_spec(params.near_water)
-            stmt = stmt.where(lgc.water["distance_m"].as_integer() <= radius)
-
-        # Noise — user picks max bucket; convert to dB threshold.
+        # Noise — optimistic-include on NULL (no trusted reading within
+        # the 50 m gate set in gold.enrich_noise; we don't claim a listing
+        # is loud when we have no nearby sample). "noisy" is the absolute
+        # max — no filter.
         if params.max_noise is not None:
             if params.max_noise == "quiet":
-                stmt = stmt.where(lgc.noise_total_lden < NOISE_QUIET_MAX_LDEN)
+                cutoff = NOISE_QUIET_MAX_LDEN
             elif params.max_noise == "lively":
-                stmt = stmt.where(lgc.noise_total_lden < NOISE_LIVELY_MAX_LDEN)
-            # "noisy" is the absolute max — no filter
+                cutoff = NOISE_LIVELY_MAX_LDEN
+            else:
+                cutoff = None
+            if cutoff is not None:
+                stmt = stmt.where(
+                    or_(lgc.noise_total_lden.is_(None), lgc.noise_total_lden < cutoff)
+                )
 
-        # Greenery — minimum bucket
+        # Greenery — composite m² lives inside greenery_profile JSONB.
         if params.min_greenery is not None:
-            # Gold stores green_m2_within_300m in the JSONB blob; the
-            # buckets sit at 5000 (leafy) and 10000 (very_leafy).
             if params.min_greenery == "leafy":
                 stmt = stmt.where(
                     lgc.greenery_profile["green_m2_within_300m"].as_float()
@@ -318,7 +332,7 @@ class SearchService:
                     >= GREENERY_VERY_LEAFY_MIN_M2
                 )
 
-        # Density — exact bucket
+        # Density — exact bucket on persons_per_hectare scalar
         if params.density is not None:
             if params.density == "sparse":
                 stmt = stmt.where(lgc.persons_per_hectare < DENSITY_SPARSE_MAX)
@@ -335,57 +349,108 @@ class SearchService:
     def _apply_transit_filter(
         self, stmt: Select, f: TransitFilter
     ) -> Select:
-        """Filter on the nearest transit stop chip + optional line/mode/name.
+        """EXISTS-any against `listings_nearby_transit`.
 
-        Distance bucket → B-tree on `nearest_transit_m`. Line filter
-        uses GIN-indexed array overlap. Mode and stop_name go through
-        the JSONB top-3 blob since they're not on the chip columns.
+        Restores old-correct "any stop within X m" semantics (the v1 gold
+        chip-only shape narrowed this to the nearest stop only). The
+        junction table makes `modes` / `lines` / `stop_name` attribute
+        filters indexable: `(listing_id, distance_m)` for the range scan,
+        GIN on `modes` and `lines`.
         """
-        lgc = ListingGeoContext
+        nbr = ListingNearbyTransit
         max_m = resolve_near_spec(f.distance)
-        stmt = stmt.where(
-            lgc.nearest_transit_m.is_not(None),
-            lgc.nearest_transit_m <= max_m,
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
         )
-        if f.lines:
-            # Array overlap — hits the GIN index on nearest_transit_lines.
-            # Explicit ARRAY(Text) cast on the bound param: asyncpg
-            # otherwise binds list[str] as varchar[] and Postgres has no
-            # `text[] && varchar[]` operator.
-            stmt = stmt.where(
-                lgc.nearest_transit_lines.op("&&")(cast(f.lines, ARRAY(Text)))
-            )
         if f.modes:
-            # Mode codes live as int arrays inside each element of the
-            # top-3 JSONB. We test "ANY of the top-3 stops includes ANY of
-            # the requested modes" because filtering on just `[0]` (the
-            # nearest stop) loses ~4× the matches — most kleinanzeigen
-            # listings sit closer to a bus stop than a U-Bahn, but U-Bahn
-            # is in the top-3 within a reasonable walk.
-            #
-            # SQL shape: `transit_top3 @> '[{"modes":[400]}]'::jsonb` —
-            # jsonb-contains over an array of objects matches if ANY
-            # element of the left contains the structure of the right.
-            # OR'd across requested mode codes.
-            #
-            # `nearest_transit_m <= distance` (already applied above)
-            # still gates on the nearest stop's distance, so the overall
-            # filter reads as "any transit within X meters AND U-Bahn
-            # somewhere in top 3 nearest stops". A dedicated per-mode
-            # nearest-distance column is the eventual win; out of scope
-            # for now.
             mode_codes = encode_modes(list(f.modes))
-            mode_predicates = [
-                lgc.transit_top3.op("@>")(
-                    cast([{"modes": [code]}], JSONB)
-                )
-                for code in mode_codes
-            ]
-            stmt = stmt.where(or_(*mode_predicates))
+            subq = subq.where(
+                nbr.modes.op("&&")(cast(mode_codes, ARRAY(Integer)))
+            )
+        if f.lines:
+            subq = subq.where(
+                nbr.lines.op("&&")(cast(f.lines, ARRAY(Text)))
+            )
         if f.stop_name:
             pattern = _escape_for_substring(f.stop_name)
-            stmt = stmt.where(lgc.nearest_transit_name.ilike(pattern, escape="\\"))
+            subq = subq.where(nbr.name.ilike(pattern, escape="\\"))
+        return stmt.where(subq.exists())
+
+    def _apply_school_filter(
+        self, stmt: Select, f: SchoolFilter
+    ) -> Select:
+        """EXISTS-any against `listings_nearby_schools` + optional catchment.
+
+        Two intents combine with AND:
+          - Proximity: any school within `f.distance`, optionally filtered
+            by `school_type` substring (Grundschule / Gymnasium / ...).
+          - Legal attendance: `f.requires_catchment=True` requires
+            `listings_geo_context.school_catchment` to be non-null.
+        """
+        nbr = ListingNearbySchool
+        max_m = resolve_near_spec(f.distance)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        if f.school_type:
+            pattern = _escape_for_substring(f.school_type)
+            subq = subq.where(nbr.school_type.ilike(pattern, escape="\\"))
+        stmt = stmt.where(subq.exists())
+        if f.requires_catchment:
+            stmt = stmt.where(ListingGeoContext.school_catchment.is_not(None))
         return stmt
+
+    def _apply_hospital_filter(
+        self, stmt: Select, f: HospitalFilter
+    ) -> Select:
+        """EXISTS-any against `listings_nearby_hospitals`, optionally tier-filtered.
+
+        `tier="plan_hospital"` (default) restricts to the Krankenhausplan
+        network — emergency-care reachable, the usual intent of "near a
+        hospital". `tier="any"` widens to specialty clinics too.
+        """
+        nbr = ListingNearbyHospital
+        max_m = resolve_near_spec(f.distance)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        if f.tier == "plan_hospital":
+            subq = subq.where(nbr.tier == "plan_hospital")
+        # f.tier == "any" → no tier predicate
+        return stmt.where(subq.exists())
+
+    def _apply_near_park_filter(self, stmt: Select, spec) -> Select:
+        """EXISTS-any against `listings_nearby_parks` (cemeteries excluded at ETL)."""
+        nbr = ListingNearbyPark
+        max_m = resolve_near_spec(spec)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        return stmt.where(subq.exists())
+
+    def _apply_near_playground_filter(self, stmt: Select, spec) -> Select:
+        """EXISTS-any against `listings_nearby_playgrounds`."""
+        nbr = ListingNearbyPlayground
+        max_m = resolve_near_spec(spec)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        return stmt.where(subq.exists())
+
+    def _apply_near_water_filter(self, stmt: Select, spec) -> Select:
+        """EXISTS-any against `listings_nearby_water`."""
+        nbr = ListingNearbyWater
+        max_m = resolve_near_spec(spec)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        return stmt.where(subq.exists())
 
     async def _embed(self, query: str) -> list[float]:
         """Compute the query embedding (provider-agnostic)."""
