@@ -56,7 +56,7 @@ src/flat_chat/
 │   ├── database.py      # SQLAlchemy engine, session, Base
 │   ├── embedder.py      # Jina embedder factory (singleton via app.state)
 │   ├── dependencies.py  # FastAPI Depends wiring (session store, services)
-│   └── observability.py # Phoenix / OpenTelemetry — Agent.instrument_all()
+│   └── observability.py # Logs (dictConfig) + traces (OpenTelemetry → Phoenix)
 ├── api/
 │   ├── chat.py          # Conversation lifecycle: POST create + GET history reload (no message-send)
 │   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
@@ -131,3 +131,51 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `JINA_BASE_URL`            | Jina API base URL                                                                                                      | `https://api.jina.ai/v1`           |
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |
 | `PHOENIX_ENDPOINT`         | Phoenix OTLP endpoint                                                                                                  | `http://localhost:6006/v1/traces`  |
+| `LOG_LEVEL`                | Log level for the `flat_chat` namespace (DEBUG / INFO / WARNING / ERROR). Third-party loggers stay at WARNING.         | `INFO`                             |
+
+## Debugging
+
+Every request gets a session id (the conversation) and a run id (this turn). Both show up in two places:
+
+1. Every backend log line gets a `[session=<uuid> run=<run_id>]` prefix (see `core/observability.py:_RequestContextFilter`).
+2. Every SQL statement fired from inside that request gets a `/* session=<uuid> run=<run_id> */` comment prepended (see the `before_cursor_execute` hook in `core/database.py`). Startup queries, Alembic migrations, and pool pre-pings carry no comment — the contextvars are only set during request handling.
+
+This lets you round-trip between application logs and Postgres state.
+
+### Symptom → playbook
+
+**"A turn is taking forever"** — find the stuck query:
+
+```bash
+just psql-active
+```
+
+Lists running queries oldest-first. The `query` column starts with `/* session=<uuid> run=<run_id> */`, so the oldest row tells you which conversation/turn is wedged.
+
+**"I have a session id from the logs, what is it doing right now?"**
+
+```bash
+just psql-session <session-uuid>
+# or
+just psql-session <run-id>
+```
+
+**"I have a stuck query, what is the conversation context?"**
+
+Copy the `session=<uuid>` value from `pg_stat_activity`, then:
+
+```bash
+docker compose logs backend | grep <session-uuid>
+```
+
+You get the full log trail — `Agent dispatch` → `Searching: {…}` → (stalled) — for that one conversation.
+
+**"What is the LLM doing right now?"**
+
+Phoenix at [http://localhost:6006](http://localhost:6006) shows in-flight LLM spans, tool calls, and tokens. Use Phoenix for the agent's "thinking" side; use the logs above for everything below the agent (search service, SQL, ORM).
+
+### Free-form psql
+
+```bash
+just psql      # interactive shell on the dev postgres
+```

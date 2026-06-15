@@ -48,6 +48,7 @@ Four layers, each with exactly one job:
      presence; document the preference order if more than one can be set.
 """
 
+import logging
 from functools import lru_cache
 
 from pydantic_ai.models import Model
@@ -58,6 +59,8 @@ from flat_chat.core.config import settings
 
 __all__ = ["build_chat_model"]
 
+logger = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
 def build_chat_model() -> Model:
@@ -65,8 +68,15 @@ def build_chat_model() -> Model:
     # reason this provider exists in the first place. To force Azure during
     # local dev, unset ANTHROPIC_API_KEY in your .env.
     if settings.anthropic_api_key:
+        logger.info(
+            "LLM provider: anthropic-direct (model=%s)", settings.anthropic_model
+        )
         return build_anthropic_model(settings)
     if settings.azure_openai_api_key:
+        logger.info(
+            "LLM provider: azure-openai (deployment=%s)",
+            settings.azure_openai_deployment,
+        )
         return build_azure_model(settings)
     raise RuntimeError(
         "No LLM provider configured. Set ANTHROPIC_API_KEY or "

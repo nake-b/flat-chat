@@ -46,6 +46,7 @@ services:
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
       - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
       - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006/v1/traces}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
@@ -68,6 +69,13 @@ services:
 
   postgres:
     build: services/postgres/
+    # Bump track_activity_query_size from the 1024-byte default so
+    # pg_stat_activity.query shows our full SELECTs (used by
+    # `just psql-active` / `just psql-session` for debugging stuck queries).
+    command:
+      - "postgres"
+      - "-c"
+      - "track_activity_query_size=16384"
     ports:
       # Loopback-only so psql / dump tools work from the dev's host without
       # exposing the DB on LAN / tailnet. The Tailscale sidecar in

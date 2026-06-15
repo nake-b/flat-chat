@@ -13,6 +13,7 @@ from flat_chat.chat.agent import agent
 from flat_chat.chat.providers import build_chat_model
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
+from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.search.service import SearchService
 
 try:
@@ -21,6 +22,26 @@ except ImportError:  # pragma: no cover — observability is optional
     from contextlib import nullcontext as using_session  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+
+def _summarise_prompt(run_input: Any) -> str:
+    """Last user message as a single short line for the dispatch log.
+
+    Multimodal `content` (a list of input parts) collapses to a `[multimodal]`
+    marker so the log stays scannable. Trailing truncation at 120 chars keeps
+    one turn = one log line — long pastes don't blow up the stream.
+    """
+    for msg in reversed(run_input.messages):
+        if getattr(msg, "role", None) != "user":
+            continue
+        content = getattr(msg, "content", None)
+        if isinstance(content, str):
+            text = content.strip().replace("\n", " ")
+            return f'prompt="{text[:120]}{"…" if len(text) > 120 else ""}"'
+        if isinstance(content, list):
+            return "prompt=[multimodal]"
+        break
+    return "prompt=<none>"
 
 
 class ChatService:
@@ -57,12 +78,22 @@ class ChatService:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         session_id = adapter.conversation_id
-        logger.info("Agent dispatch: session=%s", session_id)
+        # Bind the request context for every log line + every SQL statement
+        # that runs within this asyncio task. `session_prefix` (logging filter)
+        # and the `before_cursor_execute` hook in `core/database.py` both
+        # read these vars. No `.reset()` — FastAPI runs each request in its
+        # own asyncio task with its own copied context, so the binding dies
+        # with the task. (We tried explicit reset(); Starlette runs the SSE
+        # consumer in a different task than the handler that created the
+        # Token, so `reset()` raised `Token created in a different Context`.)
+        session_id_var.set(session_id or "")
+        run_id_var.set(adapter.run_input.run_id or "")
+        logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
 
         try:
             session = self.store.get(session_id)
         except SessionNotFoundError:
-            logger.warning("Agent request for unknown session %s", session_id)
+            logger.warning("Agent request for unknown session")
             raise
 
         # Session exists, so lock() will not raise. Resolve the lock here so
@@ -86,9 +117,7 @@ class ChatService:
             session.ui_state = deps.state
             self.store.save(session)
             logger.info(
-                "Agent complete: session=%s messages=%d",
-                session_id,
-                len(session.message_history),
+                "Agent complete: messages=%d", len(session.message_history)
             )
 
         try:

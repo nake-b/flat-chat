@@ -109,7 +109,7 @@ agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
     toolsets=[toolset],
     instructions=INSTRUCTIONS,
-    tool_retries=3,
+    retries={"tools": 3},
 )
 
 

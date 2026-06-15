@@ -30,5 +30,10 @@ class Settings(BaseSettings):
     phoenix_enabled: bool = False
     phoenix_endpoint: str = "http://localhost:6006/v1/traces"
 
+    # Application log level for the `flat_chat` namespace. Third-party
+    # loggers stay at WARNING regardless — see core/observability.py.
+    # Standard names: DEBUG / INFO / WARNING / ERROR / CRITICAL.
+    log_level: str = "INFO"
+
 
 settings = Settings()

@@ -260,8 +260,16 @@ class SearchService:
 
         stmt = stmt.limit(params.limit)
 
+        # Emit BEFORE execute so a hang/timeout still leaves a trail of
+        # what was searched. Duration is recoverable by subtracting the
+        # timestamps from the paired "Found N results" line below.
+        logger.info(
+            "Searching: %s",
+            params.model_dump(exclude_defaults=True, exclude_none=True),
+        )
         result = self.db.execute(stmt)
         rows = result.all()
+        logger.info("Found %d results", len(rows))
 
         if not rows:
             return pd.DataFrame(columns=RESULT_COLUMNS + ["similarity_score"])
