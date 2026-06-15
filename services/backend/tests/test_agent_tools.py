@@ -50,7 +50,6 @@ from flat_chat.search.geo_filters import (
 from flat_chat.search.schemas import SearchParams
 from flat_chat.search.service import ListingWithContext
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------

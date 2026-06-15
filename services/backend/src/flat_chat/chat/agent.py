@@ -50,9 +50,9 @@ def _user_references_block() -> str:
         "When the user says \"this one\" or \"the one I'm looking at\", the\n"
         "`<user_focus>` block in the per-turn state below tells you which 1-based\n"
         "card index they have expanded. Prefer that target. When they say \"the\n"
-        "first\", \"the cheapest\", \"the one in Wedding\", map their words to an index\n"
-        "in the current result set. If the reference is genuinely ambiguous, ask\n"
-        "for an index — never fabricate a UUID or external ID.",
+        "first\", \"the cheapest\", \"the one in Wedding\", map their words to an\n"
+        "index in the current result set. If the reference is genuinely\n"
+        "ambiguous, ask for an index — never fabricate a UUID or external ID.",
     )
 
 
