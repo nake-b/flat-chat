@@ -6,6 +6,7 @@ import { HttpAgent } from "@ag-ui/client";
 import App from "./App";
 import { AGENT_NAME } from "./state/UiState";
 import { createConversation } from "./api/session";
+import { useHover } from "./hooks/useHover";
 import "./index.css";
 
 // Bootstrap: allocate a backend conversation, then mount CopilotKit pointing
@@ -22,6 +23,11 @@ function Bootstrap() {
 
   useEffect(() => {
     let cancelled = false;
+    // Hover is client-local ephemera (zustand singleton). Reset synchronously
+    // on mount — before the createConversation() network round-trip — so a
+    // stale id from a prior thread can't ghost-highlight a card during the
+    // tens-of-ms gap between mount and agent allocation.
+    useHover.getState().reset();
     createConversation()
       .then((conv) => {
         if (cancelled) return;

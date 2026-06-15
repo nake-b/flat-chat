@@ -1,15 +1,25 @@
 import { useEffect, useRef } from "react";
 
 import { useUiState } from "../hooks/useUiState";
-import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
+import {
+  EMPTY_UI_STATE,
+  type ListingContext,
+  type UiApartment,
+} from "../state/UiState";
 
 // Detail panel: a card-sized white pane sitting at the top of the cards
 // slot, with the paper background of `CardsPane` showing beneath. The
 // pane sizes to its content — no stretching, no Option-X expansion, no
 // filler band. Matches the strip's "card-on-paper" visual density.
 export function CardDetail({ apt }: { apt: UiApartment }) {
-  const { setState } = useUiState();
+  const { state, setState } = useUiState();
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Geo-context blob arrives when the agent calls `get_listing_details(id)`.
+  // We only render it for the *currently active* listing — the agent clears
+  // it on the next search so stale context can't leak across selections.
+  const ctx =
+    state?.active_id === apt.id ? state?.active_listing_context ?? null : null;
 
   const close = () => {
     setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: null }));
@@ -114,6 +124,8 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
 
       <EnergyBlock apt={apt} />
 
+      {ctx && <GeoContextBlock ctx={ctx} />}
+
       {/* Computed Notes block — fills the rest of the slot with prose
           derived from the actual fields (no lorem ipsum) so the panel
           doesn't end with dead whitespace. Acts as a soft hook back into
@@ -198,6 +210,184 @@ function AmenityChips({ apt }: { apt: UiApartment }) {
         >
           {c.label}
         </span>
+      ))}
+    </div>
+  );
+}
+
+// Geo-context block: nearby transit / schools / parks / noise / MSS / hospitals.
+// Only sections with data render; partial backend wiring produces partial UI,
+// not stale empty rows. Pulls from UiState.active_listing_context, which the
+// agent populates via the `get_listing_details` tool.
+function GeoContextBlock({ ctx }: { ctx: ListingContext }) {
+  const hasAny =
+    ctx.transit.length > 0 ||
+    ctx.nearest_schools.length > 0 ||
+    ctx.nearest_parks.length > 0 ||
+    ctx.nearest_hospitals.length > 0 ||
+    ctx.nearest_water != null ||
+    ctx.noise != null ||
+    ctx.greenery != null ||
+    ctx.density != null ||
+    ctx.mss != null ||
+    ctx.school_catchment != null ||
+    ctx.disabled_parking_count > 0;
+  if (!hasAny) return null;
+
+  return (
+    <div className="border-t border-paper-rule px-7 py-3">
+      <div className="font-mono text-[10px] uppercase tracking-widest text-red">
+        Neighbourhood context
+      </div>
+
+      {ctx.transit.length > 0 && (
+        <Section title="Transit">
+          <ul className="space-y-0.5">
+            {ctx.transit.map((stop) => (
+              <li key={stop.stop_id} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{stop.name}</span>
+                {stop.lines.length > 0 && (
+                  <span className="text-ink-soft"> · {stop.lines.join(", ")}</span>
+                )}
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {stop.distance_m}m / {stop.walk_minutes}min
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {ctx.school_catchment != null && (
+        <Section title="Primary-school catchment">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.school_catchment.school_name ?? ctx.school_catchment.catchment_id}
+          </div>
+        </Section>
+      )}
+
+      {ctx.nearest_schools.length > 0 && (
+        <Section title="Schools nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_schools.map((s, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{s.name ?? "unnamed"}</span>
+                {s.school_type && (
+                  <span className="text-ink-ghost"> · {s.school_type}</span>
+                )}
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {s.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {ctx.nearest_parks.length > 0 && (
+        <Section title="Parks nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_parks.map((p, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{p.name ?? "unnamed"}</span>
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {p.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {ctx.nearest_water != null && (
+        <Section title="Nearest water">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.nearest_water.name ?? ctx.nearest_water.water_kind ?? "water"}
+            <span className="font-mono text-[11px] text-ink-ghost">
+              {" "}
+              · {ctx.nearest_water.distance_m}m
+            </span>
+          </div>
+        </Section>
+      )}
+
+      {ctx.nearest_hospitals.length > 0 && (
+        <Section title="Hospitals nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_hospitals.map((h, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{h.name ?? "unnamed"}</span>
+                <span className="text-ink-ghost"> · {h.tier}</span>
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {h.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {/* Character labels — short row of label-value pairs. */}
+      <CharacterRow ctx={ctx} />
+
+      {ctx.disabled_parking_count > 0 && (
+        <Section title="Disabled parking nearby">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.disabled_parking_count} spots within 300m
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// Sub-section helper inside the geo block — section title + body, no border.
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-2">
+      <div className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
+        {title}
+      </div>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
+}
+
+// Single-row strip of character labels: noise / greenery / density / MSS.
+// Each cell only renders when its label is non-null, so partial coverage
+// produces clean visual output rather than ghost cells.
+function CharacterRow({ ctx }: { ctx: ListingContext }) {
+  const cells: { label: string; value: string }[] = [];
+  if (ctx.noise?.label) {
+    cells.push({ label: "Noise", value: ctx.noise.label });
+  }
+  if (ctx.greenery?.label) {
+    cells.push({ label: "Greenery", value: ctx.greenery.label });
+  }
+  if (ctx.density?.label) {
+    cells.push({ label: "Density", value: ctx.density.label });
+  }
+  if (ctx.mss?.status_label) {
+    const v = ctx.mss.dynamics_label
+      ? `${ctx.mss.status_label} · ${ctx.mss.dynamics_label}`
+      : ctx.mss.status_label;
+    cells.push({ label: "Sozialmonitoring", value: v });
+  }
+  if (cells.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+      {cells.map((c) => (
+        <div key={c.label} className="flex flex-col">
+          <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
+            {c.label}
+          </span>
+          <span className="text-[12.5px] text-ink-soft">{c.value}</span>
+        </div>
       ))}
     </div>
   );

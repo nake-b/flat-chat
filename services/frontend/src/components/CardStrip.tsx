@@ -183,15 +183,42 @@ function ApartmentCard({
   );
 }
 
-// At most three chips on a compact card — readability budget is tight at
-// ~220px. WBS leads because it's a binary requirement; the next two are
-// the highest-signal amenities Berliners ask about first. Render `true`
-// only; `false`/`null` stay hidden so we never imply absence of data.
+// At most four chips on a compact card — readability budget is tight at
+// ~220px. Priority order: WBS (binary requirement, red badge), then
+// geo-context chips (transit / park / noise), then high-signal amenities.
+// Render `true` only; `false`/`null` stay hidden so we never imply absence
+// of data. Geo chips use emoji prefixes to set them visually apart from
+// uppercase mono amenity chips.
 function CardChips({ apt }: { apt: UiApartment }) {
   const chips: { key: string; label: string; wbs?: boolean }[] = [];
-  if (apt.wbs_required === true) chips.push({ key: "wbs", label: "WBS", wbs: true });
-  if (apt.is_furnished === true) chips.push({ key: "furn", label: "Furnished" });
-  if (apt.has_balcony === true && chips.length < 3) {
+
+  // WBS — binary requirement, always shown when present.
+  if (apt.wbs_required === true) {
+    chips.push({ key: "wbs", label: "WBS", wbs: true });
+  }
+
+  // Geo-context chips — highest signal for apartment hunters.
+  if (apt.nearest_transit_line && apt.walk_min_to_transit != null) {
+    chips.push({
+      key: "transit",
+      label: `🚇 ${apt.nearest_transit_line} · ${apt.walk_min_to_transit}min`,
+    });
+  }
+  if (apt.nearest_park_m != null) {
+    chips.push({ key: "park", label: `🌳 ${apt.nearest_park_m}m` });
+  }
+  // Noise chip: only "quiet" — "lively" is the urban norm and "noisy" is
+  // signal-negative, neither warrants a card chip. Detail panel surfaces all 3.
+  if (apt.noise_label === "quiet") {
+    chips.push({ key: "noise", label: "🔇 quiet" });
+  }
+
+  // Amenities — fill remaining budget. Cap total chips at 4 for a 220px card.
+  const MAX_CHIPS = 4;
+  if (apt.is_furnished === true && chips.length < MAX_CHIPS) {
+    chips.push({ key: "furn", label: "Furnished" });
+  }
+  if (apt.has_balcony === true && chips.length < MAX_CHIPS) {
     chips.push({ key: "balc", label: "Balkon" });
   }
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from .common import (
     amenity_match,
+    clean_berlin_coords,
     find_amenity,
     map_lister_type,
     parse_energy_label,
@@ -127,8 +128,15 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "postal_code": address.get("postalCode"),
         "district": address.get("district"),
         "city": address.get("city"),
-        "latitude": geo.get("lat") if geo else None,
-        "longitude": geo.get("lng") if geo else None,
+        # Validated through clean_berlin_coords so 0/0 and out-of-Berlin
+        # sentinels become NULL instead of polluting geo-context queries.
+        **dict(zip(
+            ("latitude", "longitude"),
+            clean_berlin_coords(
+                geo.get("lat") if geo else None,
+                geo.get("lng") if geo else None,
+            ),
+        )),
 
         "floor": _floor_from_amenities(amenity_labels),
         "floors_total": None,

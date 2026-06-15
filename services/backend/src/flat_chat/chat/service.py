@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from pydantic import ValidationError
 from pydantic_ai.run import AgentRunResult

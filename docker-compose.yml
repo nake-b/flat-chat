@@ -57,7 +57,10 @@ services:
   phoenix:
     image: arizephoenix/phoenix:latest
     ports:
-      - "6006:6006"
+      # Loopback-only — Phoenix traces contain LLM prompts / tool calls.
+      # Reachable at http://localhost:6006 from the dev's own machine; not
+      # exposed on LAN / tailnet. Same principle as Postgres below.
+      - "127.0.0.1:6006:6006"
     environment:
       - PHOENIX_WORKING_DIR=/mnt/data
     volumes:
@@ -66,7 +69,10 @@ services:
   postgres:
     build: services/postgres/
     ports:
-      - "5432:5432"
+      # Loopback-only so psql / dump tools work from the dev's host without
+      # exposing the DB on LAN / tailnet. The Tailscale sidecar in
+      # docker-compose.host.yml is the only way teammates reach this DB.
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}

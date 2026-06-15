@@ -23,10 +23,41 @@ import sys
 
 import httpx
 from sqlalchemy import select, update
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from db import get_session, get_table
 
 logger = logging.getLogger(__name__)
+
+# Status codes we retry on. 429 = rate limit (Jina's free tier especially);
+# 5xx = transient server-side. Everything else (incl. 4xx auth / bad-request)
+# is a real problem we want to surface, not paper over with retries.
+_RETRIABLE_STATUS = {429, 500, 502, 503, 504}
+
+# Status codes that mean every batch will fail the same way — keep retrying
+# them would burn the cron silently. Re-raised out of the outer loop so the
+# process exits non-zero and cron alerts.
+_TERMINAL_STATUS = {401, 403}
+
+
+def _is_retriable(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRIABLE_STATUS
+    # httpx.ConnectError / ReadTimeout / RemoteProtocolError etc. are all
+    # subclasses of httpx.TransportError — retry these too.
+    return isinstance(exc, httpx.TransportError)
+
+
+def _is_terminal_auth(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and exc.response.status_code in _TERMINAL_STATUS
+    )
 
 # Jina v3 — 1024 dims, 8K token window. `retrieval.passage` is the listing-
 # side LoRA; the query side uses `retrieval.query` in the backend's search
@@ -63,8 +94,19 @@ def _build_text(row: dict) -> str:
     return text[:_MAX_TEXT_CHARS]
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential_jitter(initial=1, max=30),
+    retry=retry_if_exception(_is_retriable),
+    reraise=True,
+)
 def _embed_batch(client: httpx.Client, texts: list[str], api_key: str) -> list[list[float]]:
-    """POST a batch of texts to Jina /v1/embeddings and return their vectors."""
+    """POST a batch of texts to Jina /v1/embeddings and return their vectors.
+
+    Retries on 429 / 5xx and transport errors with exponential backoff +
+    jitter (up to 5 attempts, max 30 s wait). Non-retriable errors propagate
+    so the outer loop can decide whether to skip the batch.
+    """
     response = client.post(
         "/embeddings",
         json={"model": JINA_MODEL, "task": JINA_TASK, "input": texts},
@@ -95,6 +137,11 @@ def backfill_embeddings(
     session = get_session()
     listings = get_table("listings")
 
+    # Cursor over listings.id so the loop is guaranteed monotonic. Without it,
+    # a batch where every row has no embeddable text re-selects the same rows
+    # on the next iteration (embedding stays NULL) and the loop spins forever.
+    # ORDER BY id ASC + `id > last_id` advances past the skipped rows.
+    last_id: str | None = None
     total_embedded = 0
     try:
         with httpx.Client(base_url=base_url) as client:
@@ -105,31 +152,31 @@ def backfill_embeddings(
                 if batch_limit <= 0:
                     break
 
-                rows = session.execute(
-                    select(
-                        listings.c.id,
-                        listings.c.title,
-                        listings.c.description,
-                        listings.c.features,
-                    )
-                    .where(listings.c.embedding.is_(None))
-                    .limit(batch_limit)
-                ).mappings().all()
+                stmt = select(
+                    listings.c.id,
+                    listings.c.title,
+                    listings.c.description,
+                    listings.c.features,
+                ).where(listings.c.embedding.is_(None))
+                if last_id is not None:
+                    stmt = stmt.where(listings.c.id > last_id)
+                stmt = stmt.order_by(listings.c.id).limit(batch_limit)
+                rows = session.execute(stmt).mappings().all()
 
                 if not rows:
                     break
+                last_id = rows[-1]["id"]
 
                 texts = [_build_text(dict(r)) for r in rows]
                 # Skip rows with no embeddable text — they'd produce a useless
-                # zero-content vector and confuse cosine ranking. Mark them
-                # by leaving embedding NULL; a later transformer fix should
-                # surface a description for them.
+                # zero-content vector and confuse cosine ranking. The cursor
+                # above already advanced past them, so the next iteration
+                # picks up fresh rows instead of looping.
                 payload_rows = [(r, t) for r, t in zip(rows, texts) if t]
                 if not payload_rows:
                     logger.warning(
                         "Skipping batch of %d rows: no embeddable text", len(rows)
                     )
-                    total_embedded += len(rows)  # advance past the empty ones
                     continue
 
                 if dry_run:
@@ -146,6 +193,11 @@ def backfill_embeddings(
                         client, [t for _, t in payload_rows], api_key
                     )
                 except httpx.HTTPError as exc:
+                    # Auth failures will hit every batch the same way — keep
+                    # retrying them would silently burn the cron. Re-raise so
+                    # the process exits non-zero.
+                    if _is_terminal_auth(exc):
+                        raise
                     logger.error(
                         "Jina request failed (%s): skipping batch of %d",
                         exc,
@@ -199,11 +251,11 @@ def main() -> None:
             batch_size=args.batch_size, limit=args.limit, dry_run=args.dry_run
         )
     except RuntimeError as exc:
-        print(f"Silver embed: {exc}", file=sys.stderr)
+        logger.error("Silver embed: %s", exc)
         sys.exit(1)
 
     verb = "would embed" if args.dry_run else "embedded"
-    print(f"Silver embed: {verb} {n} listing(s)")
+    logger.info("Silver embed: %s %d listing(s)", verb, n)
 
 
 if __name__ == "__main__":

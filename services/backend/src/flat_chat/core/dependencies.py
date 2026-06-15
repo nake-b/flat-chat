@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from flat_chat.chat.sessions import InMemorySessionStore, SessionStore
 from flat_chat.core.database import get_db
 from flat_chat.core.embedder import get_embedder
+from flat_chat.search.geo_context_service import GeoContextService
 from flat_chat.search.service import SearchService
 
 # Process-lifetime singleton — survives across requests, dies with the worker.
@@ -16,11 +17,18 @@ def get_session_store() -> SessionStore:
     return _session_store
 
 
+def get_geo_context_service(
+    db: Session = Depends(get_db),
+) -> GeoContextService:
+    return GeoContextService(db)
+
+
 def get_search_service(
     db: Session = Depends(get_db),
+    geo: GeoContextService = Depends(get_geo_context_service),
     embedder: Embedder | None = Depends(get_embedder),
 ) -> SearchService:
-    return SearchService(db, embedder)
+    return SearchService(db, geo, embedder)
 
 
 def get_chat_service(

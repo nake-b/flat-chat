@@ -177,6 +177,41 @@ def find_amenity(items: Iterable[str] | None, *needles: str) -> str | None:
     return None
 
 
+# Berlin's actual bounding box (Senate Department for Urban Development).
+# A generous envelope — Berlin proper sits inside 13.088–13.761 / 52.339–52.675;
+# we widen by ~0.01° on each side to forgive listings sitting fractionally
+# outside the official border (Brandenburg-side commuter towns get filtered
+# out anyway by `city = "Berlin"`).
+_BERLIN_LON_MIN, _BERLIN_LON_MAX = 13.08, 13.77
+_BERLIN_LAT_MIN, _BERLIN_LAT_MAX = 52.33, 52.68
+
+
+def clean_berlin_coords(
+    lat: float | int | None, lng: float | int | None
+) -> tuple[float | None, float | None]:
+    """Pass through (lat, lng) only if they look like Berlin coordinates.
+
+    Returns (None, None) for null-island sentinels (0, 0), swapped pairs
+    (lon-as-lat etc.), and points outside Berlin's bounding box. Scrapers
+    occasionally emit 0/0 when the source dump lacks geocoding — letting
+    those through pollutes geo-context queries (a 0/0 listing's "nearest"
+    school / hospital / noise sample is ~5,930 km away, which the KNN
+    operator still happily returns).
+    """
+    if lat is None or lng is None:
+        return None, None
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+    except (TypeError, ValueError):
+        return None, None
+    if not (_BERLIN_LAT_MIN <= lat_f <= _BERLIN_LAT_MAX):
+        return None, None
+    if not (_BERLIN_LON_MIN <= lng_f <= _BERLIN_LON_MAX):
+        return None, None
+    return lat_f, lng_f
+
+
 def map_lister_type(raw: str | None) -> str | None:
     """Normalize lister/seller type strings across sources.
 
