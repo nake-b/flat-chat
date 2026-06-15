@@ -12,9 +12,7 @@ canonical mapping.
 from typing import Literal
 
 # User-facing transit-mode enum (tool args, UI labels).
-GtfsMode = Literal[
-    "mainline", "regional", "s_bahn", "u_bahn", "bus", "tram", "ferry"
-]
+GtfsMode = Literal["mainline", "regional", "s_bahn", "u_bahn", "bus", "tram", "ferry"]
 
 # Canonical mapping. Codes come from the VBB published GTFS Extended Route Types.
 GTFS_MODE_TO_LABEL: dict[int, GtfsMode] = {

@@ -47,10 +47,10 @@ def _ui_rendering_block() -> str:
 def _user_references_block() -> str:
     return xml_block(
         "user_references",
-        "When the user says \"this one\" or \"the one I'm looking at\", the\n"
+        'When the user says "this one" or "the one I\'m looking at", the\n'
         "`<user_focus>` block in the per-turn state below tells you which 1-based\n"
-        "card index they have expanded. Prefer that target. When they say \"the\n"
-        "first\", \"the cheapest\", \"the one in Wedding\", map their words to an\n"
+        'card index they have expanded. Prefer that target. When they say "the\n'
+        'first", "the cheapest", "the one in Wedding", map their words to an\n'
         "index in the current result set. If the reference is genuinely\n"
         "ambiguous, ask for an index — never fabricate a UUID or external ID.",
     )
@@ -74,10 +74,10 @@ def _neutrality_block() -> str:
         "disadvantaged`) and dynamics (`improving / stable / slipping`) — describe\n"
         "socioeconomic character drawn from the Berlin Senate's index. They are\n"
         "NOT value judgements. Never volunteer opinions about disadvantaged\n"
-        "neighbourhoods; never moralise about gentrification. The \"disadvantaged +\n"
-        "improving\" combination is the classic gentrification signature (Wedding &\n"
-        "Neukölln in the 2010s) — a renter searching for \"up-and-coming\" wants\n"
-        "exactly this. The \"slipping\" dynamics label is counterintuitive: it\n"
+        'neighbourhoods; never moralise about gentrification. The "disadvantaged +\n'
+        'improving" combination is the classic gentrification signature (Wedding &\n'
+        'Neukölln in the 2010s) — a renter searching for "up-and-coming" wants\n'
+        'exactly this. The "slipping" dynamics label is counterintuitive: it\n'
         "means a Kiez improving slower than the citywide trend, not declining in\n"
         "absolute terms. Surface what the data says; let the renter decide. When\n"
         "passing MSS args through `search_apartments`, do not add a disclaimer —\n"

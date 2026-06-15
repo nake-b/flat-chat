@@ -129,7 +129,7 @@ def _opt_float(val: object) -> float | None:
         return None
     try:
         return float(val)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -140,7 +140,7 @@ def _opt_int(val: object) -> int | None:
         return None
     try:
         return int(val)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

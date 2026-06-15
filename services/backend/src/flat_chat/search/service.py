@@ -38,6 +38,7 @@ class ListingWithContext:
     listing: Listing
     context: ListingContext
 
+
 # Pandas-facing column names returned to the agent / formatting layer.
 # These are intentionally distinct from the DB column names — see _ORM_ATTR
 # below — so that the schema (owned by ingestion) and the LLM-facing data
@@ -245,9 +246,7 @@ class SearchService:
         distance = None
         if params.query and self.embedder:
             embedding = await self._embed(params.query)
-            distance = Listing.embedding.cosine_distance(
-                cast(embedding, Vector(1024))
-            )
+            distance = Listing.embedding.cosine_distance(cast(embedding, Vector(1024)))
             stmt = stmt.add_columns(distance.label("similarity_score"))
 
         if sort_by_effective == "relevance" and distance is not None:
@@ -297,9 +296,7 @@ class SearchService:
                 walk_minutes(int(transit_m)) if transit_m is not None else None
             )
             record["noise_label"] = bucket_noise(record.get("noise_total_lden"))
-            record["density_label"] = bucket_density(
-                record.get("persons_per_hectare")
-            )
+            record["density_label"] = bucket_density(record.get("persons_per_hectare"))
             record["mss_status_label"] = MSS_STATUS_DE_TO_EN.get(
                 record.get("mss_status_de") or ""
             )
@@ -336,7 +333,7 @@ class SearchService:
         """
         try:
             pk = uuid.UUID(listing_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         listing = self.db.get(Listing, pk)
         if listing is None:

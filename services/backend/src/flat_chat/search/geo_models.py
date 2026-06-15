@@ -258,12 +258,8 @@ class TransitStop(Base):
 
     stop_id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    geom: Mapped[object] = mapped_column(
-        Geometry("POINT", srid=4326), nullable=False
-    )
-    modes_served: Mapped[list[int]] = mapped_column(
-        ARRAY(SmallInteger), nullable=False
-    )
+    geom: Mapped[object] = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    modes_served: Mapped[list[int]] = mapped_column(ARRAY(SmallInteger), nullable=False)
     lines_served: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
 
 
@@ -282,9 +278,7 @@ class TransitRouteShape(Base):
     __tablename__ = "transit_route_shapes"
 
     # Composite PK — declared on the columns directly via primary_key=True.
-    route_id: Mapped[str] = mapped_column(
-        String, primary_key=True
-    )
+    route_id: Mapped[str] = mapped_column(String, primary_key=True)
     direction_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
     geom: Mapped[object] = mapped_column(
         Geometry("LINESTRING", srid=4326), nullable=False

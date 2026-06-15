@@ -162,9 +162,7 @@ def _scripted_model(tool_name: str, tool_args: dict[str, Any]) -> FunctionModel:
     """
     state: dict[str, int] = {"calls": 0}
 
-    def model_fn(
-        messages: list[ModelMessage], info: AgentInfo
-    ) -> ModelResponse:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         state["calls"] += 1
         if state["calls"] == 1:
             return ModelResponse(
@@ -395,9 +393,7 @@ def test_search_with_density_filter() -> None:
 def test_search_with_min_greenery_filter() -> None:
     """'Lots of greenery' → min_greenery='leafy'."""
     deps, fake = _build_deps()
-    model = _scripted_model(
-        "search_apartments", {"min_greenery": "very_leafy"}
-    )
+    model = _scripted_model("search_apartments", {"min_greenery": "very_leafy"})
     _run(model, deps, "Lots of greenery")
 
     params = fake.last_search_params

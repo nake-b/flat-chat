@@ -398,9 +398,7 @@ async def open_listing(
             detail = ctx.deps.search_service.get_listing_details(active.id)
             if detail is not None:
                 ctx.deps.state.active_listing_context = detail.context
-                geo_prose = "\n\n" + format_geo_context_prose(
-                    first, detail.context
-                )
+                geo_prose = "\n\n" + format_geo_context_prose(first, detail.context)
 
     return _return_with_state(
         return_value=rs.detail(indices) + geo_prose, ui_state=ctx.deps.state

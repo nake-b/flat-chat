@@ -197,9 +197,7 @@ class GeoContextService:
             .correlate(Listing)
         )
         if f.modes:
-            subq = subq.where(
-                TransitStop.modes_served.overlap(resolve_modes(f.modes))
-            )
+            subq = subq.where(TransitStop.modes_served.overlap(resolve_modes(f.modes)))
         if f.lines:
             subq = subq.where(TransitStop.lines_served.overlap(f.lines))
         if f.stop_name:
@@ -359,9 +357,7 @@ class GeoContextService:
         *optimistically included* — we won't claim a listing is noisy when
         we have no nearby reading.
         """
-        cutoff = (
-            NOISE_QUIET_MAX_LDEN if max_noise == "quiet" else NOISE_LIVELY_MAX_LDEN
-        )
+        cutoff = NOISE_QUIET_MAX_LDEN if max_noise == "quiet" else NOISE_LIVELY_MAX_LDEN
         subq = (
             select(StreetNoise2022.noise_total_lden)
             .where(
@@ -421,9 +417,7 @@ class GeoContextService:
         if density == "sparse":
             bucket_pred = ppha < DENSITY_SPARSE_MAX
         elif density == "moderate":
-            bucket_pred = and_(
-                ppha >= DENSITY_SPARSE_MAX, ppha < DENSITY_MODERATE_MAX
-            )
+            bucket_pred = and_(ppha >= DENSITY_SPARSE_MAX, ppha < DENSITY_MODERATE_MAX)
         else:  # dense
             bucket_pred = ppha >= DENSITY_MODERATE_MAX
         subq = (
@@ -682,9 +676,7 @@ class GeoContextService:
             for r in rows
         ]
 
-    def _school_catchment(
-        self, location: WKBElement
-    ) -> SchoolCatchmentInfo | None:
+    def _school_catchment(self, location: WKBElement) -> SchoolCatchmentInfo | None:
         """Return the primary-school catchment polygon containing the listing.
 
         Returns None if the listing falls outside coverage (catchments don't
@@ -729,9 +721,7 @@ class GeoContextService:
             for r in rows
         ]
 
-    def _nearest_parks(
-        self, location: WKBElement, *, k: int = 2
-    ) -> list[NearestPark]:
+    def _nearest_parks(self, location: WKBElement, *, k: int = 2) -> list[NearestPark]:
         """k=2..k respects CAP_PARKS_M and EXCLUDES cemeteries.
 
         Cemeteries are kept out of named-nearest results per the threshold
@@ -757,9 +747,7 @@ class GeoContextService:
             for r in rows
         ]
 
-    def _nearest_playground(
-        self, location: WKBElement
-    ) -> NearestPlayground | None:
+    def _nearest_playground(self, location: WKBElement) -> NearestPlayground | None:
         """Nearest playground within CAP_PLAYGROUNDS_M, else None."""
         distance_m = geo_func.ST_Distance(
             cast(Playground.geom, Geography),
@@ -868,9 +856,7 @@ class GeoContextService:
             rail_lden=row.noise_rail_lden,
         )
 
-    def _greenery_profile(
-        self, location: WKBElement
-    ) -> GreeneryProfile | None:
+    def _greenery_profile(self, location: WKBElement) -> GreeneryProfile | None:
         """Greenery composite: WHO Europe 300m radius, cemeteries at 0.5 weight.
 
         ⚠️ HEAVY — runs ST_Area(ST_Intersection(...)) across every park /
@@ -960,9 +946,7 @@ class GeoContextService:
         if row is None:
             return None
         total = (
-            float(row.park_m2)
-            + 0.5 * float(row.cemetery_m2)
-            + float(row.playground_m2)
+            float(row.park_m2) + 0.5 * float(row.cemetery_m2) + float(row.playground_m2)
         )
         return GreeneryProfile(
             label=bucket_greenery(total),
@@ -1030,9 +1014,7 @@ class GeoContextService:
             return None
         return MssProfile(
             status_label=MSS_STATUS_DE_TO_EN.get(row.status_index_label or ""),
-            dynamics_label=MSS_DYNAMICS_DE_TO_EN.get(
-                row.dynamics_index_label or ""
-            ),
+            dynamics_label=MSS_DYNAMICS_DE_TO_EN.get(row.dynamics_index_label or ""),
             social_inequality_label=row.social_inequality_label,
             residents=row.residents,
         )
