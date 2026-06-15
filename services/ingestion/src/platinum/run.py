@@ -1,0 +1,65 @@
+"""CLI orchestrator for the platinum layer (`listings_embeddings`).
+
+Usage:
+    python -m platinum.run                         # embed missing only
+    python -m platinum.run --reembed               # re-embed everything
+    python -m platinum.run --since 2026-06-01      # only listings since date
+
+Wraps in a single transaction so a mid-run failure rolls back partial
+writes. Embedding generation calls the Jina v3 API (free tier);
+provider details in `embed.py`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+import traceback
+
+from db import engine
+
+from . import embed as platinum
+
+logger = logging.getLogger(__name__)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="platinum.run",
+        description="Generate embeddings for listings (platinum layer).",
+    )
+    parser.add_argument(
+        "--reembed",
+        action="store_true",
+        help="re-embed every listing, even those already in listings_embeddings",
+    )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="only embed listings ingested on or after this ISO date",
+    )
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+    )
+
+    try:
+        with engine.begin() as conn:
+            embedded, skipped = platinum.embed_pending(
+                conn, reembed=args.reembed, since=args.since
+            )
+        logger.info(
+            "platinum: %d embedded, %d skipped (no text)", embedded, skipped
+        )
+        return 0
+    except Exception:
+        logger.error("FAIL platinum (rolled back):\n%s", traceback.format_exc())
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

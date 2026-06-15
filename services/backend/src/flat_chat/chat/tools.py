@@ -3,14 +3,17 @@ from datetime import date
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
-from flat_chat.chat.llm_context import LlmResultSetView, format_geo_context_prose
+from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.ui_state import UiApartment
-from flat_chat.search.buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from flat_chat.listings.types import (
+    DensityLabel,
+    GreeneryLabel,
+    NearSpec,
+    NoiseLabel,
+)
 from flat_chat.search.geo_filters import (
     HospitalFilter,
     MssFilter,
-    NearSpec,
     SchoolFilter,
     TransitFilter,
 )
@@ -300,46 +303,25 @@ async def search_apartments(
         sort_by=sort_by,
     )
 
-    # Surface soft-fallback signals to the LLM via LlmResultSetView.notes — these
-    # also flow back to the user. The service silently degrades, so this is
-    # the user-facing voice for those degradations.
-    notes: list[str] = []
-    if params.query and ctx.deps.search_service.embedder is None:
-        notes.append(
-            "Semantic ranking unavailable (no embedder configured) — results "
-            "filtered by metadata only and sorted by recency instead of relevance."
-        )
-    elif params.sort_by == "relevance" and not params.query:
-        notes.append(
-            "Sort=relevance requires a query — results sorted by recency instead."
-        )
+    # Execute the search. SearchService returns typed cards + total count.
+    cards, total = await ctx.deps.search_service.search(params)
 
-    df = await ctx.deps.search_service.search(params)
+    # Drop cards without coordinates so all three counts (chat prose,
+    # cards, map) agree — the map can only render markers for apartments
+    # with lat/lng. Filter at the tool layer; SearchService stays general.
+    cards = [c for c in cards if c.lat is not None and c.lng is not None]
 
-    # Drop listings without coordinates BEFORE building the view + UiState so
-    # all three counts (chat prose, cards, map) agree — the map can only render
-    # markers for apartments with lat/lng, and silently dropping them downstream
-    # caused user-visible count mismatches. The filter belongs at the tool layer;
-    # SearchService stays general.
-    df = df.dropna(subset=["latitude", "longitude"])
-    df = df.reset_index(drop=True)
-
-    ctx.deps.session.result_set = LlmResultSetView(df=df, params=params, notes=notes)
-
-    # Mirror into the frontend-facing UiState. The agent never reads from
-    # ctx.deps.state — it's exclusively for the UI to render the map + cards.
-    # Status-pill copy is owned entirely by the frontend (state/toolStatus.ts);
-    # tools push data only.
-    ctx.deps.state.results = [
-        UiApartment.from_dataframe_row(row) for _, row in df.iterrows()
-    ]
+    # SessionState is the canonical in-memory snapshot. Both the LLM
+    # (via build_dynamic_state_prompt) and the frontend (via AG-UI
+    # state stream) read from here. One representation, two consumers.
+    ctx.deps.state.search_params = params
+    ctx.deps.state.total_results = total
+    ctx.deps.state.results = cards
     ctx.deps.state.active_id = None
-    ctx.deps.state.active_listing_context = None
+    ctx.deps.state.active_listing_detail = None
 
-    return _return_with_state(
-        return_value=ctx.deps.session.result_set.summary(),
-        ui_state=ctx.deps.state,
-    )
+    summary = LlmResultSetView(ctx.deps.state).summary()
+    return _return_with_state(return_value=summary, session_state=ctx.deps.state)
 
 
 # TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
@@ -373,35 +355,32 @@ async def open_listing(
             output. NEVER pass UUIDs, external IDs, or anything that isn't a
             simple 1-based number visible to the user.
     """
-    rs = ctx.deps.session.result_set
-    if rs is None:
+    if not ctx.deps.state.results:
         return "No active search results. Run search_apartments first."
 
-    # Clear unconditionally on entry so a stale blob from a prior single-index
-    # call can't leak into a subsequent multi-index / out-of-range / no-detail
-    # response. Only the single-index success path repopulates it below.
-    ctx.deps.state.active_listing_context = None
+    rs = LlmResultSetView(ctx.deps.state)
 
-    # Anchor the detail panel to indices[0] regardless of count, so the UI
-    # has a consistent "the first card the user asked about" anchor.
+    # Clear unconditionally on entry so a stale blob from a prior call
+    # doesn't leak into a multi-index / out-of-range response.
+    ctx.deps.state.active_listing_detail = None
+
+    # Anchor the detail panel to indices[0] regardless of count.
     first = indices[0]
     pos = first - 1
-    geo_prose = ""
     if 0 <= pos < len(ctx.deps.state.results):
         active = ctx.deps.state.results[pos]
         ctx.deps.state.active_id = active.id
-        # Single-index calls fetch the geo-context blob and surface it both
-        # in UiState (so the frontend Neighbourhood panel renders) AND in
-        # the tool's return value (so the LLM can answer follow-up questions
-        # about transit / schools / noise / MSS without re-fetching).
+        # Single-index calls fetch tier 3 via ListingService and store it
+        # in state. The LLM reads this via build_dynamic_state_prompt's
+        # `<user_focus>` block on the next prompt build — so there's no
+        # need to embed the detail prose in this tool's return value.
         if len(indices) == 1:
-            detail = ctx.deps.search_service.get_listing_details(active.id)
+            detail = await ctx.deps.listing_service.get(active.id)
             if detail is not None:
-                ctx.deps.state.active_listing_context = detail.context
-                geo_prose = "\n\n" + format_geo_context_prose(first, detail.context)
+                ctx.deps.state.active_listing_detail = detail
 
     return _return_with_state(
-        return_value=rs.detail(indices) + geo_prose, ui_state=ctx.deps.state
+        return_value=rs.detail(indices), session_state=ctx.deps.state
     )
 
 
@@ -421,27 +400,27 @@ async def get_result_page(
         page: 1-based page number.
         page_size: Listings per page (default 10).
     """
-    rs = ctx.deps.session.result_set
-    if rs is None:
+    if not ctx.deps.state.results:
         return "No active search results. Run search_apartments first."
 
-    return rs.page(page, page_size)
+    return LlmResultSetView(ctx.deps.state).page(page, page_size)
 
 
-def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:
+def _return_with_state(*, return_value: str, session_state) -> ToolReturn:
     """Emit a STATE_SNAPSHOT alongside the tool's normal return value.
 
     Pydantic AI's AG-UI adapter yields any `BaseEvent` placed in
     `ToolReturn.metadata`. Snapshotting the full state on every mutating
-    tool call is simpler than diffing — the payload is small (≤ a few KB)
-    and CopilotKit applies snapshots idempotently.
+    tool call is simpler than diffing — the payload is bounded
+    (≤ 260 KB for 500 listings + active detail) and CopilotKit applies
+    snapshots idempotently.
     """
     return ToolReturn(
         return_value=return_value,
         metadata=[
             StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
-                snapshot=ui_state.model_dump(),
+                snapshot=session_state.model_dump(),
             ),
         ],
     )

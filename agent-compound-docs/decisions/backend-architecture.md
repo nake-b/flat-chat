@@ -2,6 +2,15 @@
 
 Decided 2025-05-09.
 
+> **June 2026 update.** Layering refined during the search-perf refactor:
+> a new `listings/` neutral domain module now owns the `Listing` ORM,
+> bucket label functions, threshold constants, and `ListingService`.
+> `search/` no longer owns "what does noise=58 mean". Strict dependency
+> direction is now: `api/` → `chat/` → `search/`, `listings/` →
+> `core/`. See [`listings-domain-module.md`](listings-domain-module.md)
+> for the why and [`session-state-design.md`](session-state-design.md)
+> for SessionState (renamed from UiState).
+
 ## Context
 
 The backend needs to support three distinct domains:

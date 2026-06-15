@@ -8,9 +8,9 @@ import type {
 } from "maplibre-gl";
 import type { FeatureCollection, Point } from "geojson";
 
-import { useUiState } from "../hooks/useUiState";
+import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
+import { type UiApartment } from "../state/SessionState";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -150,14 +150,14 @@ export function MapPane() {
   // suffer from closure / re-attach races against CopilotKit's frequent
   // state updates. `interactiveLayerIds` populates `e.features` with the
   // hits at the click/move point, so we don't need queryRenderedFeatures.
-  const { setState } = useUiState();
+  const { activate } = useSessionState();
   const { setHover } = useHover();
 
-  // Stable refs so the handler closures always see the LATEST setState /
+  // Stable refs so the handler closures always see the LATEST activate /
   // setHover without needing to re-bind on every render. React's useState
-  // setters are stable; useCoAgent's may not be.
-  const setStateRef = useRef(setState);
-  setStateRef.current = setState;
+  // setters are stable; CopilotKit-derived ones may not be.
+  const activateRef = useRef(activate);
+  activateRef.current = activate;
   const setHoverRef = useRef(setHover);
   setHoverRef.current = setHover;
 
@@ -185,11 +185,12 @@ export function MapPane() {
       return;
     }
 
-    // Unclustered apartment dot — open detail in cards pane.
+    // Unclustered apartment dot — open detail in cards pane. Goes through
+    // the activate() helper so the HTTP detail fetch fires alongside the
+    // active_id update.
     const id = f.properties?.id ?? (f.id as string | undefined);
     if (id) {
-      const next = String(id);
-      setStateRef.current((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: next }));
+      void activateRef.current(String(id));
     }
   }, []);
 
@@ -232,7 +233,7 @@ export function MapPane() {
 }
 
 function ApartmentLayer() {
-  const { state } = useUiState();
+  const { state } = useSessionState();
   const { hoverId } = useHover();
   const { "apartments-map": map } = useMap();
   const lastFeatureStateIds = useRef<Set<string>>(new Set());

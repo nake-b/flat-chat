@@ -1,28 +1,32 @@
 import { useEffect, useRef } from "react";
 
-import { useUiState } from "../hooks/useUiState";
+import { useSessionState } from "../hooks/useSessionState";
 import {
-  EMPTY_UI_STATE,
-  type ListingContext,
+  type ListingDetail,
   type UiApartment,
-} from "../state/UiState";
+} from "../state/SessionState";
 
 // Detail panel: a card-sized white pane sitting at the top of the cards
 // slot, with the paper background of `CardsPane` showing beneath. The
 // pane sizes to its content — no stretching, no Option-X expansion, no
 // filler band. Matches the strip's "card-on-paper" visual density.
 export function CardDetail({ apt }: { apt: UiApartment }) {
-  const { state, setState } = useUiState();
+  const { state, activate } = useSessionState();
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Geo-context blob arrives when the agent calls `get_listing_details(id)`.
-  // We only render it for the *currently active* listing — the agent clears
-  // it on the next search so stale context can't leak across selections.
-  const ctx =
-    state?.active_id === apt.id ? state?.active_listing_context ?? null : null;
+  // Tier-3 detail blob — fetched by `activate(id)` via GET /api/listings/{id}
+  // when the user clicks a card (the primary path) OR pushed by the agent's
+  // `open_listing` tool via state delta. Either way it lives in SessionState
+  // as `active_listing_detail`. We only render it for the *currently active*
+  // listing so stale data can't leak across selections.
+  const detail: ListingDetail | null =
+    state?.active_id === apt.id ? state?.active_listing_detail ?? null : null;
+  // Back-compat alias for the existing rendering code below — `ctx` was the
+  // old name; ListingDetail is a superset of what ListingContext exposed.
+  const ctx = detail;
 
   const close = () => {
-    setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: null }));
+    void activate(null);
   };
 
   useEffect(() => {
@@ -122,6 +126,8 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
 
       <AmenityChips apt={apt} />
 
+      <ImageGallery detail={detail} apt={apt} />
+
       <EnergyBlock apt={apt} />
 
       {ctx && <GeoContextBlock ctx={ctx} />}
@@ -182,6 +188,52 @@ function summarize(apt: UiApartment): string {
   return parts.join(" ");
 }
 
+// Image gallery. Uses the full list from ListingDetail.images when available
+// (HTTP-fetched on card click); falls back to the single image_url tier-2
+// thumbnail for the initial render before the detail fetch completes.
+// Lazy `loading="lazy"` so a long gallery doesn't block the rest of the
+// detail render.
+function ImageGallery({
+  detail,
+  apt,
+}: {
+  detail: ListingDetail | null;
+  apt: UiApartment;
+}) {
+  const images: string[] =
+    detail && detail.images.length > 0
+      ? detail.images
+      : apt.image_url
+      ? [apt.image_url]
+      : [];
+  if (images.length === 0) return null;
+
+  return (
+    <div className="border-t border-paper-rule px-7 py-3">
+      <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+        {images.length === 1 ? "Photo" : `Photos · ${images.length}`}
+      </div>
+      <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+        {images.map((src, i) => (
+          <img
+            key={`${src}-${i}`}
+            src={src}
+            alt={apt.title ? `${apt.title} — photo ${i + 1}` : `Listing photo ${i + 1}`}
+            loading="lazy"
+            decoding="async"
+            className="h-32 w-auto flex-shrink-0 border border-paper-rule object-cover"
+            onError={(e) => {
+              // Hide broken images rather than showing the alt-text placeholder
+              // — many scraper URLs 403 after a few hours.
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Chip row for the most-asked amenities. Render `true` only — `false` and
 // `null` both stay hidden so the row reflects confirmed features, not
 // absence of data. WBS gets the leading slot because it's a hard
@@ -217,15 +269,17 @@ function AmenityChips({ apt }: { apt: UiApartment }) {
 
 // Geo-context block: nearby transit / schools / parks / noise / MSS / hospitals.
 // Only sections with data render; partial backend wiring produces partial UI,
-// not stale empty rows. Pulls from UiState.active_listing_context, which the
-// agent populates via the `get_listing_details` tool.
-function GeoContextBlock({ ctx }: { ctx: ListingContext }) {
+// not stale empty rows. Pulls from SessionState.active_listing_detail, which
+// is populated by the frontend's HTTP fetch on card click OR by the agent's
+// `open_listing` tool via state delta.
+function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
   const hasAny =
-    ctx.transit.length > 0 ||
+    ctx.nearest_transit_stops.length > 0 ||
     ctx.nearest_schools.length > 0 ||
     ctx.nearest_parks.length > 0 ||
     ctx.nearest_hospitals.length > 0 ||
     ctx.nearest_water != null ||
+    ctx.nearest_playground != null ||
     ctx.noise != null ||
     ctx.greenery != null ||
     ctx.density != null ||
@@ -240,10 +294,10 @@ function GeoContextBlock({ ctx }: { ctx: ListingContext }) {
         Neighbourhood context
       </div>
 
-      {ctx.transit.length > 0 && (
+      {ctx.nearest_transit_stops.length > 0 && (
         <Section title="Transit">
           <ul className="space-y-0.5">
-            {ctx.transit.map((stop) => (
+            {ctx.nearest_transit_stops.map((stop) => (
               <li key={stop.stop_id} className="text-[12.5px] text-ink-soft">
                 <span className="text-ink">{stop.name}</span>
                 {stop.lines.length > 0 && (
@@ -302,6 +356,18 @@ function GeoContextBlock({ ctx }: { ctx: ListingContext }) {
         </Section>
       )}
 
+      {ctx.nearest_playground != null && (
+        <Section title="Nearest playground">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.nearest_playground.name ?? "unnamed"}
+            <span className="font-mono text-[11px] text-ink-ghost">
+              {" "}
+              · {ctx.nearest_playground.distance_m}m
+            </span>
+          </div>
+        </Section>
+      )}
+
       {ctx.nearest_water != null && (
         <Section title="Nearest water">
           <div className="text-[12.5px] text-ink-soft">
@@ -357,25 +423,38 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Single-row strip of character labels: noise / greenery / density / MSS.
-// Each cell only renders when its label is non-null, so partial coverage
-// produces clean visual output rather than ghost cells.
-function CharacterRow({ ctx }: { ctx: ListingContext }) {
-  const cells: { label: string; value: string }[] = [];
+// Single-row strip of character labels with raw values underneath. Each
+// cell only renders when its label is non-null. Now surfaces the raw
+// numerics (Lden / m² / persons-per-hectare) and the MSS social-inequality
+// label so users see the data behind the bucket.
+function CharacterRow({ ctx }: { ctx: ListingDetail }) {
+  const cells: { label: string; value: string; sub?: string }[] = [];
   if (ctx.noise?.label) {
-    cells.push({ label: "Noise", value: ctx.noise.label });
+    const sub = formatNoiseBreakdown(ctx.noise);
+    cells.push({ label: "Noise", value: ctx.noise.label, sub });
   }
   if (ctx.greenery?.label) {
-    cells.push({ label: "Greenery", value: ctx.greenery.label });
+    const sub =
+      ctx.greenery.green_m2_within_300m != null
+        ? `${Math.round(ctx.greenery.green_m2_within_300m).toLocaleString()} m² / 300m`
+        : undefined;
+    cells.push({ label: "Greenery", value: ctx.greenery.label, sub });
   }
   if (ctx.density?.label) {
-    cells.push({ label: "Density", value: ctx.density.label });
+    const sub =
+      ctx.density.persons_per_hectare != null
+        ? `${Math.round(ctx.density.persons_per_hectare)} ppl/ha`
+        : undefined;
+    cells.push({ label: "Density", value: ctx.density.label, sub });
   }
-  if (ctx.mss?.status_label) {
-    const v = ctx.mss.dynamics_label
-      ? `${ctx.mss.status_label} · ${ctx.mss.dynamics_label}`
-      : ctx.mss.status_label;
-    cells.push({ label: "Sozialmonitoring", value: v });
+  if (ctx.mss?.status) {
+    const v = ctx.mss.dynamics
+      ? `${ctx.mss.status} · ${ctx.mss.dynamics}`
+      : ctx.mss.status;
+    const sub = ctx.mss.social_inequality
+      ? `inequality: ${ctx.mss.social_inequality}`
+      : undefined;
+    cells.push({ label: "Sozialmonitoring", value: v, sub });
   }
   if (cells.length === 0) return null;
 
@@ -387,10 +466,22 @@ function CharacterRow({ ctx }: { ctx: ListingContext }) {
             {c.label}
           </span>
           <span className="text-[12.5px] text-ink-soft">{c.value}</span>
+          {c.sub && (
+            <span className="font-mono text-[10px] text-ink-ghost">{c.sub}</span>
+          )}
         </div>
       ))}
     </div>
   );
+}
+
+function formatNoiseBreakdown(noise: ListingDetail["noise"]): string | undefined {
+  if (!noise) return undefined;
+  const parts: string[] = [];
+  if (noise.total_lden != null) parts.push(`Lden ${noise.total_lden.toFixed(0)} dB`);
+  if (noise.street_lden != null) parts.push(`street ${noise.street_lden.toFixed(0)}`);
+  if (noise.rail_lden != null) parts.push(`rail ${noise.rail_lden.toFixed(0)}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 // Heating-only block. We used to also surface energy_consumption_kwh

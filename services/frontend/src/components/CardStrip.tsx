@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useUiState } from "../hooks/useUiState";
+import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
+import { type UiApartment } from "../state/SessionState";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -25,7 +25,7 @@ function pickCardCount(containerWidth: number): number {
 // which the CardsPane reacts to by swapping in <CardDetail/> and triggers
 // the parent layout to grow this pane to 50% (Option X).
 export function CardStrip() {
-  const { state, setState } = useUiState();
+  const { state, activate } = useSessionState();
   const setHover = useHover((s) => s.setHover);
   const hoverId = useHover((s) => s.hoverId);
   const apartments = state?.results ?? [];
@@ -86,7 +86,7 @@ export function CardStrip() {
             index={idx + 1}
             hovered={hoverId === a.id}
             onHoverChange={(hover) => setHover(hover ? a.id : null)}
-            onClick={() => setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: a.id }))}
+            onClick={() => { void activate(a.id); }}
           />
         ))}
       </div>

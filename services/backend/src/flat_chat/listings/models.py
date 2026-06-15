@@ -1,3 +1,24 @@
+"""ORM models for the listings domain.
+
+Spans every layer that carries listing data:
+  - Iron / Bronze: `IronCard`, `RawListing` — raw scraper output and
+    parsed detail-page JSON. Used in foreign-key relationships from
+    `Listing` so the silver row remembers its provenance.
+  - Silver: `Listing` — cleaned, typed, normalised. Source-faithful per
+    entity. This is the canonical "an apartment exists" record.
+  - Gold: `ListingGeoContext` — denormalised pre-joined geo-context. One
+    row per listing. Populated by `services/ingestion/src/gold/`. Search
+    queries `listings ⨝ listings_geo_context` for chip-level filtering.
+  - Platinum: `ListingEmbedding` — semantic-search vectors. Split out so
+    the HNSW index lives only on the table that uses it.
+
+Moved from `search/models.py` (the old home). Search no longer owns
+domain types — it's filter + rank only. Same `Base` declarative root as
+before.
+"""
+
+from __future__ import annotations
+
 import uuid
 
 from geoalchemy2 import Geometry
@@ -14,7 +35,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from flat_chat.core.database import Base
@@ -84,6 +105,9 @@ class Listing(Base):
 
     The union of every field any source could produce. Adding a new source
     requires a new per-source transformer, not a schema migration.
+
+    Embeddings live in the platinum layer (`ListingEmbedding`) — split out
+    in migration 0005 so swapping models is a platinum-only refresh.
     """
 
     __tablename__ = "listings"
@@ -99,15 +123,6 @@ class Listing(Base):
         Index("ix_listings_wbs_required", "wbs_required"),
         Index("ix_listings_lat_lon", "latitude", "longitude"),
         Index("ix_listings_postal_code", "postal_code"),
-        # HNSW ANN index for cosine-distance ORDER BY on embedding.
-        # m/ef_construction are pgvector defaults; tune once data volume warrants.
-        Index(
-            "listings_embedding_hnsw_idx",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-        ),
         # Functional GiST so ST_DWithin queries that cast to ::geography
         # (radius in meters) can hit an index. GeoAlchemy2 already auto-creates
         # a plain GiST on the geometry column itself.
@@ -199,9 +214,6 @@ class Listing(Base):
     images: Mapped[list | None] = mapped_column(JSONB)
     key_facts: Mapped[dict | None] = mapped_column(JSONB)
 
-    # Embedding — Jina v3, 1024 dims. Locked in revision 0002.
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
-
     # Timestamps
     scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     ingested_at: Mapped[str] = mapped_column(
@@ -215,3 +227,94 @@ class Listing(Base):
     )
 
     raw_listing: Mapped[RawListing | None] = relationship(back_populates="listing")
+    geo_context: Mapped[ListingGeoContext | None] = relationship(
+        back_populates="listing", uselist=False
+    )
+    embedding_row: Mapped[ListingEmbedding | None] = relationship(
+        back_populates="listing", uselist=False
+    )
+
+
+class ListingGeoContext(Base):
+    """Gold layer: pre-joined geo-context per listing.
+
+    One row per listing. Filled by `services/ingestion/src/gold/`. The
+    search hot-path reads these columns via B-tree filters; the detail
+    panel reads the JSONB blobs via a single PK lookup.
+
+    Scalar chip columns store RAW numbers — bucket labels are applied at
+    the chat presentation layer via `listings.labels` (so threshold
+    tweaks don't require a gold rebuild).
+    """
+
+    __tablename__ = "listings_geo_context"
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    # Card-level chip scalars (B-tree-filterable)
+    nearest_transit_lines: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+    nearest_transit_m: Mapped[int | None] = mapped_column(Integer)
+    nearest_transit_name: Mapped[str | None] = mapped_column(Text)
+    nearest_park_name: Mapped[str | None] = mapped_column(Text)
+    nearest_park_m: Mapped[int | None] = mapped_column(Integer)
+    noise_total_lden: Mapped[float | None] = mapped_column(Float)
+    persons_per_hectare: Mapped[float | None] = mapped_column(Float)
+    mss_status: Mapped[str | None] = mapped_column(Text)
+    mss_dynamics: Mapped[str | None] = mapped_column(Text)
+
+    # Detail-panel JSONB blobs (shape mirrors `listings.context` models)
+    transit_top3: Mapped[list | None] = mapped_column(JSONB)
+    school_catchment: Mapped[dict | None] = mapped_column(JSONB)
+    schools_top3: Mapped[list | None] = mapped_column(JSONB)
+    parks_top2: Mapped[list | None] = mapped_column(JSONB)
+    playground: Mapped[dict | None] = mapped_column(JSONB)
+    hospitals_top2: Mapped[list | None] = mapped_column(JSONB)
+    water: Mapped[dict | None] = mapped_column(JSONB)
+    noise_profile: Mapped[dict | None] = mapped_column(JSONB)
+    greenery_profile: Mapped[dict | None] = mapped_column(JSONB)
+    density_profile: Mapped[dict | None] = mapped_column(JSONB)
+    mss_profile: Mapped[dict | None] = mapped_column(JSONB)
+    disabled_parking_count: Mapped[int | None] = mapped_column(Integer)
+
+    enriched_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    listing: Mapped[Listing] = relationship(back_populates="geo_context")
+
+
+class ListingEmbedding(Base):
+    """Platinum layer: vector embeddings for semantic search.
+
+    One row per listing. Filled by `services/ingestion/src/platinum/`.
+    HNSW ANN index on `embedding` lives only on this table. Schema-level
+    `vector(1024)` matches the Jina v3 model dim.
+    """
+
+    __tablename__ = "listings_embeddings"
+    __table_args__ = (
+        Index(
+            "listings_embeddings_hnsw_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(1024), nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    embedded_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    listing: Mapped[Listing] = relationship(back_populates="embedding_row")

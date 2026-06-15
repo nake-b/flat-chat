@@ -1,13 +1,30 @@
+"""Search input + output schemas.
+
+`SearchParams` is the tool-arg surface for `search_apartments`. Wide and
+flat by design — LLMs handle ~30 flat optional fields better than deep
+nesting. Geo-context filters that have internal combinatorial structure
+(transit modes ∧ lines ∧ stop name, MSS status floor + dynamics) are
+allowed one level of nesting.
+
+Bucket labels (NoiseLabel, GreeneryLabel, DensityLabel) live in
+`listings.types` — single source of truth across the project.
+"""
+
 from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from flat_chat.listings.types import (
+    DensityLabel,
+    GreeneryLabel,
+    NearSpec,
+    NoiseLabel,
+)
+
 from .geo_filters import (
     HospitalFilter,
     MssFilter,
-    NearSpec,
     SchoolFilter,
     TransitFilter,
 )
@@ -80,4 +97,7 @@ class SearchParams(BaseModel):
     density: DensityLabel | None = None
 
     sort_by: SortBy = "relevance"
-    limit: int = Field(default=50, ge=1, le=200)
+    # Cap raised post-refactor: gold makes 500-result searches cheap
+    # (B-tree filters on a denorm join, no spatial work). Hard max keeps
+    # accidental "limit=10000" from blowing up the SSE payload.
+    limit: int = Field(default=300, ge=1, le=500)

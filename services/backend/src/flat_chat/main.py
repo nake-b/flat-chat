@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from flat_chat.api import agent, chat
+from flat_chat.api import agent, chat, listings
 from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import (
     setup_logging,
@@ -35,6 +35,12 @@ app.include_router(
     agent.router,
     prefix="/api/agent",
     tags=["agent"],
+)
+
+app.include_router(
+    listings.router,
+    prefix="/api/listings",
+    tags=["listings"],
 )
 
 

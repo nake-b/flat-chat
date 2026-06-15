@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,16 @@ def transform(session: Session) -> int:
         values["source_name"] = source
         values["external_id"] = raw["external_id"]
         values["scraped_at"] = raw["scraped_at"]
+
+        # Keep the PostGIS `location` Point in sync with `latitude`/`longitude`
+        # on every write. Migration 0002 did a one-shot historical backfill,
+        # but new listings without this would skip the gold layer entirely
+        # (gold queries `location`, not lat/lng). The expression evaluates
+        # at INSERT time so it captures whatever lat/lng the transformer set.
+        lat = values.get("latitude")
+        lon = values.get("longitude")
+        if lat is not None and lon is not None:
+            values["location"] = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
 
         stmt = pg_insert(listings).values(**values)
         update_set = {k: v for k, v in values.items() if k not in ("source_name", "external_id")}

@@ -1,6 +1,30 @@
 # CLAUDE.md
 
-Project context for Claude Code.
+Project context for Claude Code. Per-service context lives in:
+- [`services/backend/CLAUDE.md`](services/backend/CLAUDE.md) — backend layering, async DB, SessionState, prompt assembly
+- [`services/frontend/CLAUDE.md`](services/frontend/CLAUDE.md) — React state mirror, AG-UI integration, components
+- [`services/ingestion/CLAUDE.md`](services/ingestion/CLAUDE.md) — medallion layers, gold/platinum ETL, chain triggers
+
+Architecture decision docs in `agent-compound-docs/decisions/`. The most
+load-bearing ones to read first:
+- [`agent-vs-http-data-flow.md`](agent-compound-docs/decisions/agent-vs-http-data-flow.md) — the AG-UI/HTTP split + 3 tiers of listing data
+- [`gold-platinum-layers.md`](agent-compound-docs/decisions/gold-platinum-layers.md) — medallion architecture + why gold + why platinum
+- [`session-state-design.md`](agent-compound-docs/decisions/session-state-design.md) — SessionState shape, naming, no-DataFrame
+- [`listings-domain-module.md`](agent-compound-docs/decisions/listings-domain-module.md) — the new `listings/` neutral domain
+- [`backend-architecture.md`](agent-compound-docs/decisions/backend-architecture.md) — layered architecture overview
+- [`dynamic-prompt-instructions.md`](agent-compound-docs/decisions/dynamic-prompt-instructions.md) — where state-dependent vs cached instructions live
+- [`async-database-layer.md`](agent-compound-docs/decisions/async-database-layer.md) — sync + async engines coexisting
+- [`geo-context-pipeline.md`](agent-compound-docs/decisions/geo-context-pipeline.md) — geo ETL design (incl. MSS English translation in silver)
+- [`geo-context-thresholds.md`](agent-compound-docs/decisions/geo-context-thresholds.md) — single source of truth for numeric thresholds
+
+## Important — operational rules
+
+- **NEVER run the scraper unless explicitly asked.** Local dev uses existing bronze data — `silver.run` → `gold.run` → `platinum.run` is the closed loop that produces a working app. Scraper is a separate compose profile that must be invoked deliberately.
+- **Keep tests in mind.** The project is past the toy stage — backend, ingestion, and frontend each have multiple intersecting layers and the surface area is too large to verify by smoke-testing alone. Whenever you touch a code path, ask whether a test would have caught the next regression in that path. If yes, write one in the same change.
+  - Sweet spot: integration tests that **execute** SQL/HTTP/SSE against a real fixture, not just compile-or-mock. The June 2026 `jsonb ?| jsonb` operator bug shipped because the code "compiled" in SQLAlchemy but Postgres rejected it at runtime — a stmt-compile assertion would have missed it; an integration test that ran the query against Postgres would have caught it in milliseconds.
+  - Smoke harnesses (`scripts/smoke_conversations.py`, dev-browser, manual chat) cover the LLM-in-the-loop layer only. They are not a substitute for unit/integration tests of the deterministic layers.
+  - Setup + run instructions: [`services/backend/tests/README.md`](services/backend/tests/README.md). The integration tier is gated on `TEST_DATABASE_URL` so bare `pytest` still works in environments without postgres.
+  - When a bug ships that tests should have caught, add the regression test in the same fix commit. Don't leave it as a TODO.
 
 ## Project Overview
 
@@ -17,66 +41,29 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 
 ## Project Structure
 
+High-level — read the per-service CLAUDE.md files for detailed layouts.
+
 ```
-services/frontend/          → React + Vite chat-host SPA, served by Nginx as static files
-  src/
-    main.tsx                → bootstraps session, mounts <CopilotKit> with HttpAgent → /api/agent
-    App.tsx                 → chat-host layout: chat left ~40%, map+cards right (Option-X resize)
-    state/UiState.ts        → TS mirror of backend UiState (kept in sync manually)
-    hooks/                  → useUiState (wraps useCoAgent), useHover (zustand, client-local)
-    api/session.ts          → POST /api/conversations to allocate a thread_id
-    components/             → ChatPane, MapPane (MapLibre + clustering), CardsPane / CardStrip / CardDetail
-services/backend/           → FastAPI app, domain-isolated layered architecture
-  src/flat_chat/
-    main.py                 → FastAPI app, router registration
-    core/                   → Config (Pydantic Settings), database (engine, sessions)
-    api/                    → Thin FastAPI routers (HTTP concerns only)
-                              chat.py     — POST create conversation, GET history (no message-send)
-                              agent.py    — POST /api/agent — AG-UI streaming via AGUIAdapter
-    chat/                   → Chat domain
-                              agent.py     — Agent(toolsets=[toolset]), role-level XML INSTRUCTIONS,
-                                             @agent.instructions → build_dynamic_state_prompt
-                              tools.py     — FunctionToolset[ChatDeps] + @toolset.tool + @toolset.instructions
-                                             (tool-protocol guidance + phrase map live here)
-                              llm_context.py — LlmResultSetView (LLM-facing view), format_navigation_footer,
-                                             format_geo_context_prose, build_dynamic_state_prompt.
-                                             Owns every byte the LLM sees about result data.
-                              state.py     — ChatSession, ChatDeps (pure data; no formatting)
-                              ui_state.py  — UiState / UiApartment (frontend mirror)
-                              sessions.py  — SessionStore Protocol + InMemorySessionStore
-                              service.py   — ChatService — dispatches AG-UI run + persists state/history
-                              schemas.py   — API response models
-                              providers/   — chat-model dispatch (single provider seam)
-                                __init__.py  — build_chat_model() orchestrator (key-presence only)
-                                anthropic.py — direct Anthropic + prompt caching
-                                azure.py     — Azure OpenAI Service
-    search/                 → Search domain (service, models, schemas — SearchParams)
-    users/                  → Users domain (sessions, bookmarks — future)
-services/ingestion/         → Batch data ingestion, triggered by cron
-  src/
-    iron/, bronze/, silver/ → Listings pipeline (cards → raw JSON → typed listings)
-    scraper/                → Per-source Node scrapers (wg-gesucht, kleinanzeigen)
-    geo_context/            → Berlin geo context ETL (WFS + GTFS), separate from listings
-      extract/wfs.py        — BerlinGdiWfsClient (GetCapabilities + GetFeature)
-      extract/gtfs.py       — VbbGtfsClient (download zip → 5 needed tables)
-      transform/aliases.py  — German→English column maps per (dataset, layer)
-      transform/wfs.py      — reproject to 4326 + rename + filter to silver columns
-      transform/gtfs.py     — station collapse, modes/lines, canonical route shapes
-      load/postgis.py       — transactional truncate+insert
-      datasets.yaml         — source-of-truth catalog with status flags
-      run.py                — CLI: python -m geo_context.run [--only k1,k2]
-      icebox/               — parked code, not wired in (see icebox/README.md)
-nginx/                      → Reverse proxy (SPA at /, proxies /api/conversations + /api/agent (SSE), serves /tiles/)
-data/tiles/                 → Protomaps .pmtiles for MapLibre — mounted into nginx at /tiles/
-agent-compound-docs/        → Architecture decisions and deployment guide
+services/frontend/   → React SPA. State mirror: SessionState.ts (was UiState.ts).
+services/backend/    → FastAPI. Layers: api → chat → search/listings → core.
+                       NEW: `listings/` module owns shared listing concerns
+                       (ORM, types, labels, thresholds, ListingService).
+services/ingestion/  → ETL. Layers: bronze/silver/gold/platinum.
+                       NEW: `gold/` (listings_geo_context) + `platinum/` (embeddings).
+                       silver.run chains gold + platinum at the end.
+nginx/               → Reverse proxy. /api/conversations + /api/agent (SSE)
+                       + /api/listings + /api/health + /tiles/.
+agent-compound-docs/decisions/ → Architecture decision records.
 ```
 
 ## Running the Project
 
 ```bash
 docker compose up --build                                  # Start all services at http://localhost
-docker compose --profile ingestion run --rm ingestion      # Run listings ingestion manually
-docker compose --profile geo-context run --rm geo-context  # Run geo-context ETL (WFS + GTFS)
+docker compose --profile ingestion run --rm ingestion      # silver.run (chains gold + platinum)
+docker compose --profile geo-context run --rm geo-context  # WFS + GTFS (chains gold re-enrichment)
+docker compose --profile gold run --rm gold                # Standalone gold rebuild (no scraping)
+docker compose --profile platinum run --rm platinum        # Standalone re-embed
 ```
 
 ## API Conventions
@@ -84,8 +71,20 @@ docker compose --profile geo-context run --rm geo-context  # Run geo-context ETL
 - All API routes are prefixed with `/api/`
 - Conversation lifecycle: `POST /api/conversations` (create session, id doubles as AG-UI `thread_id`), `GET /api/conversations/{id}/messages` (history reload — read-only)
 - Sending a message goes through `POST /api/agent` — AG-UI Protocol streaming (SSE). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed
+- Direct listing reads via `GET /api/listings/{id}` — used by the frontend's detail panel on card click. `Cache-Control: public, max-age=300`. Same `ListingService.get(id)` powers both this route and the agent's `open_listing` tool
 - The frontend uses relative URLs (`/api/...`) — works via both Vite dev proxy and Nginx
-- Nginx proxies `/api/conversations`, `/api/agent` (with SSE-safe `proxy_buffering off`), `/api/health`, and serves `/tiles/` (Protomaps `.pmtiles` for MapLibre). No wildcard `/api/` exposure
+- Nginx proxies `/api/conversations`, `/api/agent` (with SSE-safe `proxy_buffering off`), `/api/listings`, `/api/health`, and serves `/tiles/` (Protomaps `.pmtiles` for MapLibre). No wildcard `/api/` exposure
+
+## Data-flow split — agent vs HTTP
+
+Two channels between frontend and backend, by design:
+
+- **AG-UI SSE** (`POST /api/agent`) owns *interpretation* — turning natural language into structured filters, deciding what tools to call. Carries tier-1+2 (markers + cards, ~250 KB at 500 listings) via `SessionState`. Heavy data (images, full description, tier-3 detail) does NOT ride this channel.
+- **HTTP REST** owns *durable reads* — `GET /api/listings/{id}` for tier-3 detail when the user clicks a card. Browser-cacheable, bookmark-ready, share-URL-ready.
+
+`SearchService` is agent-only — the LLM owns query interpretation. `ListingService` is shared (lookup by ID is anyone's business).
+
+See [`agent-vs-http-data-flow.md`](agent-compound-docs/decisions/agent-vs-http-data-flow.md) for the full pattern.
 
 ## Architecture Notes
 
@@ -124,6 +123,10 @@ The architecture lives in `architecture.drawio` (source of truth, edit in draw.i
 
 The .drawio file is ~900KB due to embedded SVG icons. **Read `agent-compound-docs/decisions/editing-drawio-programmatically.md` before editing** — it documents how to parse, modify, strip images for MCP preview, and verify horizontal line alignment via Python scripts.
 
+## Backend component / context diagrams
+
+`services/backend/component-diagram.drawio` and `services/backend/context-engineering-diagram.drawio` are hand-laid draw.io diagrams of the backend internals — NOT generated by the architecture-diagram skill (its auto-layout looks generic and has been rejected). They use a **light theme, big fonts, big gaps**. **Before editing or building these, read `agent-compound-docs/decisions/component-diagram-playbook.md`** — it covers the house style, reserving arrow corridors before placing boxes, render-to-PNG verification (cairosvg + Read the image), and restructuring over nudging. Do NOT set light-coloured titles "for dark mode": the files are light and viewed light; a dark PNG is a separate export step, not a property of the file.
+
 ## Keeping docs and env in sync
 
 Drift between these files causes painful onboarding and stale review feedback. When you change anything in one of the buckets below, update the rest in the same change.
@@ -155,6 +158,12 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 
 - Cities other than Berlin
 - Mobile / responsive layouts — desktop-only product. Don't add mobile breakpoints, bottom sheets, or touch-first interactions unless the user reverses this decision.
+
+## TODOs we know about
+
+- **In-memory refinement of the active result set.** Today, every refinement (adding a filter to a result that's already loaded) re-runs `search_apartments` against the gold table. That's fast (~50ms) so we ship it that way. If refinement-latency ever becomes a UX issue, the path forward is documented in [`session-state-design.md`](agent-compound-docs/decisions/session-state-design.md): integrate pandas into `SessionState` and add a `state.refine(params)` method that filters the snapshot in memory. The snapshot already exists; only the refinement plumbing is new.
+- **Listings without embeddings** still happen — `platinum.run` requires `JINA_API_KEY`. Without it, semantic-search ranking degrades to recency. Set the env var and run `platinum.run` to backfill.
+- **immowelt + wohninberlin scrapers exist but no silver transformer.** Their bronze rows accumulate but never reach listings. Add transformers in `services/ingestion/src/silver/sources/`.
 
 ## Deferred / nice-to-have (post-MVP)
 

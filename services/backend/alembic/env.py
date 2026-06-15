@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from flat_chat.core.config import settings
 from flat_chat.core.database import Base
-import flat_chat.search.models  # noqa: F401 — registers models for autogenerate
+import flat_chat.listings.models  # noqa: F401 — registers models for autogenerate
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

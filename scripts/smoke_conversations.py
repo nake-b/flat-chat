@@ -20,7 +20,12 @@ import uuid
 
 import httpx
 
-BASE = "http://localhost:8000"
+import os
+
+# Default to nginx on the host (port 80, same path the browser uses).
+# Override with SMOKE_BASE=http://localhost:8000 to hit the backend
+# container directly, e.g. from inside docker compose exec.
+BASE = os.environ.get("SMOKE_BASE", "http://localhost")
 
 
 def make_user_msg(text: str) -> dict:
@@ -102,7 +107,17 @@ async def run_conversation(label: str, turns: list[str]) -> None:
         print(f"thread_id: {thread_id}")
 
         messages: list[dict] = []
-        state: dict = {"results": [], "active_id": None, "active_listing_context": None}
+        # Empty SessionState (renamed from UiState in the June 2026 refactor —
+        # see agent-compound-docs/decisions/session-state-design.md). Tracks
+        # both the agent-owned bits (search_params, results) and the
+        # frontend-owned focus (active_id, active_listing_detail).
+        state: dict = {
+            "search_params": None,
+            "total_results": 0,
+            "results": [],
+            "active_id": None,
+            "active_listing_detail": None,
+        }
 
         for i, user_text in enumerate(turns, start=1):
             print(f"\n--- Turn {i} ---")
