@@ -38,11 +38,15 @@ SILVER_SRID = 4326
 # `services/backend/` ever sees German.
 # ---------------------------------------------------------------------------
 
-_MSS_STATUS_DE_TO_EN: dict[str, str] = {
+_MSS_STATUS_DE_TO_EN: dict[str, str | None] = {
     "sehr niedrig": "disadvantaged",
     "niedrig": "lower-income",
     "mittel": "mixed",
     "hoch": "affluent",
+    # Publisher's "no data" sentinel — planning areas without a
+    # social-monitoring classification. Map to None so it doesn't leak
+    # into gold / search as a pseudo-status string.
+    "Planungsraum ohne Zuordnung": None,
 }
 
 _MSS_DYNAMICS_DE_TO_EN: dict[str, str] = {

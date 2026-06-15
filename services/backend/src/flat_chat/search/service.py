@@ -50,6 +50,8 @@ from flat_chat.listings.models import (
     ListingNearbyTransit,
     ListingNearbyWater,
 )
+from flat_chat.listings.types import MssDynamics, MssStatus
+from typing import get_args as _typing_get_args
 from flat_chat.listings.thresholds import (
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
@@ -466,6 +468,25 @@ class SearchService:
 # ---------------------------------------------------------------------------
 
 
+_MSS_STATUS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssStatus))
+_MSS_DYNAMICS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssDynamics))
+
+
+def _safe_mss_status(value: str | None) -> str | None:
+    """Coerce unknown / sentinel MSS status strings (e.g. ``Planungsraum
+    ohne Zuordnung`` — the publisher's "no data" marker) to None instead
+    of letting Pydantic raise. Real labels pass through unchanged."""
+    if value is None:
+        return None
+    return value if value in _MSS_STATUS_VALUES else None
+
+
+def _safe_mss_dynamics(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value if value in _MSS_DYNAMICS_VALUES else None
+
+
 def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
     """Build a UiApartment from a SELECT row.
 
@@ -542,7 +563,7 @@ def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
         nearest_park_m=mapping.get("nearest_park_m"),
         noise_label=bucket_noise(noise_lden),
         density_label=bucket_density(pph),
-        mss_status_label=mapping.get("mss_status"),
-        mss_dynamics_label=mapping.get("mss_dynamics"),
+        mss_status_label=_safe_mss_status(mapping.get("mss_status")),
+        mss_dynamics_label=_safe_mss_dynamics(mapping.get("mss_dynamics")),
         similarity_score=sim_score,
     )
