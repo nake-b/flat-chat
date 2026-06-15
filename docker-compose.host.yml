@@ -1,0 +1,43 @@
+# Host-only overlay. Adds a Tailscale sidecar and routes the host's existing
+# Postgres through it, so teammates can pull fresh data from `flat-chat-db` on
+# the tailnet (see scripts/refresh-db.sh).
+#
+# Teammates DO NOT load this file — their `docker compose up` brings up a
+# completely local stack with their own Postgres on the docker bridge.
+#
+# Host usage — set in your .env, then `docker compose up` auto-loads both:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml
+#   TS_AUTHKEY=tskey-auth-...
+#
+# See agent-compound-docs/decisions/shared-dev-database.md.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: flat-chat-db
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?TS_AUTHKEY must be set — generate at https://login.tailscale.com/admin/settings/keys (tag:flat-chat-db)}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_EXTRA_ARGS=--advertise-tags=tag:flat-chat-db
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      default:
+        aliases:
+          - postgres
+    restart: unless-stopped
+
+  postgres:
+    # Join the tailscale container's network namespace so Postgres listens on
+    # the tailnet interface. The base file's ports: are cleared with !reset.
+    network_mode: "service:tailscale"
+    ports: !reset []
+    depends_on:
+      tailscale:
+        condition: service_started
+
+volumes:
+  tailscale_state:

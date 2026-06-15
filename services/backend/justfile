@@ -23,3 +23,55 @@ check: lint typecheck test
 
 dev:
     uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Recipes below expand $POSTGRES_USER / $POSTGRES_DB inside the postgres
+# container's shell (not the dev's host shell) so they always resolve from
+# the container env vars, regardless of whether the dev's shell has them.
+
+# Open an interactive psql shell on the dev postgres container.
+psql:
+    docker exec -it flat-chat-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+# Stuck queries float to the top. The `/* session=… run=… */` prefix on
+# each query maps back to the `[session=… run=…]` prefix in the backend
+# logs — see services/backend/README.md § Debugging for the playbook.
+# Includes `idle in transaction` (open transactions sitting on no SQL).
+# List currently-running queries against the dev postgres, oldest-first.
+psql-active:
+    docker exec flat-chat-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x \
+      -c "SELECT pid, now() - query_start AS age, state, \
+                 wait_event_type, wait_event, \
+                 pg_blocking_pids(pid) AS blocked_by, \
+                 query \
+          FROM pg_stat_activity \
+          WHERE state IN ('"'"'active'"'"', '"'"'idle in transaction'"'"') \
+                AND pid <> pg_backend_pid() \
+          ORDER BY age DESC;"'
+
+# Pass either form, matched via substring LIKE against the SQL comment:
+#   just psql-session f4d05979-1347-42f4-b1c8-8bb2c6d73709
+#   just psql-session run-test-001
+# Note: this is a dev tool — `id` is interpolated raw into the SQL. Don't
+# pass untrusted input. (You can do at least as much damage via `just psql`.)
+# Filter pg_stat_activity to one session or run id.
+psql-session id:
+    docker exec flat-chat-postgres-1 sh -c "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -x \
+      -c \"SELECT pid, now() - query_start AS age, state, \
+                 wait_event_type, wait_event, \
+                 pg_blocking_pids(pid) AS blocked_by, \
+                 query \
+          FROM pg_stat_activity \
+          WHERE query LIKE '%{{ id }}%' \
+          ORDER BY age DESC;\""
+
+# Cancel a running query (graceful — sends SIGINT). Use psql-kill for harder kill.
+#   just psql-cancel 147
+psql-cancel pid:
+    docker exec flat-chat-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -c "SELECT pg_cancel_backend({{ pid }});"'
+
+# Terminate a backend (kills the connection). Use when psql-cancel didn't work.
+#   just psql-kill 147
+psql-kill pid:
+    docker exec flat-chat-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -c "SELECT pg_terminate_backend({{ pid }});"'

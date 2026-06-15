@@ -5,7 +5,7 @@ Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments qu
 ## Quick Start
 
 ```bash
-cp .env.example .env    # then fill in OPENROUTER_API_KEY, OPENROUTER_MODEL, JINA_API_KEY
+cp .env.example .env    # then fill in ANTHROPIC_API_KEY, JINA_API_KEY
 docker compose up --build
 ```
 
@@ -28,26 +28,34 @@ Source: [`architecture.drawio`](architecture.drawio) — edit in draw.io Desktop
 ```
 flat-chat/
 ├── docker-compose.yml          # Orchestrates all services
-├── nginx/                      # Reverse proxy — only port 80 exposed to host
+├── nginx/                      # Reverse proxy — only port 80 exposed to host (also serves /tiles/)
+├── data/tiles/                 # Protomaps .pmtiles extract for MapLibre (bind-mounted into nginx)
 ├── services/
-│   ├── frontend/               # React + Vite + TypeScript (built into shared volume)
-│   ├── backend/                # FastAPI + Pydantic AI agent + SearchService — see services/backend/README.md
-│   ├── ingestion/              # Cron-triggered data ingestion
+│   ├── frontend/               # React + Vite + CopilotKit + MapLibre — see services/frontend/src/
+│   ├── backend/                # FastAPI + Pydantic AI agent (AG-UI streaming) — see services/backend/README.md
+│   ├── ingestion/              # Cron-triggered data ingestion (scrapers + iron/bronze/silver loaders)
 │   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
 └── agent-compound-docs/        # Architecture decisions, plans, design conversations
 ```
 
 ## Tech Stack
 
-| Layer            | Technology                                                        |
-|------------------|-------------------------------------------------------------------|
-| Frontend         | React, Vite, TypeScript                                           |
-| Backend          | FastAPI, SQLAlchemy, Pydantic AI                                  |
-| LLM              | Pydantic AI agent → OpenRouter (presets for server-side fallback) |
-| Embeddings       | Jina v3 (`retrieval.query` task LoRA)                             |
-| Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)           |
-| Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006` |
-| Infrastructure   | Docker, Docker Compose, Nginx                                     |
+| Layer            | Technology                                                                                          |
+|------------------|-----------------------------------------------------------------------------------------------------|
+| Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
+| Backend          | FastAPI, SQLAlchemy, Alembic, **Pydantic AI with AG-UI Protocol adapter**                           |
+| LLM              | Pydantic AI agent → Anthropic-direct (preferred, native prompt caching) or Azure OpenAI             |
+| Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
+| Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |
+| Map tiles        | Self-hosted **Protomaps** `.pmtiles` (Berlin extract) — served by nginx at `/tiles/`                |
+| Observability    | Phoenix (Arize) via OpenInference + OpenTelemetry — UI at `:6006`                                   |
+| Infrastructure   | Docker, Docker Compose, Nginx                                                                       |
+
+## Data Pipeline
+
+Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver. The silver `listings` table is what the search service queries.
+
+See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and cursor-resume semantics.
 
 ## Where to look next
 
@@ -59,4 +67,5 @@ flat-chat/
 
 - User describes apartment requirements to the chatbot.
 - Iterative refinement through conversation.
+- Results stream into a persistent map + apartment cards artifact alongside the chat (chat-host layout, desktop-only).
 - Berlin only.

@@ -2,7 +2,28 @@
 name = "flat-chat-ingestion"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = []
+
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "requests",
+    "geopandas",
+    "geoalchemy2",
+    "pyogrio",
+    "shapely",
+    "pyproj",
+    "pyyaml>=6.0",
+    "pandas>=2.0",
+    "tenacity>=8.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -10,3 +31,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src"]

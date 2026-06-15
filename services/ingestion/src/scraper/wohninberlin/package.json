@@ -1,0 +1,17 @@
+{
+  "name": "scraper",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "wohninberlinscraper.js",
+  "scripts": {
+    "start": "node wohninberlinscraper.js",
+    "start:chromium": "PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser node wohninberlinscraper.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "puppeteer": "^24.42.0"
+  }
+}

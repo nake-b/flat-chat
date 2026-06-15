@@ -1,36 +1,112 @@
 import uuid
-from datetime import datetime
 
 from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    TIMESTAMP,
+    Boolean,
     Float,
+    ForeignKey,
     Index,
     Integer,
-    Numeric,
+    String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from flat_chat.core.database import Base
 
 
+class IronCard(Base):
+    """Iron layer: raw card-level scrape output from list/search pages."""
+
+    __tablename__ = "iron_cards"
+    __table_args__ = (
+        UniqueConstraint("source_name", "external_id", name="uq_iron_source_external"),
+        Index("ix_iron_cards_source_name", "source_name"),
+        Index("ix_iron_cards_pending", "source_name", "detail_scraped_at"),
+        Index("ix_iron_cards_scraped_at", "scraped_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    detail_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    ingested_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    detail_scraped_at: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    raw_listings: Mapped[list[RawListing]] = relationship(back_populates="iron_card")
+
+
+class RawListing(Base):
+    """Bronze layer: raw detail-page scrape preserved as JSONB."""
+
+    __tablename__ = "raw_listings"
+    __table_args__ = (
+        UniqueConstraint("source_name", "external_id", name="uq_raw_source_external"),
+        Index("ix_raw_listings_source_name", "source_name"),
+        Index("ix_raw_listings_scraped_at", "scraped_at"),
+        Index("ix_raw_listings_iron_card_id", "iron_card_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    iron_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("iron_cards.id", ondelete="SET NULL"),
+    )
+    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    ingested_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    iron_card: Mapped[IronCard | None] = relationship(back_populates="raw_listings")
+    listing: Mapped[Listing | None] = relationship(back_populates="raw_listing")
+
+
 class Listing(Base):
+    """Silver layer: cleaned, typed, normalized listing rows.
+
+    The union of every field any source could produce. Adding a new source
+    requires a new per-source transformer, not a schema migration.
+    """
+
     __tablename__ = "listings"
     __table_args__ = (
-        UniqueConstraint("source", "source_listing_id"),
-        # HNSW ANN index for cosine-distance ORDER BY on description_embedding.
+        UniqueConstraint(
+            "source_name", "external_id", name="uq_listing_source_external"
+        ),
+        Index("ix_listings_source_name", "source_name"),
+        Index("ix_listings_rooms", "rooms"),
+        Index("ix_listings_cold_rent_eur", "cold_rent_eur"),
+        Index("ix_listings_area_sqm", "area_sqm"),
+        Index("ix_listings_available_from", "available_from"),
+        Index("ix_listings_wbs_required", "wbs_required"),
+        Index("ix_listings_lat_lon", "latitude", "longitude"),
+        Index("ix_listings_postal_code", "postal_code"),
+        # HNSW ANN index for cosine-distance ORDER BY on embedding.
         # m/ef_construction are pgvector defaults; tune once data volume warrants.
         Index(
-            "listings_description_embedding_hnsw_idx",
-            "description_embedding",
+            "listings_embedding_hnsw_idx",
+            "embedding",
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"description_embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
         # Functional GiST so ST_DWithin queries that cast to ::geography
         # (radius in meters) can hit an index. GeoAlchemy2 already auto-creates
@@ -45,32 +121,97 @@ class Listing(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    source_listing_id: Mapped[str] = mapped_column(Text, nullable=False)
-    source_url: Mapped[str | None] = mapped_column(Text)
-    title: Mapped[str | None] = mapped_column(Text)
-    description: Mapped[str | None] = mapped_column(Text)
-    price_warm_eur: Mapped[float | None] = mapped_column(Numeric)
-    price_cold_eur: Mapped[float | None] = mapped_column(Numeric)
-    nebenkosten_eur: Mapped[float | None] = mapped_column(Numeric)
-    kaution_eur: Mapped[float | None] = mapped_column(Numeric)
-    area_sqm: Mapped[float | None] = mapped_column(Numeric)
-    rooms: Mapped[float | None] = mapped_column(Numeric)
-    floor: Mapped[int | None] = mapped_column(Integer)
-    district: Mapped[str | None] = mapped_column(Text)
-    postal_code: Mapped[str | None] = mapped_column(Text)
-    address: Mapped[str | None] = mapped_column(Text)
-    latitude: Mapped[float | None] = mapped_column(Float(precision=53))
-    longitude: Mapped[float | None] = mapped_column(Float(precision=53))
-    location = mapped_column(Geometry("POINT", srid=4326), nullable=True)
-    available_from: Mapped[str | None] = mapped_column(Text)
-    available_until: Mapped[str | None] = mapped_column(Text)
-    listing_type: Mapped[str | None] = mapped_column(Text)
-    features: Mapped[dict | None] = mapped_column(JSONB, server_default="'[]'")
-    images: Mapped[dict | None] = mapped_column(JSONB, server_default="'[]'")
-    raw: Mapped[dict | None] = mapped_column(JSONB)
-    description_embedding = mapped_column(Vector(1024))
-    scraped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    created_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()"
+    raw_listing_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("raw_listings.id", ondelete="SET NULL"),
     )
+
+    # Source
+    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_object_id: Mapped[str | None] = mapped_column(String(255))
+    listing_url: Mapped[str | None] = mapped_column(Text)
+
+    # Core details
+    title: Mapped[str | None] = mapped_column(Text)
+    headline: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    rooms: Mapped[float | None] = mapped_column(Float)
+    bedrooms: Mapped[int | None] = mapped_column(Integer)
+    bathrooms: Mapped[int | None] = mapped_column(Integer)
+    area_sqm: Mapped[float | None] = mapped_column(Float)
+    apartment_type: Mapped[str | None] = mapped_column(String(100))
+
+    # Rent
+    cold_rent_eur: Mapped[float | None] = mapped_column(Float)
+    warm_rent_eur: Mapped[float | None] = mapped_column(Float)
+    nebenkosten_eur: Mapped[float | None] = mapped_column(Float)
+    rent_gross_eur: Mapped[float | None] = mapped_column(Float)
+    kaution_eur: Mapped[float | None] = mapped_column(Float)
+
+    # Location
+    address: Mapped[str | None] = mapped_column(Text)
+    postal_code: Mapped[str | None] = mapped_column(String(10))
+    district: Mapped[str | None] = mapped_column(String(100))
+    city: Mapped[str | None] = mapped_column(String(100))
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    # PostGIS Point in WGS84 — kept in sync with latitude/longitude at
+    # silver-transform time (and via the 0002 backfill for existing rows).
+    location = mapped_column(Geometry("POINT", srid=4326), nullable=True)
+
+    # Building / availability
+    floor: Mapped[int | None] = mapped_column(Integer)
+    floors_total: Mapped[int | None] = mapped_column(Integer)
+    construction_year: Mapped[int | None] = mapped_column(Integer)
+    available_from: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
+    available_until: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
+    min_stay_months: Mapped[int | None] = mapped_column(Integer)
+    max_stay_months: Mapped[int | None] = mapped_column(Integer)
+
+    # Energy
+    heating: Mapped[str | None] = mapped_column(String(255))
+    main_energy_source: Mapped[str | None] = mapped_column(String(255))
+    energy_consumption_kwh: Mapped[float | None] = mapped_column(Float)
+    final_energy_value_kwh: Mapped[float | None] = mapped_column(Float)
+    energy_pass_type: Mapped[str | None] = mapped_column(String(100))
+
+    # Amenities (booleans)
+    is_furnished: Mapped[bool | None] = mapped_column(Boolean)
+    has_kitchen: Mapped[bool | None] = mapped_column(Boolean)
+    has_bathroom: Mapped[bool | None] = mapped_column(Boolean)
+    has_elevator: Mapped[bool | None] = mapped_column(Boolean)
+    has_balcony: Mapped[bool | None] = mapped_column(Boolean)
+    has_terrace: Mapped[bool | None] = mapped_column(Boolean)
+    has_garden: Mapped[bool | None] = mapped_column(Boolean)
+    has_basement: Mapped[bool | None] = mapped_column(Boolean)
+    wbs_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # Listing source metadata (NO personal data — only type)
+    lister_type: Mapped[str | None] = mapped_column(String(50))
+    company_name: Mapped[str | None] = mapped_column(String(255))
+    company_website: Mapped[str | None] = mapped_column(Text)
+
+    # Free-form structured data
+    features: Mapped[list | None] = mapped_column(JSONB)
+    images: Mapped[list | None] = mapped_column(JSONB)
+    key_facts: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Embedding — Jina v3, 1024 dims. Locked in revision 0002.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+
+    # Timestamps
+    scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    ingested_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[str] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    raw_listing: Mapped[RawListing | None] = relationship(back_populates="listing")

@@ -67,6 +67,10 @@ instance/
 
 # Scrapy stuff:
 .scrapy
+scraper/node_modules/
+# Per-run scraper debug dumps (HTML snapshot + headless screenshot).
+**/*-debug-*.html
+**/*-debug-*.png
 
 # Sphinx documentation
 docs/_build/
@@ -220,3 +224,12 @@ __marimo__/
 node_modules/
 .env.local
 .env.*.local
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Scraped apartment data — checked in as a separate dataset, not source code.
+data/scraped/
+# Protomaps tile extracts live alongside their README; only the README is tracked.
+data/tiles/*.pmtiles
+flat_chat_dump_*.pgdump
