@@ -33,6 +33,10 @@ Architectural notes:
     feature-sparse periphery.
   - Constants are inlined here because the ingestion service intentionally
     does NOT depend on the backend package.
+  - Outer `ROW_NUMBER` windows tie-break on the feature id so two POIs at
+    the same rounded distance get a stable rank — keeps `gold.run`
+    idempotent (rank-1 chip scalars don't drift across re-runs) and stops
+    the shadow-diff harness from flagging spurious churn.
 
 Threshold doc: `agent-compound-docs/decisions/geo-context-thresholds.md`.
 """
@@ -152,7 +156,9 @@ def enrich_nearby_transit(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.stop_id, t.name, t.modes_served, t.lines_served,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.stop_id
+                       ) AS rank
                 FROM (
                     SELECT ts.stop_id, ts.name, ts.modes_served, ts.lines_served,
                            ST_Distance(ts.geom::geography,
@@ -195,7 +201,9 @@ def enrich_nearby_schools(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.school_id, t.name, t.school_type,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.school_id
+                       ) AS rank
                 FROM (
                     SELECT s.id::text AS school_id, s.name, s.school_type,
                            ST_Distance(s.geom::geography,
@@ -240,7 +248,9 @@ def enrich_nearby_hospitals(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.hospital_id, t.name, t.tier,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.hospital_id
+                       ) AS rank
                 FROM (
                     SELECT h.id::text AS hospital_id, h.name, h.tier,
                            ST_Distance(h.geom::geography,
@@ -285,7 +295,9 @@ def enrich_nearby_parks(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.park_id, t.name, t.object_type,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.park_id
+                       ) AS rank
                 FROM (
                     SELECT p.id::text AS park_id, p.name, p.object_type,
                            ST_Distance(p.geom::geography,
@@ -335,7 +347,9 @@ def enrich_nearby_playgrounds(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.playground_id, t.name,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.playground_id
+                       ) AS rank
                 FROM (
                     SELECT pg.id::text AS playground_id, pg.name,
                            ST_Distance(pg.geom::geography,
@@ -380,7 +394,9 @@ def enrich_nearby_water(conn: Connection) -> int:
             CROSS JOIN LATERAL (
                 SELECT t.water_id, t.name, t.water_kind,
                        t.distance_m,
-                       ROW_NUMBER() OVER (ORDER BY t.distance_m) AS rank
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.water_id
+                       ) AS rank
                 FROM (
                     SELECT w.id::text AS water_id, w.name, w.water_kind,
                            ST_Distance(w.geom::geography,

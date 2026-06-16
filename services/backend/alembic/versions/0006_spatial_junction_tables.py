@@ -64,6 +64,10 @@ Index policy:
 
 Round-trip: downgrade re-adds the dropped JSONB columns as NULL. They're
 gold-derivable, so a subsequent `gold.run` refill is the recovery path.
+**Caveat:** the v1 gold code that populated those JSONB blobs is gone in
+this revision range. Downgrading past 0006 in production therefore needs
+the pre-0006 backend code checked out first, then `gold.run`, before the
+columns will hold real values again.
 """
 
 from collections.abc import Sequence
