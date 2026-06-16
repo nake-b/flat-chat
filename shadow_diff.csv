@@ -1,0 +1,13 @@
+query,old,new,intersect,only_old,only_new,verdict
+friedrichshain_improving,0,7,0,0,7,widened
+kitchen_sink,0,3,0,0,3,widened
+kreuzberg_2_rooms,18,18,18,0,0,MATCH
+kreuzberg_leafy_quiet,35,36,32,3,4,diverged
+kreuzberg_near_park,49,49,49,0,0,MATCH
+kreuzberg_near_water,37,37,37,0,0,MATCH
+kreuzberg_u8,8,8,8,0,0,MATCH
+kreuzberg_u_bahn,45,45,45,0,0,MATCH
+neukoelln_gymnasium,38,38,38,0,0,MATCH
+pankow_hospital_plan,21,21,21,0,0,MATCH
+wedding_quiet,19,20,19,0,1,widened
+wedding_sparse_density,10,10,10,0,0,MATCH
