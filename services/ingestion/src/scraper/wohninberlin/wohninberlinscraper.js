@@ -1,11 +1,19 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
+const db = require('scraper-lib');
+const stealth = require('scraper-lib/stealth');
+
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
 
 const URL = 'https://www.inberlinwohnen.de/wohnungsfinder/';
 const LISTING_SOURCE = 'wohninberlin';
 const OUTPUT_FILE = path.join(__dirname, 'wohninberlin.json');
-const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
+// inberlinwohnen lists ~250 flats at 10 per page. The page loop terminates
+// naturally when the "Vor" (next) button disappears, so this is just an upper
+// bound generous enough to walk the whole result set.
+const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '30', 10);
 const PAGE_SIZE = 10;
 
 function printBanner() {
@@ -48,9 +56,13 @@ function finishProgressLine() {
 }
 
 function parseGermanNumber(value) {
-  if (!value) return null;
+  if (value == null || value === '') return null;
+  // Snapshot fields (rentNet, extraCosts) arrive as raw numbers; only the
+  // detailValue() strings need German-format normalization. Guard the
+  // number case so `.replace` is never called on a non-string.
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
 
-  const normalized = value
+  const normalized = String(value)
     .replace(/[^\d,.]/g, '')
     .replace(/\./g, '')
     .replace(',', '.');
@@ -347,14 +359,17 @@ async function main() {
   try {
     const page = await browser.newPage();
 
-    page.setDefaultTimeout(30_000);
-    await page.setUserAgent(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36'
-    );
+    // Shared stealth helper: rotating current Chrome UA + matching client hints
+    // (replaces the hardcoded Chrome/124 Linux UA). USER_AGENT env still pins it.
+    await stealth.applyStealthToPage(page, {
+      userAgent: process.env.USER_AGENT || null,
+      acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+      timeoutMs: 30_000,
+    });
 
     console.log('Starting browser session...');
     console.log(`Opening ${URL}`);
-    await page.goto(URL, { waitUntil: 'networkidle2' });
+    await page.goto(URL, { waitUntil: 'domcontentloaded' });
 
     await clickIfPresent(page, [
       '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
@@ -425,10 +440,42 @@ async function main() {
 
     await fs.writeFile(OUTPUT_FILE, `${JSON.stringify(apartments, null, 2)}\n`);
 
+    // Bronze insert — wohninberlin is a single-step source: the card already
+    // carries the full listing, so we skip the iron_cards + detail-scrape
+    // round-trip and write each apartment straight into raw_listings. The
+    // silver wohninberlin transformer reads `data.dump` from here, matching
+    // the `dump` envelope the two-step scrapers produce.
+    let inserted = 0;
+    if (process.env.DATABASE_URL) {
+      const pool = db.getPool();
+      for (const apartment of apartments) {
+        const externalId = String(apartment.id ?? apartment.objectId ?? apartment.headline);
+        const data = {
+          listing_source: LISTING_SOURCE,
+          id: externalId,
+          scrapeUrl: apartment.url || apartment.scrapeUrl,
+          scrapedAt: apartment.scrapedAt,
+          dump: apartment,
+        };
+        await db.upsertRawListing(pool, {
+          sourceName: LISTING_SOURCE,
+          externalId,
+          sourceUrl: apartment.url || apartment.scrapeUrl,
+          data,
+          scrapedAt: apartment.scrapedAt,
+          ironCardId: null,
+        });
+        inserted += 1;
+      }
+    } else {
+      console.warn('DATABASE_URL not set — skipping bronze insert (JSON only).');
+    }
+
     console.log('');
     console.log('Scrape complete');
     console.log(`Pages requested: ${MAX_PAGES}`);
     console.log(`Apartments saved: ${apartments.length}`);
+    console.log(`Bronze rows upserted: ${inserted}`);
     console.log(`File: ${OUTPUT_FILE}`);
     console.log('');
     console.table(
@@ -441,6 +488,7 @@ async function main() {
     );
   } finally {
     await browser.close();
+    await db.closePool();
   }
 }
 

@@ -6,6 +6,8 @@
   "type": "commonjs",
   "dependencies": {
     "dotenv": "^16.4",
-    "pg": "^8.11"
+    "pg": "^8.11",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
