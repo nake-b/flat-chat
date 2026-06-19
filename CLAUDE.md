@@ -1,5 +1,17 @@
 # CLAUDE.md
 
+> **🏗️ HACKATHON STARTER.** The Pydantic-AI agent has been removed from this
+> branch. In its place is a swappable seam — `chat/backend.py` (the
+> `AgentBackend` Protocol) + `chat/example_backend.py` (a no-LLM placeholder).
+> Participants implement their own agent and wire it into
+> `core/dependencies.py:get_chat_service`. **Read [`HACKATHON.md`](HACKATHON.md)
+> first.** Sections below that describe `chat/agent.py`, `chat/tools.py`,
+> `chat/llm_context.py`, `chat/providers/`, the three-layer prompt assembly, and
+> the "Pydantic AI Patterns" appendix describe the **reference implementation**
+> (tag `hackathon-reference-v1`) — kept as one worked example of the seam, not
+> as code present on this branch. `search/`, `listings/`, `session_state.py`,
+> sessions, and the frontend are all current and untouched.
+
 Project context for Claude Code. Per-service context lives in:
 - [`services/backend/CLAUDE.md`](services/backend/CLAUDE.md) — backend layering, async DB, SessionState, prompt assembly
 - [`services/frontend/CLAUDE.md`](services/frontend/CLAUDE.md) — React state mirror, AG-UI integration, components
@@ -46,7 +58,10 @@ High-level — read the per-service CLAUDE.md files for detailed layouts.
 ```
 services/frontend/   → React SPA. State mirror: SessionState.ts (was UiState.ts).
 services/backend/    → FastAPI. Layers: api → chat → search/listings → core.
-                       NEW: `listings/` module owns shared listing concerns
+                       `chat/` is now just the agent SEAM: backend.py
+                       (AgentBackend Protocol) + example_backend.py (placeholder)
+                       + service.py (AG-UI plumbing) + sessions/state.
+                       `listings/` owns shared listing concerns
                        (ORM, types, labels, thresholds, ListingService).
 services/ingestion/  → ETL. Layers: bronze/silver/gold/platinum.
                        NEW: `gold/` (listings_geo_context) + `platinum/` (embeddings).

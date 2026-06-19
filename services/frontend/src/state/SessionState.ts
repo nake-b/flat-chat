@@ -237,7 +237,8 @@ export type SearchParams = Record<string, unknown>;
 // ---------------------------------------------------------------------------
 // SessionState — the canonical in-memory representation mirrored from
 // backend over the AG-UI stream. The frontend renders markers + cards from
-// this; the LLM reads the same fields via build_dynamic_state_prompt.
+// this; your agent backend reads + mutates the same fields and pushes a
+// StateSnapshotEvent (see services/backend/src/flat_chat/chat/backend.py).
 // ---------------------------------------------------------------------------
 
 export interface SessionState {

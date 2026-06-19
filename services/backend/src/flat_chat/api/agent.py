@@ -41,22 +41,22 @@ async def run_agent(
 
     The frontend (CopilotKit + `useCoAgent`) POSTs an AG-UI envelope here
     that carries `thread_id` (= session id, created via POST /api/conversations),
-    the running message history, and the current UiState. The adapter streams
-    SSE events back: text deltas, tool-call lifecycle, and JSON-Patch state
-    deltas that mutate the frontend's mirrored `UiState` slice.
+    the running message history, and the current SessionState. `ChatService`
+    runs the configured `AgentBackend` and streams SSE events back: text
+    deltas, tool-call lifecycle, and a state snapshot that re-renders the
+    frontend's mirrored `SessionState` (map markers + cards).
 
     Note on CopilotKit's runtime-discovery probe: at boot the client POSTs
     `{"method":"info"}` to this URL to ask the runtime what agents exist.
     We deliberately do NOT short-circuit that here — returning a synthetic
     `agents` list would make CopilotKit route messages via the runtime
     client, bypassing the `agents__unsafe_dev_only` HttpAgent we wired on
-    the React side. The probe is allowed to flow into the AG-UI adapter
-    and 422 (now translated by `ChatService` instead of crashing with a
-    500); CopilotKit logs a warning and falls back to the self-managed
-    agent. The visible dev-console nag is suppressed by the
-    `<cpk-web-inspector>` hider in `main.tsx`. The GET probe routes above
-    (`/api/agent/info`, `/api/agent/threads`) cover the runtime queries
-    that CopilotKit issues over GET.
+    the React side. The probe is allowed to flow into `ChatService` and 422
+    (the body isn't a valid AG-UI `RunAgentInput`); CopilotKit logs a warning
+    and falls back to the self-managed agent. The visible dev-console nag is
+    suppressed by the `<cpk-web-inspector>` hider in `main.tsx`. The GET probe
+    routes above (`/api/agent/info`, `/api/agent/threads`) cover the runtime
+    queries that CopilotKit issues over GET.
     """
     try:
         response = await chat.dispatch_agent_request(request)

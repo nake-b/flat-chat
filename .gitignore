@@ -233,3 +233,5 @@ data/scraped/
 # Protomaps tile extracts live alongside their README; only the README is tracked.
 data/tiles/*.pmtiles
 flat_chat_dump_*.pgdump
+# DB volume snapshots (shared out-of-band, too big for git). See HACKATHON.md.
+*-db-snapshot.tgz

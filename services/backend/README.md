@@ -11,7 +11,7 @@ brew install just       # task runner (one-time)
 uv sync                 # install all dependencies
 ```
 
-Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` plus an LLM provider key — either `ANTHROPIC_API_KEY` (preferred, prompt caching) or the full Azure OpenAI quartet (`AZURE_OPENAI_API_KEY` + `_ENDPOINT` + `_DEPLOYMENT` + `_API_VERSION`). See the table below.
+Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). The only required var is `DATABASE_URL` — the hackathon starter boots with no LLM keys (it ships a no-LLM placeholder agent). Add your own agent's keys when you wire in a framework. See the table below.
 
 ## Running
 
@@ -59,18 +59,15 @@ src/flat_chat/
 │   └── observability.py # Logs (dictConfig) + traces (OpenTelemetry → Phoenix)
 ├── api/
 │   ├── chat.py          # Conversation lifecycle: POST create + GET history reload (no message-send)
-│   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
+│   └── agent.py         # POST /api/agent — AG-UI SSE; ChatService runs the AgentBackend
 ├── chat/
-│   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + dynamic-instruction injection
-│   ├── tools.py         # FunctionToolset[ChatDeps]: search / page / details; mirrors into UiState
-│   ├── state.py         # ChatSession (history + ResultSet + ui_state), ChatDeps (StateHandler-compatible)
-│   ├── ui_state.py      # Frontend mirror: UiState + UiApartment Pydantic models
+│   ├── backend.py       # ★ AgentBackend Protocol (the seam) + ag_ui event helpers
+│   ├── example_backend.py # ★ ExampleSearchBackend — no-LLM placeholder; REPLACE THIS
+│   ├── state.py         # ChatSession (history + state), ChatMessage, ChatDeps
+│   ├── session_state.py # Frontend mirror: SessionState + (re-exported) UiApartment
 │   ├── sessions.py      # SessionStore Protocol + InMemorySessionStore (per-session asyncio.Lock)
-│   ├── service.py       # ChatService — dispatches AG-UI runs and persists state/history
-│   ├── schemas.py       # API response models
-│   └── providers/       # Chat-model dispatch — single provider seam
-│       ├── __init__.py  # build_chat_model() — @lru_cache; picks provider from settings
-│       └── anthropic.py # AnthropicModel + prompt caching settings
+│   ├── service.py       # ChatService — parses AG-UI, brackets the run, SSE-encodes, persists
+│   └── schemas.py       # API response models
 └── search/
     ├── models.py              # Listing SQLAlchemy model (HNSW + functional GIST indexes)
     ├── geo_models.py          # SQLAlchemy mirrors of the 14 geo-context silver tables
@@ -121,12 +118,7 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | Variable                   | Description                                                                                                            | Default                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|------------------------------------|
 | `DATABASE_URL`             | PostgreSQL connection string                                                                                           | — (required)                       |
-| `ANTHROPIC_API_KEY`        | Anthropic API key (preferred provider — native prompt caching). One of Anthropic *or* the Azure quartet must be set.   | — (one provider required)          |
-| `ANTHROPIC_MODEL`          | Anthropic model id (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5`)                                                      | `claude-sonnet-4-6`                |
-| `AZURE_OPENAI_API_KEY`     | Azure OpenAI Service key. Used when Anthropic is unset.                                                                | —                                  |
-| `AZURE_OPENAI_ENDPOINT`    | e.g. `https://<resource>.openai.azure.com/`                                                                            | —                                  |
-| `AZURE_OPENAI_DEPLOYMENT`  | Deployment name from Foundry (often matches the model name)                                                            | —                                  |
-| `AZURE_OPENAI_API_VERSION` | API version — use a preview version for o-series reasoning models                                                      | `2024-12-01-preview`               |
+| _(your agent's keys)_      | The starter ships with a no-LLM placeholder agent and needs no LLM keys. Add your framework's config in `core/config.py` + `.env.example` + compose. | —                |
 | `JINA_API_KEY`             | Jina embeddings API key (optional — empty disables semantic search)                                                    | —                                  |
 | `JINA_BASE_URL`            | Jina API base URL                                                                                                      | `https://api.jina.ai/v1`           |
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |

@@ -1,20 +1,14 @@
 """SessionState — canonical in-memory representation of the active conversation.
 
 One per conversation thread. Lives in `ChatSession.state` and gets mirrored
-to the frontend over the AG-UI stream as JSON-Patch deltas. The same object
-serves three readers:
-  - The LLM (via `chat/llm_context.py:build_dynamic_state_prompt` — emits
-    `<current_state>` + `<user_focus>` XML for each turn)
+to the frontend over the AG-UI stream (your `AgentBackend` emits a
+`StateSnapshotEvent` carrying it). The same object serves two readers:
+  - Your agent backend (reads + mutates it as the conversation progresses)
   - The frontend (renders markers/cards/detail panel from these fields)
-  - The agent's pagination tool `get_result_page` (zero-DB-hit re-read of
-    the current result set)
 
 Fields are intentionally co-located: the applied search params (the
 question), the results (the answer), and the active selection (the
-focus) are one object. No separate `LlmResultSetView.params` /
-`UiState.results` / `UiState.active_id` split — that's what we had before
-the refactor and it spread one conversation's "current situation" across
-three locations.
+focus) are one object — one conversation's "current situation" in one place.
 
 Naming note: industry convention (AWS Bedrock, LangGraph, etc.) calls
 this `SessionState`. The AG-UI protocol uses `STATE_SNAPSHOT` as the

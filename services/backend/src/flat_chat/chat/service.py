@@ -1,19 +1,44 @@
+"""ChatService — the HTTP/SSE plumbing around your agent.
+
+You almost certainly do NOT need to edit this file for the hackathon. It:
+
+  1. Parses the incoming AG-UI request envelope (`thread_id`, `messages`,
+     `state`).
+  2. Resolves the conversation from the session store and hydrates
+     `ChatDeps.state` (merging persisted server state with the frontend's
+     latest `active_id` / `active_listing_detail`).
+  3. Brackets your `AgentBackend.run(...)` stream with `RUN_STARTED` /
+     `RUN_FINISHED`, SSE-encodes every event you yield, and streams it back.
+  4. Persists the thread + final state when your run completes.
+
+Your code lives in an `AgentBackend` (see `chat/backend.py` and
+`chat/example_backend.py`). This class knows nothing about how that
+backend reaches its answer — only that it yields `ag_ui` events.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from ag_ui.core import (
+    RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+)
+from ag_ui.encoder import EventEncoder
 from pydantic import ValidationError
-from pydantic_ai.run import AgentRunResult
-from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
-from flat_chat.chat.agent import agent
-from flat_chat.chat.providers import build_chat_model
+from flat_chat.chat.backend import AgentBackend
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
-from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.state import ChatDeps, ChatMessage
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.service import SearchService
@@ -26,13 +51,8 @@ except ImportError:  # pragma: no cover — observability is optional
 logger = logging.getLogger(__name__)
 
 
-def _summarise_prompt(run_input: Any) -> str:
-    """Last user message as a single short line for the dispatch log.
-
-    Multimodal `content` (a list of input parts) collapses to a `[multimodal]`
-    marker so the log stays scannable. Trailing truncation at 120 chars keeps
-    one turn = one log line — long pastes don't blow up the stream.
-    """
+def _summarise_prompt(run_input: RunAgentInput) -> str:
+    """Last user message as a single short line for the dispatch log."""
     for msg in reversed(run_input.messages):
         if getattr(msg, "role", None) != "user":
             continue
@@ -47,52 +67,36 @@ def _summarise_prompt(run_input: Any) -> str:
 
 
 class ChatService:
-    """Orchestrates a single agent run against an AG-UI request.
-
-    Loads the session, assembles ChatDeps (request-scoped services +
-    session state + the UiState the AG-UI adapter will set from the
-    request body), then hands the request to AGUIAdapter and persists
-    the new history + final state when the run completes.
-
-    Knows nothing about FastAPI routing or storage backend internals.
-    """
+    """Orchestrates one agent-backend run against an AG-UI request."""
 
     def __init__(
         self,
         search_service: SearchService,
         listing_service: ListingService,
         store: SessionStore,
+        backend: AgentBackend,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.store = store
+        self.backend = backend
 
     async def dispatch_agent_request(self, request: Request) -> Response:
-        # Importing here keeps fastapi/starlette as the FastAPI-only deps and
-        # leaves room for the service to be wired into non-HTTP entry points.
         from fastapi import HTTPException
 
-        # Parse the AG-UI request envelope first so we can resolve the
-        # session from its `thread_id` / conversation_id. The adapter
-        # subsequently runs the agent, streams events back, and reads
-        # `deps.state` to emit JSON-Patch deltas to the frontend.
         try:
-            adapter = await AGUIAdapter.from_request(request, agent=agent)
+            run_input = RunAgentInput.model_validate_json(await request.body())
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        session_id = adapter.conversation_id
+        session_id = run_input.thread_id
         # Bind the request context for every log line + every SQL statement
-        # that runs within this asyncio task. `session_prefix` (logging filter)
-        # and the `before_cursor_execute` hook in `core/database.py` both
-        # read these vars. No `.reset()` — FastAPI runs each request in its
-        # own asyncio task with its own copied context, so the binding dies
-        # with the task. (We tried explicit reset(); Starlette runs the SSE
-        # consumer in a different task than the handler that created the
-        # Token, so `reset()` raised `Token created in a different Context`.)
+        # fired within this asyncio task. No `.reset()` — FastAPI runs each
+        # request in its own task with its own copied context, so the binding
+        # dies with the task.
         session_id_var.set(session_id or "")
-        run_id_var.set(adapter.run_input.run_id or "")
-        logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
+        run_id_var.set(run_input.run_id or "")
+        logger.info("Agent dispatch: %s", _summarise_prompt(run_input))
 
         try:
             session = self.store.get(session_id)
@@ -100,28 +104,21 @@ class ChatService:
             logger.warning("Agent request for unknown session")
             raise
 
-        # Session exists, so lock() will not raise. Resolve the lock here so
-        # the inner generator below holds a reference for the stream's
-        # lifetime — the `async with` lives inside the generator because
-        # StreamingResponse consumes the iterator after the function returns.
+        # Resolve the lock here; the SSE generator below holds it for the
+        # stream's lifetime (StreamingResponse consumes the iterator after
+        # this function returns).
         lock = self.store.lock(session_id)
 
-        # Hydrate deps.state. Two sources merge here:
-        #   1. The session's persisted SessionState (results, search_params,
-        #      etc. — what tools mutated on prior turns and the store saved)
-        #   2. The incoming AG-UI envelope's state (frontend-driven changes,
-        #      especially `active_id` after a card click + the HTTP-fetched
-        #      `active_listing_detail` the frontend wrote back to state)
-        # The envelope wins for fields the frontend owns (active_id,
-        # active_listing_detail); the session wins for fields the agent
-        # owns (results, search_params, total_results).
+        # Hydrate deps.state: persisted server state is the base; the frontend
+        # owns `active_id` + `active_listing_detail` (set on card click), so
+        # the incoming envelope wins for those two fields.
         deps_state = session.state.model_copy()
-        incoming_state = _extract_incoming_state(adapter)
-        if incoming_state is not None:
-            if incoming_state.active_id is not None:
-                deps_state.active_id = incoming_state.active_id
-            if incoming_state.active_listing_detail is not None:
-                deps_state.active_listing_detail = incoming_state.active_listing_detail
+        incoming = _extract_incoming_state(run_input.state)
+        if incoming is not None:
+            if incoming.active_id is not None:
+                deps_state.active_id = incoming.active_id
+            if incoming.active_listing_detail is not None:
+                deps_state.active_listing_detail = incoming.active_listing_detail
 
         deps = ChatDeps(
             search_service=self.search_service,
@@ -130,48 +127,91 @@ class ChatService:
             state=deps_state,
         )
 
-        async def on_complete(result: AgentRunResult) -> None:
-            # AG-UI sends the full thread on every call; rebuild history
-            # from the run result so the GET history endpoint sees the
-            # same set the frontend just rendered. SessionState lives on
-            # `deps.state` (mutated in place by tools) — assign back to
-            # the session before persisting.
-            session.message_history = list(result.all_messages())
-            session.state = deps.state
-            self.store.save(session)
-            logger.info(
-                "Agent complete: messages=%d", len(session.message_history)
-            )
+        encoder = EventEncoder(accept=request.headers.get("accept"))
+        stream = self._event_stream(run_input, deps, session, lock, encoder)
+        return StreamingResponse(stream, media_type=encoder.get_content_type())
 
-        try:
-            model = build_chat_model()
-        except RuntimeError as exc:
-            raise HTTPException(
-                status_code=503, detail="No LLM provider configured"
-            ) from exc
+    async def _event_stream(
+        self,
+        run_input: RunAgentInput,
+        deps: ChatDeps,
+        session,
+        lock: asyncio.Lock,
+        encoder: EventEncoder,
+    ) -> AsyncIterator[str]:
+        """RUN_STARTED → (your backend's events) → RUN_FINISHED, SSE-encoded.
 
-        stream = adapter.run_stream(
-            deps=deps,
-            model=model,
-            on_complete=on_complete,
-        )
-        return adapter.streaming_response(
-            _with_session_and_lock(stream, session_id, lock)
-        )
+        The per-session lock and `using_session(...)` context live inside the
+        generator: Starlette consumes the iterator after the response is
+        returned, so acquiring them at the call site would release too early.
+        """
+        async with lock:
+            with using_session(session.id):
+                yield encoder.encode(
+                    RunStartedEvent(
+                        thread_id=run_input.thread_id, run_id=run_input.run_id
+                    )
+                )
+                reply_parts: list[str] = []
+                try:
+                    async for event in self.backend.run(
+                        run_input=run_input, deps=deps
+                    ):
+                        if isinstance(event, TextMessageContentEvent):
+                            reply_parts.append(event.delta)
+                        yield encoder.encode(event)
+                except Exception as exc:  # noqa: BLE001 — surface to the client
+                    logger.exception("Agent backend failed")
+                    yield encoder.encode(
+                        RunErrorEvent(message=str(exc) or exc.__class__.__name__)
+                    )
+                    return
+                yield encoder.encode(
+                    RunFinishedEvent(
+                        thread_id=run_input.thread_id, run_id=run_input.run_id
+                    )
+                )
+                self._persist(session, run_input, deps, "".join(reply_parts))
+
+    def _persist(
+        self,
+        session,
+        run_input: RunAgentInput,
+        deps: ChatDeps,
+        assistant_reply: str,
+    ) -> None:
+        """Rebuild the visible thread + save the mutated state.
+
+        AG-UI sends the full thread on every call, so history is the incoming
+        user/assistant messages plus the reply this run produced. SessionState
+        was mutated in place on `deps.state`.
+        """
+        history = _history_from_messages(run_input)
+        if assistant_reply:
+            history.append(ChatMessage(role="assistant", content=assistant_reply))
+        session.message_history = history
+        session.state = deps.state
+        self.store.save(session)
+        logger.info("Agent complete: messages=%d", len(session.message_history))
 
 
-def _extract_incoming_state(adapter) -> SessionState | None:
-    """Pull frontend-side state edits out of the AG-UI request envelope.
+def _history_from_messages(run_input: RunAgentInput) -> list[ChatMessage]:
+    """Project AG-UI thread messages into the persisted user-visible history."""
+    out: list[ChatMessage] = []
+    for msg in run_input.messages:
+        role = getattr(msg, "role", None)
+        content = getattr(msg, "content", None)
+        if role in ("user", "assistant") and isinstance(content, str) and content:
+            out.append(ChatMessage(role=role, content=content))
+    return out
 
-    The adapter exposes the request's `state` field directly. We try to
-    parse it as a SessionState; on failure (envelope shape mismatch from
-    an old client, partial state, etc.) we return None and the persisted
-    session state wins — defensive default keeps a malformed frontend
-    push from clobbering known-good server state.
+
+def _extract_incoming_state(raw: Any) -> SessionState | None:
+    """Parse frontend-side state edits out of the AG-UI envelope.
+
+    On any shape mismatch we return None and the persisted server state wins —
+    a malformed frontend push must not clobber known-good state.
     """
-    raw = getattr(adapter, "state", None) or getattr(
-        getattr(adapter, "run_input", None), "state", None
-    )
     if raw is None:
         return None
     try:
@@ -182,21 +222,3 @@ def _extract_incoming_state(adapter) -> SessionState | None:
     except Exception as exc:  # pragma: no cover — defensive logging
         logger.warning("Could not parse incoming state from envelope: %s", exc)
     return None
-
-
-async def _with_session_and_lock(
-    stream: AsyncIterator[Any],
-    session_id: str,
-    lock: asyncio.Lock,
-) -> AsyncIterator[Any]:
-    """Hold the per-session lock and Phoenix session context for the SSE stream.
-
-    Starlette consumes the inner iterator after the response is returned, so
-    both the lock and `using_session(...)` must live inside the generator —
-    acquiring them at the call site would release before any events flow.
-    Wrapping the generator keeps both active until the stream closes.
-    """
-    async with lock:
-        with using_session(session_id):
-            async for event in stream:
-                yield event

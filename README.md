@@ -1,15 +1,23 @@
-# flat-chat
+# flat-chat — Hackathon Starter
 
 Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments quickly and make informed decisions through conversational search.
+
+> **🏗️ This is the hackathon starter.** The agent has been removed and replaced
+> with a swappable seam + a no-LLM placeholder. The whole app — search, listings,
+> geo-context data, map, cards, chat UI — works out of the box; your job is to
+> bring your own agent framework and make the search smart. **Start with
+> [`HACKATHON.md`](HACKATHON.md).**
 
 ## Quick Start
 
 ```bash
-cp .env.example .env    # then fill in ANTHROPIC_API_KEY, JINA_API_KEY
+cp .env.example .env                 # works as-is; no LLM keys needed for the placeholder agent
+./scripts/restore-db-snapshot.sh     # load the shared listings DB (see HACKATHON.md for the snapshot file)
 docker compose up --build
 ```
 
 Open [http://localhost](http://localhost). First launch takes a couple of minutes (image builds).
+Type a message (e.g. "flats in Kreuzberg") — the placeholder agent returns listings onto the map.
 
 Manual data ingestion (cron-triggered in prod):
 
@@ -32,7 +40,7 @@ flat-chat/
 ├── data/tiles/                 # Protomaps .pmtiles extract for MapLibre (bind-mounted into nginx)
 ├── services/
 │   ├── frontend/               # React + Vite + CopilotKit + MapLibre — see services/frontend/src/
-│   ├── backend/                # FastAPI + Pydantic AI agent (AG-UI streaming) — see services/backend/README.md
+│   ├── backend/                # FastAPI + AG-UI streaming; agent seam in chat/backend.py — see services/backend/README.md
 │   ├── ingestion/              # Cron-triggered data ingestion (scrapers + iron/bronze/silver loaders)
 │   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
 └── agent-compound-docs/        # Architecture decisions, plans, design conversations
@@ -43,8 +51,8 @@ flat-chat/
 | Layer            | Technology                                                                                          |
 |------------------|-----------------------------------------------------------------------------------------------------|
 | Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
-| Backend          | FastAPI, SQLAlchemy, Alembic, **Pydantic AI with AG-UI Protocol adapter**                           |
-| LLM              | Pydantic AI agent → Anthropic-direct (preferred, native prompt caching) or Azure OpenAI             |
+| Backend          | FastAPI, SQLAlchemy, Alembic, **AG-UI Protocol** (`ag_ui`) streaming over SSE                       |
+| LLM / Agent      | **Bring your own** — implement the `AgentBackend` seam (`chat/backend.py`). Starter ships a no-LLM placeholder. |
 | Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
 | Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |
 | Map tiles        | Self-hosted **Protomaps** `.pmtiles` (Berlin extract) — served by nginx at `/tiles/`                |

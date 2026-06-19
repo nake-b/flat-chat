@@ -9,21 +9,13 @@ class Settings(BaseSettings):
 
     database_url: str = Field(...)
 
-    # Provider fields default to empty — required-ness is enforced inside
-    # `chat/providers/__init__.py` only when the matching API key is set.
-    # Anthropic-direct: preferred when its key is set (native prompt caching).
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-6"
+    # LLM provider keys are intentionally NOT defined here. The starter ships
+    # with no agent — bring your own framework and add whatever config it
+    # needs (see HACKATHON.md). Add fields here the same way `database_url`
+    # is declared, then surface them in `.env.example` + `docker-compose.yml`.
 
-    # Azure OpenAI — classic Azure OpenAI Service. `deployment` is the name
-    # you typed when creating the deployment in Foundry (not the underlying
-    # model name, though they're often the same). `api_version` must be a
-    # preview version for o-series reasoning models.
-    azure_openai_api_key: str = ""
-    azure_openai_endpoint: str = ""
-    azure_openai_deployment: str = ""
-    azure_openai_api_version: str = "2024-12-01-preview"
-
+    # Optional: semantic-search embeddings (Jina v3). Without a key, search
+    # still works — `sort_by="relevance"` degrades gracefully to recency.
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"
 

@@ -36,15 +36,12 @@ services:
         condition: service_started
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
-      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-}
-      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
+      # HACKATHON: the starter needs no LLM keys. Add your agent's config here
+      # (e.g. - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}) and mirror it in
+      # core/config.py + .env.example.
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
-      - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
+      - PHOENIX_ENABLED=${PHOENIX_ENABLED:-false}
       - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006/v1/traces}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload

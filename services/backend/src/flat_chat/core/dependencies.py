@@ -45,10 +45,14 @@ def get_chat_service(
 ):
     # Import here to break the import cycle: chat/service.py imports
     # ChatDeps from chat/state.py which imports from listings/.
+    from flat_chat.chat.example_backend import ExampleSearchBackend
     from flat_chat.chat.service import ChatService
 
+    # 👉 HACKATHON: swap ExampleSearchBackend for your own AgentBackend here.
+    #    Everything else in the request path stays as-is. See HACKATHON.md.
     return ChatService(
         search_service=search_service,
         listing_service=listing_service,
         store=store,
+        backend=ExampleSearchBackend(),
     )

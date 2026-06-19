@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic_ai.messages import TextPart, UserPromptPart
 
 from flat_chat.chat.schemas import ConversationResponse, MessageResponse
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
@@ -34,33 +33,18 @@ def get_messages(
 
 
 def _serialize_history(session: ChatSession) -> list[MessageResponse]:
-    """Project the agent's ModelMessage history into user-visible messages.
+    """Project the persisted ChatMessage history into user-visible messages.
 
-    Only UserPromptPart (→ "user") and TextPart (→ "assistant") are surfaced;
-    tool calls, tool returns, system prompts, retries, and thinking parts
-    stay internal. IDs are derived from (session, message_idx, part_idx) so
-    they're stable across GETs and the frontend can dedupe. Timestamps come
-    from the ModelMessage itself when available.
+    History holds only user + assistant turns (see `ChatService._persist`).
+    IDs are derived from (session, index) so they're stable across GETs and
+    the frontend can dedupe.
     """
-    out: list[MessageResponse] = []
-    for msg_idx, msg in enumerate(session.message_history):
-        ts = getattr(msg, "timestamp", None) or session.created_at
-        for part_idx, part in enumerate(msg.parts):
-            if isinstance(part, UserPromptPart):
-                role = "user"
-            elif isinstance(part, TextPart):
-                role = "assistant"
-            else:
-                continue
-            content = getattr(part, "content", None)
-            if not isinstance(content, str):
-                continue
-            out.append(
-                MessageResponse(
-                    id=f"{session.id}:{msg_idx}:{part_idx}",
-                    role=role,
-                    content=content,
-                    created_at=ts,
-                )
-            )
-    return out
+    return [
+        MessageResponse(
+            id=f"{session.id}:{idx}",
+            role=msg.role,
+            content=msg.content,
+            created_at=msg.created_at,
+        )
+        for idx, msg in enumerate(session.message_history)
+    ]
