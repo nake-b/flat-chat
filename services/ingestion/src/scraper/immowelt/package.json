@@ -10,6 +10,7 @@
     "start": "node immoweltscraper.js"
   },
   "dependencies": {
-    "puppeteer": "^24.42.0"
+    "puppeteer": "^24.42.0",
+    "scraper-lib": "file:../_lib"
   }
 }

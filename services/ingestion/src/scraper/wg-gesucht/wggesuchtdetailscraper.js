@@ -4,8 +4,12 @@
 // resumes naturally on whatever remains.
 
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
 const db = require('scraper-lib');
+const stealth = require('scraper-lib/stealth');
+
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
 const {
   DEFAULT_USER_AGENT,
   DEFAULT_TIMEOUT_MS,
@@ -18,13 +22,25 @@ const {
 
 const ORIGIN = 'https://www.wg-gesucht.de';
 const LISTING_SOURCE = 'wg-gesucht';
-const USER_AGENT = process.env.USER_AGENT || DEFAULT_USER_AGENT;
+// null → rotate a current Chrome UA per run (see _lib/stealth.js).
+const USER_AGENT = process.env.USER_AGENT || null;
 
 const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
-const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '8000', 10);
+// Conservative defaults matching the kleinanzeigen detail scraper: jittered
+// 20–30s between listings + a 5-minute pause every 40 listings.
+const MIN_DELAY_MS = Number.parseInt(process.env.MIN_DELAY_MS || '20000', 10);
+const MAX_DELAY_MS = Number.parseInt(process.env.MAX_DELAY_MS || '30000', 10);
+const BATCH_SIZE = Number.parseInt(process.env.BATCH_SIZE || '40', 10);
+const BATCH_PAUSE_MS = Number.parseInt(process.env.BATCH_PAUSE_MS || '300000', 10);
 const PAGE_TIMEOUT = DEFAULT_TIMEOUT_MS;
+
+function randomDelay() {
+  const lo = Math.min(MIN_DELAY_MS, MAX_DELAY_MS);
+  const hi = Math.max(MIN_DELAY_MS, MAX_DELAY_MS);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
 
 function printBanner(targets) {
   console.log('');
@@ -34,7 +50,7 @@ function printBanner(targets) {
   console.log(`Output:        raw_listings table (source=${LISTING_SOURCE})`);
   console.log(`To visit:      ${targets.length}`);
   console.log(`Max listings:  ${MAX_LISTINGS ?? 'unbounded'}`);
-  console.log(`Page delay:    ${PAGE_DELAY_MS}ms`);
+  console.log(`Delay:         ${MIN_DELAY_MS}-${MAX_DELAY_MS}ms (batch ${BATCH_SIZE}, pause ${BATCH_PAUSE_MS}ms)`);
   console.log(`Headless:      ${HEADLESS}`);
   console.log('');
 }
@@ -449,7 +465,7 @@ async function run() {
       console.log(`\n${label} ${target.url}`);
 
       try {
-        await page.goto(target.url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
       } catch (error) {
         console.warn(`  navigation failed: ${error.message}`);
         await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-nav`);
@@ -515,8 +531,13 @@ async function run() {
           `area=${detail.areaSqm ?? '–'} imgs=${detail.images?.length ?? 0}`
       );
 
-      if (i < targets.length - 1 && PAGE_DELAY_MS > 0) {
-        await sleep(PAGE_DELAY_MS);
+      if (i < targets.length - 1) {
+        if (BATCH_SIZE > 0 && (i + 1) % BATCH_SIZE === 0 && BATCH_PAUSE_MS > 0) {
+          console.log(`  batch of ${BATCH_SIZE} done — pausing ${Math.round(BATCH_PAUSE_MS / 1000)}s`);
+          await sleep(BATCH_PAUSE_MS);
+        } else {
+          await sleep(randomDelay());
+        }
       }
     }
   } finally {

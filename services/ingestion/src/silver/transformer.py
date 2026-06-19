@@ -10,13 +10,15 @@ from sqlalchemy.orm import Session
 
 from db import get_table
 
-from .sources import kleinanzeigen, wg_gesucht
+from .sources import housinganywhere, kleinanzeigen, wg_gesucht, wohninberlin
 
 logger = logging.getLogger(__name__)
 
 _TRANSFORMERS = {
     "wg-gesucht": wg_gesucht.to_listing_row,
     "kleinanzeigen": kleinanzeigen.to_listing_row,
+    "housinganywhere": housinganywhere.to_listing_row,
+    "wohninberlin": wohninberlin.to_listing_row,
 }
 
 

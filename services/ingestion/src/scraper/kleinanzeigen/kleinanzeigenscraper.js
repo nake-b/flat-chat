@@ -1,14 +1,18 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
 const db = require('scraper-lib');
+const stealth = require('scraper-lib/stealth');
 
-const SEARCH_URL = 'https://www.kleinanzeigen.de/s-wohnung-mieten/berlin/c203l3331+wohnung_mieten.swap_s:nein';
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
+
+const SEARCH_URL = 'https://www.kleinanzeigen.de/s-wohnung-mieten/berlin/sortierung:neuste/c203l3331+wohnung_mieten.swap_s:nein';
 const ORIGIN = 'https://www.kleinanzeigen.de';
 const LISTING_SOURCE = 'kleinanzeigen';
-const USER_AGENT =
-  process.env.USER_AGENT ||
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// null → rotate a current Chrome UA per run (see _lib/stealth.js). An explicit
+// USER_AGENT env var still pins it.
+const USER_AGENT = process.env.USER_AGENT || null;
 
 const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
@@ -370,14 +374,12 @@ async function scrapeDetail(page) {
 }
 
 async function preparePage(page) {
-  page.setDefaultTimeout(PAGE_TIMEOUT);
-  await page.setUserAgent(USER_AGENT);
-  await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6' });
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    window.chrome = window.chrome || { runtime: {} };
+  // Shared stealth helper: rotating current Chrome UA + matching client hints.
+  // The old manual navigator patches are gone — the stealth plugin owns those.
+  await stealth.applyStealthToPage(page, {
+    userAgent: USER_AGENT,
+    acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+    timeoutMs: PAGE_TIMEOUT,
   });
 }
 
@@ -437,9 +439,22 @@ async function collectCards(page, pool) {
     console.log(`\n[search ${pageNumber}/${MAX_PAGES}] ${url}`);
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+      // domcontentloaded (not networkidle2): kleinanzeigen runs DataDome, whose
+      // interstitial never reaches network-idle — networkidle2 silently ate the
+      // full timeout on page 2. Now we resolve fast and check for a challenge.
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
     } catch (error) {
       console.warn(`  navigation failed: ${error.message}`);
+      await dumpDebugArtifacts(page, `search-page-${pageNumber}-nav`);
+      break;
+    }
+
+    // This scraper previously had NO challenge detection, so a DataDome block
+    // looked like a generic timeout. Surface it explicitly and stop.
+    const challenge = await stealth.detectChallenge(page);
+    if (challenge) {
+      console.warn(`  challenge detected (${challenge}); stopping`);
+      await dumpDebugArtifacts(page, `search-page-${pageNumber}-${challenge}`);
       break;
     }
 
@@ -524,7 +539,7 @@ async function visitDetail(detailPage, listingUrl) {
   let status = 'ok';
 
   try {
-    await detailPage.goto(listingUrl, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+    await detailPage.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
   } catch (error) {
     notes.push(`goto: ${error.message}`);
     status = 'navigation_failed';
