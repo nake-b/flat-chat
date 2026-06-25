@@ -500,8 +500,14 @@ class SearchService:
         return stmt.where(subq.exists())
 
     async def _embed(self, query: str) -> list[float]:
-        """Compute the query embedding (provider-agnostic)."""
+        """Compute the query embedding (provider-agnostic).
+
+        `input_type="query"` is REQUIRED by `Embedder.embed` (keyword-only) and
+        also drives `JinaTaskEmbedder` to pick the asymmetric `retrieval.query`
+        LoRA — documents are embedded with `retrieval.passage`. Omitting it
+        raises `TypeError` at call time, which aborts the whole agent run.
+        """
         if self.embedder is None:  # pragma: no cover - guarded by caller
             raise RuntimeError("embedder required for semantic ranking")
-        vectors = await self.embedder.embed([query])
+        vectors = await self.embedder.embed([query], input_type="query")
         return vectors[0]
