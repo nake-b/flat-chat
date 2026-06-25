@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .context import (
     DensityProfile,
     GreeneryProfile,
+    ListingCard,
     ListingDetail,
     MssProfile,
     NearestHospital,
@@ -55,6 +56,7 @@ from .models import (
     Listing,
     ListingGeoContext,
 )
+from .projection import CARD_COLUMNS, row_to_listing_card
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +140,7 @@ class ListingService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get(self, listing_id: str | uuid.UUID) -> ListingDetail | None:
+    async def get_detail(self, listing_id: str | uuid.UUID) -> ListingDetail | None:
         """Fetch one listing's full tier-3 detail by ID.
 
         Returns None if no listing matches — the HTTP route surfaces this
@@ -243,6 +245,43 @@ class ListingService:
             else None
         )
         return detail
+
+    async def get_cards(self, ids: list[str]) -> list[ListingCard]:
+        """Hydrate tier-2 cards for a set of listing ids, IN the requested order.
+
+        The lazy-load accessor: the card strip calls this for the marker ids
+        scrolling into view (and future bookmarks hydrate their saved ids the
+        same way). One `listings ⨝ listings_geo_context` query via the shared
+        `CARD_COLUMNS` projection. SQL `id = ANY(...)` does NOT preserve input
+        order, so we reorder in Python by the caller's `ids`; unknown ids are
+        simply absent from the result. Malformed (non-UUID) ids are dropped.
+        """
+        if not ids:
+            return []
+        uids: list[uuid.UUID] = []
+        for raw in ids:
+            try:
+                uids.append(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+        if not uids:
+            return []
+
+        stmt = (
+            select(*CARD_COLUMNS)
+            .outerjoin(
+                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
+            )
+            .where(Listing.id.in_(uids))
+        )
+        rows = (await self.db.execute(stmt)).all()
+        by_id = {
+            card.id: card
+            for card in (row_to_listing_card(r, with_score=False) for r in rows)
+        }
+        # Preserve the caller's order (markers order = LLM index order); drop
+        # any id with no matching listing.
+        return [by_id[str(i)] for i in ids if str(i) in by_id]
 
     # ---- Listing + scalar/field projection (no junction tables) ----
 

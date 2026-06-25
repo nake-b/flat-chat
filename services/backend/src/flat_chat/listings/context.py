@@ -30,7 +30,6 @@ from .types import (
     NoiseLabel,
 )
 
-
 # ---------------------------------------------------------------------------
 # Top-K nearest dataclasses
 # ---------------------------------------------------------------------------
@@ -127,21 +126,40 @@ class MssProfile(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Tier-2 card shape — what `SearchService.search()` returns and what
-# `SessionState.results` carries. The frontend renders markers + cards
-# from this. Labels are populated at projection time from
-# `listings.labels` (raw values from gold get bucketed).
-# The three tiers (tier-1 markers, tier-2 cards = ListingCard, tier-3
-# detail = ListingDetail) are documented in
-# `agent-compound-docs/decisions/agent-vs-http-data-flow.md`.
+# Tier-1 marker — the thinnest projection: id + position + price. EVERY match
+# of a search ships as one of these (≤ MARKER_CAP) so the map can plot the
+# whole result set. SessionState compacts a list of these to a columnar dict
+# on the wire. The ordered list of markers IS the result set: the 1-based
+# indices the LLM/user reference resolve against it.
+# ---------------------------------------------------------------------------
+
+
+class Marker(BaseModel):
+    """One map marker — tier-1. lat/lng are required (search drops
+    null-coordinate listings before projecting), price may be null."""
+
+    id: str
+    lat: float
+    lng: float
+    price_warm_eur: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 card shape — the top-N `preview_cards` kept hot in `SessionState`
+# and the shape `GET /api/listings?ids=…&view=card` returns for lazy
+# hydration. Labels are populated at projection time from `listings.labels`
+# (raw values from gold get bucketed). The three tiers (tier-1 markers,
+# tier-2 cards = ListingCard, tier-3 detail = ListingDetail) are documented
+# in `agent-compound-docs/decisions/agent-vs-http-data-flow.md`.
 # ---------------------------------------------------------------------------
 
 
 class ListingCard(BaseModel):
     """One listing as the frontend renders it on the map and in cards.
 
-    Returned by `SearchService.search()`; mirrored to the frontend as
-    `SessionState.results[]` over the AG-UI stream. Labels are derived
+    Returned as `SearchService.search()`'s preview slice and by the
+    `?view=card` batch route; mirrored to the frontend as
+    `SessionState.preview_cards[]` over the AG-UI stream. Labels are derived
     from raw gold values via `listings.labels` at projection time, so
     threshold tweaks don't require a gold rebuild.
     """

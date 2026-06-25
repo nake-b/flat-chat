@@ -74,7 +74,7 @@ def test_no_filters_returns_seeded_listing(async_db_url):
     gold = _gold_row(listing["id"])
 
     async def body(service):
-        results, total = await service.search(SearchParams())
+        results, _preview, total = await service.search(SearchParams())
         return [r.id for r in results], total
 
     ids, total = _drive(async_db_url, [(listing, gold)], body)
@@ -90,7 +90,7 @@ def test_listing_without_junction_rows_is_filtered_out_by_poi_predicate(async_db
     gold = _gold_row(listing["id"])
 
     async def body(service):
-        results, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _ = await service.search(SearchParams(near_park="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, gold)], body)
@@ -114,7 +114,7 @@ def test_transit_modes_filter_matches_u_bahn(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
@@ -133,7 +133,7 @@ def test_transit_modes_filter_misses_when_only_bus(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
@@ -165,7 +165,7 @@ def test_transit_modes_matches_u_bahn_not_nearest_stop(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
@@ -183,7 +183,7 @@ def test_transit_distance_filter(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(distance="near"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -211,7 +211,7 @@ def test_transit_lines_filter_matches_specific_line(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(lines=["U8"]))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -227,7 +227,7 @@ def test_transit_stop_name_filter_uses_ilike(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(stop_name="wittenau"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
@@ -249,7 +249,7 @@ def test_school_proximity_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(school=SchoolFilter()))
+        results, _preview, _ = await service.search(SearchParams(school=SchoolFilter()))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -280,7 +280,7 @@ def test_school_type_filter_matches_gymnasium(async_db_url):
 
     async def body(service):
         params = SearchParams(school=SchoolFilter(school_type="Gymnasium"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -303,7 +303,7 @@ def test_school_requires_catchment_combines_with_proximity(async_db_url):
 
     async def body(service):
         params = SearchParams(school=SchoolFilter(requires_catchment=True))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -333,7 +333,7 @@ def test_hospital_plan_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(hospital=HospitalFilter()))
+        results, _preview, _ = await service.search(SearchParams(hospital=HospitalFilter()))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -353,7 +353,7 @@ def test_hospital_tier_any_widens(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(
+        results, _preview, _ = await service.search(
             SearchParams(hospital=HospitalFilter(tier="any"))
         )
         return {r.id for r in results}
@@ -379,7 +379,7 @@ def test_mss_status_floor(async_db_url):
 
     async def body(service):
         params = SearchParams(mss=MssFilter(status_min="mixed"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -398,7 +398,7 @@ def test_mss_dynamics_exact(async_db_url):
 
     async def body(service):
         params = SearchParams(mss=MssFilter(status_min="mixed", dynamics="improving"))
-        results, _ = await service.search(params)
+        results, _preview, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -421,7 +421,7 @@ def test_near_park_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _ = await service.search(SearchParams(near_park="near"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -439,7 +439,7 @@ def test_near_playground_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(near_playground="near"))
+        results, _preview, _ = await service.search(SearchParams(near_playground="near"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -453,7 +453,7 @@ def test_near_water_filter(async_db_url):
     junctions = [(ListingNearbyWater, nearby_water_row(near["id"], distance_m=300))]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(near_water="near"))
+        results, _preview, _ = await service.search(SearchParams(near_water="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -474,7 +474,7 @@ def test_max_noise_filter_excludes_loud(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -494,7 +494,7 @@ def test_max_noise_optimistic_includes_null(async_db_url):
     seeds = [(null_noise, _gold_row(null_noise["id"], noise_total_lden=None))]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
@@ -510,7 +510,7 @@ def test_min_greenery_jsonb_float_extraction(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(min_greenery="leafy"))
+        results, _preview, _ = await service.search(SearchParams(min_greenery="leafy"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -527,7 +527,7 @@ def test_density_sparse_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _ = await service.search(SearchParams(density="sparse"))
+        results, _preview, _ = await service.search(SearchParams(density="sparse"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -586,9 +586,65 @@ def test_combined_filters_kitchen_sink(async_db_url):
             min_greenery="leafy",
             density="sparse",
         )
-        results, total = await service.search(params)
+        results, _preview, total = await service.search(params)
         return [r.id for r in results], total
 
     ids, total = _drive(async_db_url, [(listing, gold)], body, junctions=junctions)
     assert str(listing["id"]) in ids
     assert total == 1
+
+
+# ---------------------------------------------------------------------------
+# Marker / preview / total shape (the tiered return)
+# ---------------------------------------------------------------------------
+
+
+def test_search_returns_markers_preview_and_total(async_db_url):
+    listings = [_listing_row(warm_rent_eur=1000.0 + i * 100) for i in range(3)]
+    seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
+
+    async def body(service):
+        markers, preview, total = await service.search(SearchParams(sort_by="price"))
+        return [m.id for m in markers], [c.id for c in preview], total
+
+    marker_ids, preview_ids, total = _drive(async_db_url, seeds, body)
+    assert total == 3
+    assert len(marker_ids) == 3
+    # Preview is a true prefix of the marker order (shared filter/sort).
+    assert preview_ids == marker_ids[: len(preview_ids)]
+
+
+def test_search_drops_null_coordinate_listings_from_markers(async_db_url):
+    has_coords = _listing_row()
+    no_coords = _listing_row(latitude=None, longitude=None)
+    seeds = [
+        (has_coords, _gold_row(has_coords["id"])),
+        (no_coords, _gold_row(no_coords["id"])),
+    ]
+
+    async def body(service):
+        markers, _preview, total = await service.search(SearchParams())
+        return {m.id for m in markers}, total
+
+    ids, total = _drive(async_db_url, seeds, body)
+    assert str(has_coords["id"]) in ids
+    assert str(no_coords["id"]) not in ids
+    assert total == 1
+
+
+def test_search_total_uses_count_when_marker_cap_binds(async_db_url, monkeypatch):
+    # Force the cap to bind so `total` comes from COUNT(*), not len(markers).
+    from flat_chat.search import service as _svc
+
+    monkeypatch.setattr(_svc, "MARKER_CAP", 2)
+
+    listings = [_listing_row() for _ in range(3)]
+    seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
+
+    async def body(service):
+        markers, _preview, total = await service.search(SearchParams())
+        return len(markers), total
+
+    n_markers, total = _drive(async_db_url, seeds, body)
+    assert n_markers == 2  # capped
+    assert total == 3  # real COUNT(*) over the filtered set

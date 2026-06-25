@@ -4,18 +4,22 @@ Design:
   - Joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` and
     filters with plain B-tree predicates on the gold scalars plus EXISTS
     subqueries against the per-listing junction tables.
-  - Returns `list[ListingCard]` — typed Pydantic, not pandas DataFrame.
-    The chat layer treats the list as the agent's working memory and
-    pushes it to the frontend as `SessionState.results`.
-  - The only spatial predicate is `ST_DWithin` on the listing's own
-    location for `near_lat/near_lon` proximity search — a single
-    condition on the listing's location that hits the functional GiST
-    index and is cheap.
+  - `search()` returns `(markers, preview_cards, total)`: EVERY match as a
+    thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered result
+    set), plus the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
+    LLM + the card strip). The rest of the cards hydrate on demand via
+    `ListingService.get_cards`.
+  - The only spatial predicate is `ST_DWithin` on the listing's own location
+    for `near_lat/near_lon` proximity search — a single condition that hits
+    the functional GiST index and is cheap.
+
+Marker and preview queries share one filter/sort builder (`_compose`) so
+their ordering agrees — the LLM's 1-based indices resolve against the marker
+order, and the preview must be a true prefix of it.
 
 Neighbour proximity and the chip scalars are precomputed at gold-ETL time
 (see `services/ingestion/src/gold/`). Detail fetches go through
-`ListingService.get(id)` via either the agent tool `open_listing` or the
-HTTP route `GET /api/listings/{id}`.
+`ListingService.get_detail(id)`; lazy card hydration through `get_cards(ids)`.
 """
 
 from __future__ import annotations
@@ -30,14 +34,8 @@ from pydantic_ai import Embedder
 from sqlalchemy import ARRAY, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import ListingCard
-from flat_chat.listings.labels import (
-    bucket_density,
-    bucket_noise,
-    encode_modes,
-    resolve_near_spec,
-    walk_minutes,
-)
+from flat_chat.listings.context import ListingCard, Marker
+from flat_chat.listings.labels import encode_modes, resolve_near_spec
 from flat_chat.listings.models import (
     Listing,
     ListingEmbedding,
@@ -49,8 +47,7 @@ from flat_chat.listings.models import (
     ListingNearbyTransit,
     ListingNearbyWater,
 )
-from flat_chat.listings.types import MssDynamics, MssStatus
-from typing import get_args as _typing_get_args
+from flat_chat.listings.projection import CARD_COLUMNS, row_to_listing_card
 from flat_chat.listings.thresholds import (
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
@@ -65,7 +62,7 @@ from .geo_filters import (
     SchoolFilter,
     TransitFilter,
 )
-from .schemas import SearchParams
+from .schemas import MARKER_CAP, PREVIEW_N, SearchParams
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +77,7 @@ def _escape_for_substring(s: str) -> str:
 
 
 class SearchService:
-    """Filter + rank listings. Returns the tier-2 cards. Agent-only consumer.
+    """Filter + rank listings. Returns markers + preview cards. Agent-only.
 
     HTTP routes don't call this; `ListingService` handles direct reads.
     """
@@ -89,83 +86,126 @@ class SearchService:
         self.db = db
         self.embedder = embedder
 
-    async def search(self, params: SearchParams) -> tuple[list[ListingCard], int]:
-        """Execute the search. Returns (results, total_count_hint).
+    async def search(
+        self, params: SearchParams
+    ) -> tuple[list[Marker], list[ListingCard], int]:
+        """Run the search. Returns (markers, preview_cards, total).
 
-        `total_count_hint` is the number of rows the query yielded before
-        applying LIMIT — useful for "Found N listings, showing top X"
-        prose. Currently equal to len(results) when results < limit;
-        beyond that we'd need a separate COUNT(*) which is overkill.
+        - `markers`: EVERY match (≤ MARKER_CAP) as thin tier-1 markers — the
+          map source and the ordered result set the LLM indexes into.
+        - `preview_cards`: the top PREVIEW_N as full tier-2 cards.
+        - `total`: `len(markers)`, unless the cap binds — then a real COUNT(*).
+
+        Markers and preview share `_compose` so their filters AND ORDER BY are
+        identical; the preview is a true prefix of the marker order, which is
+        what makes the LLM's 1-based indices line up.
         """
-        stmt = await self._build_statement(params)
-
         logger.info(
             "Searching: %s",
             params.model_dump(exclude_defaults=True, exclude_none=True),
         )
-        result = await self.db.execute(stmt)
-        rows = result.all()
-        logger.info("Found %d results", len(rows))
 
-        cards = [_row_to_uiapartment(row, with_score=bool(params.query)) for row in rows]
-        return cards, len(cards)
+        # Resolve sort + (optional) query embedding once; shared by both queries.
+        sort_effective = params.sort_by
+        embedding: list[float] | None = None
+        if params.query and self.embedder:
+            embedding = await self._embed(params.query)
+        elif params.query and not self.embedder:
+            logger.warning(
+                "sort_by=relevance with query but no embedder — falling back to recent"
+            )
+            sort_effective = "recent"
+        elif params.sort_by == "relevance" and not params.query:
+            logger.info("sort_by=relevance with no query — falling back to recent")
+            sort_effective = "recent"
+
+        # Markers — thin projection, every match up to the cap.
+        marker_stmt = (
+            self._compose(
+                params,
+                embedding=embedding,
+                sort_effective=sort_effective,
+                select_cols=(
+                    Listing.id,
+                    Listing.latitude,
+                    Listing.longitude,
+                    Listing.warm_rent_eur,
+                ),
+                add_score=False,
+            )
+            .where(Listing.latitude.is_not(None), Listing.longitude.is_not(None))
+            .limit(MARKER_CAP)
+        )
+        marker_rows = (await self.db.execute(marker_stmt)).all()
+        markers = [
+            Marker(
+                id=str(r.id),
+                lat=r.latitude,
+                lng=r.longitude,
+                price_warm_eur=r.warm_rent_eur,
+            )
+            for r in marker_rows
+        ]
+        logger.info("Found %d markers", len(markers))
+
+        total = len(markers)
+        if total == MARKER_CAP:
+            total = await self.db.scalar(self._count_statement(params)) or total
+
+        # Preview — top-N full cards (same filters + ORDER BY as the markers).
+        preview_stmt = (
+            self._compose(
+                params,
+                embedding=embedding,
+                sort_effective=sort_effective,
+                select_cols=CARD_COLUMNS,
+                add_score=True,
+            )
+            .where(Listing.latitude.is_not(None), Listing.longitude.is_not(None))
+            .limit(PREVIEW_N)
+        )
+        preview_rows = (await self.db.execute(preview_stmt)).all()
+        preview = [
+            row_to_listing_card(row, with_score=bool(params.query))
+            for row in preview_rows
+        ]
+        return markers, preview, total
 
     # ---- Statement composition ----
 
-    async def _build_statement(self, params: SearchParams) -> Select:
-        """Compose the SELECT against `listings ⨝ listings_geo_context (⨝ embeddings)`.
+    def _compose(
+        self,
+        params: SearchParams,
+        *,
+        embedding: list[float] | None,
+        sort_effective: str,
+        select_cols: tuple,
+        add_score: bool,
+    ) -> Select:
+        """Filtered + sorted SELECT over `listings ⨝ listings_geo_context
+        (⨝ embeddings)`, parameterised by the columns to project.
 
-        Plain joins; every geo-context filter is a B-tree predicate on
-        the gold columns. The only spatial work is the optional
-        `near_lat/near_lon` radius filter, which uses the functional GiST
-        index on `listings.location::geography`.
+        Shared by the marker query (thin cols, no score) and the preview query
+        (full card cols + score) so their filter set AND ORDER BY are
+        identical. For `sort_by=relevance` that means BOTH carry the embedding
+        join + cosine-distance order — it is not filter-only.
         """
-        stmt: Select = (
-            select(
-                Listing,
-                ListingGeoContext.nearest_transit_lines,
-                ListingGeoContext.nearest_transit_m,
-                ListingGeoContext.nearest_transit_name,
-                ListingGeoContext.nearest_park_name,
-                ListingGeoContext.nearest_park_m,
-                ListingGeoContext.noise_total_lden,
-                ListingGeoContext.persons_per_hectare,
-                ListingGeoContext.mss_status,
-                ListingGeoContext.mss_dynamics,
-            )
-            .outerjoin(
-                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
-            )
+        stmt: Select = select(*select_cols).outerjoin(
+            ListingGeoContext, ListingGeoContext.listing_id == Listing.id
         )
-
         stmt = self._apply_listing_filters(stmt, params)
         stmt = self._apply_geo_context_filters(stmt, params)
 
-        # Semantic ranking via embedding cosine distance — only when the
-        # user provided a query. Otherwise sort_by=relevance degrades to
-        # recency (still useful; just doesn't reflect query terms).
-        sort_effective = params.sort_by
         distance = None
-        if params.query and self.embedder:
-            embedding = await self._embed(params.query)
+        if embedding is not None:
             stmt = stmt.outerjoin(
                 ListingEmbedding, ListingEmbedding.listing_id == Listing.id
             )
             distance = ListingEmbedding.embedding.cosine_distance(
                 cast(embedding, Vector(1024))
             )
-            stmt = stmt.add_columns(distance.label("similarity_score"))
-        elif params.query and not self.embedder:
-            logger.warning(
-                "sort_by=relevance with query but no embedder — "
-                "falling back to recent"
-            )
-            sort_effective = "recent"
-        elif params.sort_by == "relevance" and not params.query:
-            logger.info(
-                "sort_by=relevance with no query — falling back to recent"
-            )
-            sort_effective = "recent"
+            if add_score:
+                stmt = stmt.add_columns(distance.label("similarity_score"))
 
         if sort_effective == "relevance" and distance is not None:
             stmt = stmt.order_by(distance)
@@ -175,8 +215,22 @@ class SearchService:
             stmt = stmt.order_by(Listing.area_sqm.desc().nulls_last())
         else:
             stmt = stmt.order_by(Listing.ingested_at.desc())
+        return stmt
 
-        return stmt.limit(params.limit)
+    def _count_statement(self, params: SearchParams) -> Select:
+        """COUNT(*) over the filtered set — only run when the marker cap binds."""
+        stmt: Select = (
+            select(func.count())
+            .select_from(Listing)
+            .outerjoin(
+                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
+            )
+        )
+        stmt = self._apply_listing_filters(stmt, params)
+        stmt = self._apply_geo_context_filters(stmt, params)
+        return stmt.where(
+            Listing.latitude.is_not(None), Listing.longitude.is_not(None)
+        )
 
     def _apply_listing_filters(self, stmt: Select, params: SearchParams) -> Select:
         """Filters that read directly off the `listings` table."""
@@ -354,9 +408,7 @@ class SearchService:
 
         return stmt
 
-    def _apply_transit_filter(
-        self, stmt: Select, f: TransitFilter
-    ) -> Select:
+    def _apply_transit_filter(self, stmt: Select, f: TransitFilter) -> Select:
         """EXISTS-any against `listings_nearby_transit`.
 
         Restores old-correct "any stop within X m" semantics (the v1 gold
@@ -373,21 +425,15 @@ class SearchService:
         )
         if f.modes:
             mode_codes = encode_modes(list(f.modes))
-            subq = subq.where(
-                nbr.modes.op("&&")(cast(mode_codes, ARRAY(Integer)))
-            )
+            subq = subq.where(nbr.modes.op("&&")(cast(mode_codes, ARRAY(Integer))))
         if f.lines:
-            subq = subq.where(
-                nbr.lines.op("&&")(cast(f.lines, ARRAY(Text)))
-            )
+            subq = subq.where(nbr.lines.op("&&")(cast(f.lines, ARRAY(Text))))
         if f.stop_name:
             pattern = _escape_for_substring(f.stop_name)
             subq = subq.where(nbr.name.ilike(pattern, escape="\\"))
         return stmt.where(subq.exists())
 
-    def _apply_school_filter(
-        self, stmt: Select, f: SchoolFilter
-    ) -> Select:
+    def _apply_school_filter(self, stmt: Select, f: SchoolFilter) -> Select:
         """EXISTS-any against `listings_nearby_schools` + optional catchment.
 
         Two intents combine with AND:
@@ -410,9 +456,7 @@ class SearchService:
             stmt = stmt.where(ListingGeoContext.school_catchment.is_not(None))
         return stmt
 
-    def _apply_hospital_filter(
-        self, stmt: Select, f: HospitalFilter
-    ) -> Select:
+    def _apply_hospital_filter(self, stmt: Select, f: HospitalFilter) -> Select:
         """EXISTS-any against `listings_nearby_hospitals`, optionally tier-filtered.
 
         `tier="plan_hospital"` (default) restricts to the Krankenhausplan
@@ -449,110 +493,3 @@ class SearchService:
             raise RuntimeError("embedder required for semantic ranking")
         vectors = await self.embedder.embed([query])
         return vectors[0]
-
-
-# ---------------------------------------------------------------------------
-# Row → ListingCard projection. Labels applied here via listings.labels —
-# gold stores raw values; this is the point where presentation meets data.
-# ---------------------------------------------------------------------------
-
-
-_MSS_STATUS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssStatus))
-_MSS_DYNAMICS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssDynamics))
-
-
-def _safe_mss_status(value: str | None) -> str | None:
-    """Coerce unknown / sentinel MSS status strings (e.g. ``Planungsraum
-    ohne Zuordnung`` — the publisher's "no data" marker) to None instead
-    of letting Pydantic raise. Real labels pass through unchanged."""
-    if value is None:
-        return None
-    return value if value in _MSS_STATUS_VALUES else None
-
-
-def _safe_mss_dynamics(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return value if value in _MSS_DYNAMICS_VALUES else None
-
-
-def _row_to_uiapartment(row, *, with_score: bool) -> ListingCard:
-    """Build a ListingCard from a SELECT row.
-
-    The row is the tuple shape `_build_statement` selects:
-        (Listing, nearest_transit_lines, nearest_transit_m,
-         nearest_transit_name, nearest_park_name, nearest_park_m,
-         noise_total_lden, persons_per_hectare, mss_status, mss_dynamics,
-         [similarity_score])
-    """
-    listing: Listing = row[0]
-    mapping = row._mapping
-
-    nearest_transit_lines = mapping.get("nearest_transit_lines")
-    nearest_transit_line = (
-        nearest_transit_lines[0] if nearest_transit_lines else None
-    )
-    nearest_transit_m = mapping.get("nearest_transit_m")
-    noise_lden = mapping.get("noise_total_lden")
-    pph = mapping.get("persons_per_hectare")
-
-    # Pick the first image URL if any (browser handles the rest via HTTP
-    # detail fetch; the card just needs a thumbnail).
-    image_url: str | None = None
-    if listing.images:
-        for item in listing.images:
-            if isinstance(item, str):
-                image_url = item
-                break
-            if isinstance(item, dict) and isinstance(item.get("url"), str):
-                image_url = item["url"]
-                break
-
-    sim_score = None
-    if with_score and "similarity_score" in mapping:
-        # Postgres cosine_distance returns 0..2; convert to 0..1 similarity
-        raw = mapping["similarity_score"]
-        if raw is not None:
-            sim_score = round(1 - float(raw), 4)
-
-    return ListingCard(
-        id=str(listing.id),
-        lat=listing.latitude,
-        lng=listing.longitude,
-        price_warm_eur=listing.warm_rent_eur,
-        price_cold_eur=listing.cold_rent_eur,
-        nebenkosten_eur=listing.nebenkosten_eur,
-        kaution_eur=listing.kaution_eur,
-        rooms=listing.rooms,
-        bedrooms=listing.bedrooms,
-        area_sqm=listing.area_sqm,
-        floor=listing.floor,
-        floors_total=listing.floors_total,
-        available_from=(
-            listing.available_from.isoformat() if listing.available_from else None
-        ),
-        listing_type=listing.apartment_type,
-        district=listing.district,
-        title=listing.title,
-        address=listing.address,
-        wbs_required=listing.wbs_required,
-        is_furnished=listing.is_furnished,
-        has_balcony=listing.has_balcony,
-        has_kitchen=listing.has_kitchen,
-        has_elevator=listing.has_elevator,
-        has_garden=listing.has_garden,
-        heating=listing.heating,
-        energy_consumption_kwh=listing.energy_consumption_kwh,
-        lister_type=listing.lister_type,
-        source_url=listing.listing_url,
-        image_url=image_url,
-        nearest_transit_line=nearest_transit_line,
-        walk_min_to_transit=walk_minutes(nearest_transit_m),
-        nearest_park_name=mapping.get("nearest_park_name"),
-        nearest_park_m=mapping.get("nearest_park_m"),
-        noise_label=bucket_noise(noise_lden),
-        density_label=bucket_density(pph),
-        mss_status_label=_safe_mss_status(mapping.get("mss_status")),
-        mss_dynamics_label=_safe_mss_dynamics(mapping.get("mss_dynamics")),
-        similarity_score=sim_score,
-    )

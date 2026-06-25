@@ -303,24 +303,22 @@ async def search_apartments(
         sort_by=sort_by,
     )
 
-    # Execute the search. SearchService returns typed cards + total count.
-    cards, total = await ctx.deps.search_service.search(params)
+    # Execute the search. SearchService drops null-coordinate listings and
+    # returns markers (EVERY match, ≤ MARKER_CAP), the top-N preview cards,
+    # and the total.
+    markers, preview, total = await ctx.deps.search_service.search(params)
 
-    # Drop cards without coordinates so all three counts (chat prose,
-    # cards, map) agree — the map can only render markers for apartments
-    # with lat/lng. Filter at the tool layer; SearchService stays general.
-    cards = [c for c in cards if c.lat is not None and c.lng is not None]
-
-    # SessionState is the canonical in-memory snapshot. Both the LLM
-    # (via build_dynamic_state_prompt) and the frontend (via AG-UI
-    # state stream) read from here. One representation, two consumers.
+    # SessionState is the canonical in-memory snapshot. Both the LLM (via
+    # build_dynamic_state_prompt) and the frontend (via the AG-UI state
+    # stream) read from here. One representation, two consumers.
     ctx.deps.state.search_params = params
     ctx.deps.state.total_results = total
-    ctx.deps.state.results = cards
+    ctx.deps.state.result_markers = markers
+    ctx.deps.state.preview_cards = preview
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 
-    summary = LlmResultSetView(ctx.deps.state).summary()
+    summary = LlmResultSetView(ctx.deps.state).summary(preview)
     return _return_with_state(return_value=summary, session_state=ctx.deps.state)
 
 
@@ -355,32 +353,57 @@ async def open_listing(
             output. NEVER pass UUIDs, external IDs, or anything that isn't a
             simple 1-based number visible to the user.
     """
-    if not ctx.deps.state.results:
+    markers = ctx.deps.state.result_markers
+    if not markers:
         return "No active search results. Run search_apartments first."
 
     rs = LlmResultSetView(ctx.deps.state)
+    preview = ctx.deps.state.preview_cards
 
     # Clear unconditionally on entry so a stale blob from a prior call
     # doesn't leak into a multi-index / out-of-range response.
     ctx.deps.state.active_listing_detail = None
 
-    # Anchor the detail panel to indices[0] regardless of count.
+    # Anchor the detail panel to indices[0] regardless of count. Indices
+    # resolve against the marker order (the canonical result set).
     first = indices[0]
     pos = first - 1
-    if 0 <= pos < len(ctx.deps.state.results):
-        active = ctx.deps.state.results[pos]
-        ctx.deps.state.active_id = active.id
+    if 0 <= pos < len(markers):
+        ctx.deps.state.active_id = markers[pos].id
         # Single-index calls fetch tier 3 via ListingService and store it
         # in state. The LLM reads this via build_dynamic_state_prompt's
         # `<user_focus>` block on the next prompt build — so there's no
         # need to embed the detail prose in this tool's return value.
         if len(indices) == 1:
-            detail = await ctx.deps.listing_service.get(active.id)
+            detail = await ctx.deps.listing_service.get_detail(markers[pos].id)
             if detail is not None:
                 ctx.deps.state.active_listing_detail = detail
 
+    # Resolve a tier-2 card for each requested index (for the prose). The
+    # hot preview covers the top-N; anything beyond hydrates on demand by
+    # marker id.
+    need_ids = [
+        markers[i - 1].id
+        for i in indices
+        if 0 <= i - 1 < len(markers) and (i - 1) >= len(preview)
+    ]
+    hydrated = (
+        {c.id: c for c in await ctx.deps.listing_service.get_cards(need_ids)}
+        if need_ids
+        else {}
+    )
+    items = []
+    for i in indices:
+        p = i - 1
+        if not (0 <= p < len(markers)):
+            items.append((i, None))
+        elif p < len(preview):
+            items.append((i, preview[p]))
+        else:
+            items.append((i, hydrated.get(markers[p].id)))
+
     return _return_with_state(
-        return_value=rs.detail(indices), session_state=ctx.deps.state
+        return_value=rs.detail(items), session_state=ctx.deps.state
     )
 
 
@@ -392,18 +415,46 @@ async def get_result_page(
 ) -> str:
     """Show a compact page of the current result set.
 
-    Pure read of `LlmResultSetView` — does not mutate UiState, so no snapshot
-    is emitted. The agent uses this to peek beyond the top-5 shown by the
-    initial `search_apartments` summary.
+    Does NOT mutate state (no snapshot emitted); it hydrates the page's cards
+    on demand by marker id (the preview covers page 1). The agent uses this to
+    peek beyond the top-5 shown by the initial `search_apartments` summary.
 
     Args:
         page: 1-based page number.
         page_size: Listings per page (default 10).
     """
-    if not ctx.deps.state.results:
+    markers = ctx.deps.state.result_markers
+    if not markers:
         return "No active search results. Run search_apartments first."
 
-    return LlmResultSetView(ctx.deps.state).page(page, page_size)
+    rs = LlmResultSetView(ctx.deps.state)
+    total = rs.total
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page < 1 or page > total_pages:
+        return (
+            f"Page {page} is out of range. There are {total} results "
+            f"({total_pages} pages of {page_size})."
+        )
+
+    start = (page - 1) * page_size
+    if start >= len(markers):
+        # Beyond the markers we materialised (only possible past MARKER_CAP).
+        return (
+            f"Page {page} is beyond the {len(markers)} listings loaded on the "
+            "map. Refine your search to narrow it down."
+        )
+    end = min(start + page_size, len(markers))
+
+    preview = ctx.deps.state.preview_cards
+    if end <= len(preview):
+        cards = preview[start:end]
+    else:
+        ids = [m.id for m in markers[start:end]]
+        cards = await ctx.deps.listing_service.get_cards(ids)
+
+    return rs.page(
+        cards, start=start, page=page, total_pages=total_pages, page_size=page_size
+    )
 
 
 def _return_with_state(*, return_value: str, session_state) -> ToolReturn:

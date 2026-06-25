@@ -146,3 +146,46 @@ def test_get_listing_404_for_invalid_uuid(async_db_url):
 
     response = _drive(async_db_url, [], body)
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /api/listings?ids=…&view=card — the batch (lazy-hydrate) read
+# ---------------------------------------------------------------------------
+
+
+def test_list_listings_batch_returns_cards_in_request_order(async_db_url):
+    l1 = _listing_row(title="One", warm_rent_eur=1000.0)
+    l2 = _listing_row(title="Two", warm_rent_eur=2000.0)
+    seeds = [(l1, _gold_row(l1["id"])), (l2, _gold_row(l2["id"]))]
+
+    async def body(client):
+        return await client.get(
+            "/api/listings",
+            params=[("ids", str(l2["id"])), ("ids", str(l1["id"])), ("view", "card")],
+        )
+
+    response = _drive(async_db_url, seeds, body)
+    assert response.status_code == 200
+    payload = response.json()
+    # Cards come back in request order (l2 before l1).
+    assert [c["id"] for c in payload] == [str(l2["id"]), str(l1["id"])]
+    assert payload[0]["title"] == "Two"
+    assert response.headers["cache-control"] == "public, max-age=300"
+
+
+def test_list_listings_view_detail_is_rejected(async_db_url):
+    async def body(client):
+        return await client.get("/api/listings", params={"view": "detail"})
+
+    response = _drive(async_db_url, [], body)
+    assert response.status_code == 422
+
+
+def test_list_listings_over_cap_is_rejected(async_db_url):
+    too_many = [("ids", str(uuid.uuid4())) for _ in range(101)]
+
+    async def body(client):
+        return await client.get("/api/listings", params=too_many)
+
+    response = _drive(async_db_url, [], body)
+    assert response.status_code == 422

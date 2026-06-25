@@ -115,7 +115,7 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
     ]
 
     async def body(session):
-        return await ListingService(session).get(listing["id"])
+        return await ListingService(session).get_detail(listing["id"])
 
     detail = with_session(async_db_url, [(listing, gold)], body, junctions=junctions)
 
@@ -191,7 +191,7 @@ def test_get_caps_transit_at_top_n_in_rank_order(async_db_url):
     ]
 
     async def body(session):
-        return await ListingService(session).get(listing["id"])
+        return await ListingService(session).get_detail(listing["id"])
 
     detail = with_session(async_db_url, [(listing, gold)], body, junctions=junctions)
 
@@ -212,7 +212,7 @@ def test_get_returns_tier2_only_when_no_gold_row(async_db_url):
     listing = _listing_row(title="Unenriched", warm_rent_eur=900.0)
 
     async def body(session):
-        return await ListingService(session).get(listing["id"])
+        return await ListingService(session).get_detail(listing["id"])
 
     detail = with_session(async_db_url, [(listing, None)], body)
 
@@ -239,7 +239,7 @@ def test_get_returns_none_for_unknown_uuid(async_db_url):
     """Valid-shape UUID with no matching row → None (HTTP surfaces 404)."""
 
     async def body(session):
-        return await ListingService(session).get(uuid.uuid4())
+        return await ListingService(session).get_detail(uuid.uuid4())
 
     assert with_session(async_db_url, [], body) is None
 
@@ -248,7 +248,7 @@ def test_get_returns_none_for_invalid_uuid(async_db_url):
     """Non-UUID input → None (the ValueError swallow path)."""
 
     async def body(session):
-        return await ListingService(session).get("not-a-uuid")
+        return await ListingService(session).get_detail("not-a-uuid")
 
     assert with_session(async_db_url, [], body) is None
 
@@ -259,8 +259,8 @@ def test_get_accepts_both_uuid_and_string(async_db_url):
 
     async def body(session):
         service = ListingService(session)
-        via_uuid = await service.get(listing["id"])
-        via_str = await service.get(str(listing["id"]))
+        via_uuid = await service.get_detail(listing["id"])
+        via_str = await service.get_detail(str(listing["id"]))
         return via_uuid, via_str
 
     via_uuid, via_str = with_session(async_db_url, [(listing, None)], body)
@@ -269,3 +269,42 @@ def test_get_accepts_both_uuid_and_string(async_db_url):
     assert via_str is not None
     assert via_uuid.id == via_str.id
     assert via_uuid.title == via_str.title == "Coerce me"
+
+
+# ---------------------------------------------------------------------------
+# get_cards — tier-2 batch hydration (lazy-load / bookmarks accessor)
+# ---------------------------------------------------------------------------
+
+
+def test_get_cards_returns_cards_in_requested_order_dropping_unknown(async_db_url):
+    l1 = _listing_row(title="First", warm_rent_eur=1000.0)
+    l2 = _listing_row(title="Second", warm_rent_eur=2000.0)
+    l3 = _listing_row(title="Third", warm_rent_eur=3000.0)
+    seeds = [
+        (l1, _gold_row(l1["id"])),
+        (l2, _gold_row(l2["id"])),
+        (l3, _gold_row(l3["id"])),
+    ]
+
+    async def body(session):
+        service = ListingService(session)
+        order = [
+            str(l3["id"]),
+            str(l1["id"]),
+            "00000000-0000-0000-0000-000000000000",  # unknown → omitted
+            str(l2["id"]),
+        ]
+        cards = await service.get_cards(order)
+        return [c.id for c in cards], [c.title for c in cards]
+
+    ids, titles = with_session(async_db_url, seeds, body)
+    # Order follows the request, not the DB; the unknown id is dropped.
+    assert ids == [str(l3["id"]), str(l1["id"]), str(l2["id"])]
+    assert titles == ["Third", "First", "Second"]
+
+
+def test_get_cards_empty_input_returns_empty(async_db_url):
+    async def body(session):
+        return await ListingService(session).get_cards([])
+
+    assert with_session(async_db_url, [], body) == []

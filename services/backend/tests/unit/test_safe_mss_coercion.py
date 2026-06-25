@@ -8,7 +8,7 @@ in the silver translation map historically, so it slipped through
 unmapped and the new `ListingCard` Pydantic model (typed
 ``MssStatus | None``) blew up trying to validate it.
 
-The defensive coercion in `search/service.py` maps any unknown string
+The defensive coercion in `listings/projection.py` maps any unknown string
 (anything not in the canonical Literal set) to None, so the row still
 projects cleanly. These tests pin the contract.
 
@@ -20,7 +20,7 @@ the coercion here is what keeps search working.
 
 from __future__ import annotations
 
-from flat_chat.search.service import _safe_mss_dynamics, _safe_mss_status
+from flat_chat.listings.projection import _safe_mss_dynamics, _safe_mss_status
 
 
 class TestSafeMssStatus:

@@ -5,9 +5,10 @@ per-turn state. Tools call into here to format their returns; the agent's
 dynamic-instructions decorator calls into here to build the per-turn state
 prompt. Nothing outside this module composes prose for the LLM.
 
-Post-refactor: reads from `SessionState.results` (typed `ListingCard`
-list) — no pandas, no DataFrame. The `LlmResultSetView` is a thin
-function over the state; the "snapshot" is `SessionState` itself.
+`LlmResultSetView` is a thin formatter over the state: it reads
+`total_results` for counts and formats whatever card slice the caller hands
+it (`preview_cards` for the summary, on-demand-hydrated cards for deeper
+pages). The result set itself is `state.result_markers`.
 
 Layout:
   - `LlmResultSetView` — wraps the active SessionState and exposes
@@ -27,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
-from flat_chat.listings.context import ListingDetail, ListingCard
+from flat_chat.listings.context import ListingCard, ListingDetail
 
 
 def xml_block(tag: str, body: str) -> str:
@@ -39,22 +40,18 @@ def xml_block(tag: str, body: str) -> str:
 class LlmResultSetView:
     """Thin formatter over the active SessionState — LLM-facing view.
 
-    No DataFrame, no separate cache: reads `SessionState.results`
-    (a `list[ListingCard]`) directly. Pagination, detail formatting,
-    summary prose all derive from that list.
+    The result set is `state.result_markers` (the ordered list of every
+    match); cards are NOT held here. The view reads `total_results` for the
+    headline count and formats whatever card slice the caller hands it:
+    `preview_cards` for the summary, on-demand-hydrated cards for deeper
+    pages / opened listings.
     """
 
     state: SessionState
 
     @property
     def total(self) -> int:
-        # When total_results > len(results), we hit the search LIMIT;
-        # otherwise total equals the materialized list.
-        return max(self.state.total_results, len(self.state.results))
-
-    @property
-    def shown(self) -> int:
-        return len(self.state.results)
+        return self.state.total_results
 
     def order_label(self) -> str:
         """Human-readable description of the actual sort in effect.
@@ -75,45 +72,47 @@ class LlmResultSetView:
             case _:
                 return "most recent first"
 
-    def summary(self, top_n: int = 5) -> str:
-        """Prose overview after a search. Always ends with the nav footer."""
-        if self.shown == 0:
+    def summary(self, cards: list[ListingCard], top_n: int = 5) -> str:
+        """Prose overview after a search. `cards` is the preview slice
+        (`state.preview_cards`). Always ends with the nav footer."""
+        if self.total == 0 or not cards:
             return (
                 "No apartments found matching those criteria. "
                 "Try broadening your search."
             )
 
-        shown = min(top_n, self.shown)
+        shown = min(top_n, len(cards))
         lines = [f"Found {self.total} listings, {self.order_label()}."]
         lines.append(f"Showing 1–{shown}:")
         for i in range(shown):
-            lines.append(_format_card_prose(self.state.results[i], i + 1))
+            lines.append(_format_card_prose(cards[i], i + 1))
         lines.append(format_navigation_footer(self, shown_end=shown))
         return "\n".join(lines)
 
-    def page(self, page: int, page_size: int = 10) -> str:
-        """CSV body of listings start..end. Compact for the LLM."""
-        if self.shown == 0:
+    def page(
+        self,
+        cards: list[ListingCard],
+        *,
+        start: int,
+        page: int,
+        total_pages: int,
+        page_size: int = 10,
+    ) -> str:
+        """CSV body for one page. `cards` is the hydrated slice for this page;
+        `start` is its 0-based absolute offset into the result set. Compact
+        for the LLM."""
+        if not cards:
             return "No results to page through. Run a search first."
 
-        total_pages = max(1, (self.shown + page_size - 1) // page_size)
-        if page < 1 or page > total_pages:
-            return (
-                f"Page {page} is out of range. "
-                f"There are {self.shown} loaded results ({total_pages} pages of "
-                f"{page_size})."
-            )
-
-        start = (page - 1) * page_size
-        end = min(start + page_size, self.shown)
+        end = start + len(cards)
         rows = ["#,title,warm €,rooms,m²,district"]
-        for i in range(start, end):
-            rows.append(_format_card_csv(self.state.results[i], i + 1))
+        for i, card in enumerate(cards):
+            rows.append(_format_card_csv(card, start + i + 1))
 
         return "\n".join(
             [
                 f"Page {page}/{total_pages} — listings {start + 1}–{end} of "
-                f"{self.shown} loaded ({self.total} total), {self.order_label()}.",
+                f"{self.total}, {self.order_label()}.",
                 "```csv",
                 "\n".join(rows),
                 "```",
@@ -121,20 +120,20 @@ class LlmResultSetView:
             ]
         )
 
-    def detail(self, indices: list[int]) -> str:
-        """Prose, full fields for specific listings. 1-based indexing."""
-        if self.shown == 0:
+    def detail(self, items: list[tuple[int, ListingCard | None]]) -> str:
+        """Prose, full fields for specific listings. `items` pairs each
+        1-based index with its hydrated card (or None when out of range)."""
+        if not items:
             return "No results to show details for. Run a search first."
 
         chunks: list[str] = []
-        for idx in indices:
-            pos = idx - 1
-            if pos < 0 or pos >= self.shown:
+        for idx, card in items:
+            if card is None:
                 chunks.append(
-                    f"#{idx}: out of range (results are 1–{self.shown})."
+                    f"#{idx}: out of range (results are 1–{self.total})."
                 )
                 continue
-            chunks.append(_format_card_detail(self.state.results[pos], idx))
+            chunks.append(_format_card_detail(card, idx))
         return "\n\n".join(chunks)
 
 
@@ -149,18 +148,18 @@ def format_navigation_footer(view: LlmResultSetView, *, shown_end: int) -> str:
     Lives here (next to the view it describes) rather than on
     `LlmResultSetView` so the data class doesn't reference tool names.
     """
-    if view.shown == 0:
+    if view.total == 0:
         return (
             "\nTo explore further:\n"
             "  • search_apartments(...)          — refine with new filters or query"
         )
 
-    remaining = view.shown - shown_end
+    remaining = view.total - shown_end
     lines: list[str] = []
     if remaining <= 0:
-        lines.append("All loaded results shown above. To explore further:")
+        lines.append("All results shown above. To explore further:")
     else:
-        lines.append(f"{remaining} more loaded. To explore further:")
+        lines.append(f"{remaining} more match. To explore further:")
         lines.append("  • get_result_page(page=N)         — next page (10 per page)")
     lines.append(
         "  • open_listing(indices=[N])       — open the detail panel + full info"
@@ -356,7 +355,7 @@ def _current_state_block(view: LlmResultSetView) -> str:
 
     lines = [
         f"  <total>{view.total}</total>",
-        f"  <loaded>{view.shown}</loaded>",
+        f"  <loaded>{len(view.state.preview_cards)}</loaded>",
         f"  <order>{view.order_label()}</order>",
         f"  <filters>{filters_json}</filters>",
     ]
@@ -364,11 +363,12 @@ def _current_state_block(view: LlmResultSetView) -> str:
 
 
 def _index_for_active(state: SessionState) -> int | None:
-    """Map SessionState.active_id back to a 1-based index in the result set."""
+    """Map SessionState.active_id back to a 1-based index in the result set
+    (the ordered `result_markers`)."""
     if state.active_id is None:
         return None
-    for i, apt in enumerate(state.results, start=1):
-        if apt.id == state.active_id:
+    for i, marker in enumerate(state.result_markers, start=1):
+        if marker.id == state.active_id:
             return i
     return None
 
@@ -415,8 +415,14 @@ def _format_card_detail(apt: ListingCard, idx: int) -> str:
     lines = [f"--- Listing #{idx} ---"]
     for label, value in [
         ("Title", apt.title),
-        ("Warm rent", f"€{apt.price_warm_eur:.0f}/month" if apt.price_warm_eur else None),
-        ("Cold rent", f"€{apt.price_cold_eur:.0f}/month" if apt.price_cold_eur else None),
+        (
+            "Warm rent",
+            f"€{apt.price_warm_eur:.0f}/month" if apt.price_warm_eur else None,
+        ),
+        (
+            "Cold rent",
+            f"€{apt.price_cold_eur:.0f}/month" if apt.price_cold_eur else None,
+        ),
         ("Rooms", f"{apt.rooms:g}" if apt.rooms else None),
         ("Area", f"{apt.area_sqm:.0f} m²" if apt.area_sqm else None),
         ("Floor", apt.floor),

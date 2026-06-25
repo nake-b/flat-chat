@@ -47,12 +47,21 @@ def _now() -> datetime:
 
 
 def listing_row(**overrides) -> dict:
-    """Minimal valid Listing row. Tests override fields they need to filter on."""
+    """Minimal valid Listing row. Tests override fields they need to filter on.
+
+    Defaults include Berlin-centre coordinates: `SearchService` only projects
+    listings with non-null lat/lng into markers (you can't plot a coordinate-
+    less listing), so a seed without coords would never appear in search
+    results. Tests that specifically exercise null-coordinate behaviour
+    override `latitude`/`longitude` to None.
+    """
     return {
         "id": uuid.uuid4(),
         "source_name": "test",
         "external_id": str(uuid.uuid4()),
         "scraped_at": _now(),
+        "latitude": 52.52,
+        "longitude": 13.405,
         **overrides,
     }
 

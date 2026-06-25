@@ -31,6 +31,12 @@ from .geo_filters import (
 
 SortBy = Literal["relevance", "price", "area", "recent"]
 
+# Server-side caps (NOT LLM-tunable). A search returns EVERY match as a thin
+# marker, hard-capped at MARKER_CAP for the SSE snapshot, plus the top
+# PREVIEW_N as full cards. Known scale ceiling — grep `MARKER_CAP`.
+MARKER_CAP = 5000
+PREVIEW_N = 10
+
 
 class SearchParams(BaseModel):
     """Structured search filters surfaced to the LLM as `search_apartments`
@@ -97,7 +103,6 @@ class SearchParams(BaseModel):
     density: DensityLabel | None = None
 
     sort_by: SortBy = "relevance"
-    # Cap raised post-refactor: gold makes 500-result searches cheap
-    # (B-tree filters on a denorm join, no spatial work). Hard max keeps
-    # accidental "limit=10000" from blowing up the SSE payload.
-    limit: int = Field(default=300, ge=1, le=500)
+    # No per-search `limit`: the model returns every match as a marker (hard-
+    # capped server-side at MARKER_CAP) + a fixed PREVIEW_N of full cards. The
+    # LLM doesn't tune result count — "show everything on the map" is the point.
