@@ -37,8 +37,10 @@ Split into two channels, CQRS-style:
   listing detail).
 
 Both channels share the same data layer (`listings` ⨝ `listings_geo_context`
-⨝ `listings_embeddings`). `ListingService.get(id)` is the single accessor
-called from both the agent's `open_listing` tool AND the HTTP route.
+⨝ `listings_embeddings`). `ListingService.get_detail(id)` is the single
+tier-3 accessor called from both the agent's `open_listing` tool AND the
+`GET /api/listings/{id}` route; `ListingService.get_cards(ids)` is the
+tier-2 batch accessor behind `GET /api/listings?ids=&view=card`.
 `SearchService` stays agent-only — query interpretation is the LLM's job.
 
 ## Three tiers of listing data
@@ -47,13 +49,27 @@ The split makes the size/weight distinction explicit:
 
 | Tier | What | Size each | Channel |
 |---|---|---|---|
-| **1 — Marker** | id + lat/lng + price | ~80 bytes | AG-UI state |
-| **2 — Card** | + chips, area, district, thumbnail URL | ~500 bytes | AG-UI state |
+| **1 — Marker** | id + lat/lng + price | ~80 bytes | AG-UI state (`result_markers`, every match ≤ MARKER_CAP=5000) |
+| **2 — Card** | + chips, area, district, thumbnail URL | ~500 bytes | AG-UI state for the top PREVIEW_N=10 (`preview_cards`); the rest via HTTP `GET /api/listings?ids=&view=card` |
 | **3 — Detail** | + full description, image gallery, tier-3 geo-context blob | ~10 KB | HTTP `GET /api/listings/{id}` |
 
-At 500 listings, tier-2 = ~250 KB of state — fine for SSE. Tier-3 at
-the same scale would be 5 MB — too much. The HTTP channel only delivers
-tier-3 for one listing at a time (the one being viewed).
+Markers ride the AG-UI state because they ARE the search result set, not
+a by-id projection — there is no `view=marker` on the listings
+collection. They serialize columnar (`{ids,lats,lngs,prices}`) so even
+the 5000-marker cap stays cheap on the wire. Full cards do NOT all ride
+the stream: at thousands of matches, tier-2 in state would be hundreds
+of KB. Instead the top-10 ship in `preview_cards` and the rest hydrate
+on demand.
+
+### Tier-2 batch lazy-hydration — `GET /api/listings?ids=&view=card`
+
+The collection route takes a repeated `ids` query param and an AIP-157
+`view` enum (`card` / `detail`) and returns `ListingCard[]` in request
+order. Constraints: ≤100 ids per call, cacheable. The frontend's card
+strip windows the marker list and fires this for the ids that scroll
+into view, caching results in a client-side `cardCache`. This is the
+tier-2 lazy-hydration channel; the single `GET /api/listings/{id}` still
+serves tier-3 detail, unchanged.
 
 ## Active-listing detail in state
 
@@ -65,8 +81,9 @@ follow-up questions ("is the area safe?") without redundant tool calls.
 Two trigger paths populate it:
 - **Frontend click** — `setState({active_id})` + `GET /api/listings/{id}`
   + `setState({active_listing_detail})`. Primary path; 1 DB hit.
-- **Agent `open_listing(indices=[k])`** — tool calls `ListingService.get(id)`
-  internally + pushes both fields via state delta. 1 DB hit.
+- **Agent `open_listing(indices=[k])`** — tool calls
+  `ListingService.get_detail(id)` internally + pushes both fields via
+  state delta. 1 DB hit.
 
 Either way, when `active_id` is set, `active_listing_detail` is
 populated. The agent's context module emits "do NOT call open_listing
@@ -91,27 +108,32 @@ Message goes over AG-UI.
 
 **3. Agent calls `search_apartments` tool.** `SearchService` runs one
 SQL query against `listings ⨝ listings_geo_context` (gold). All filters
-are B-tree index lookups. Returns ordered `list[UiApartment]`.
+are B-tree index lookups. Returns `(markers, preview_cards, total)`.
 
 **4. Tool updates SessionState.** `search_params`, `total_results`,
-`results` set; `active_id` cleared. `STATE_SNAPSHOT` event emitted on
-the SSE stream.
+`result_markers`, `preview_cards` set; `active_id` cleared.
+`STATE_SNAPSHOT` event emitted on the SSE stream (markers serialized
+columnar).
 
-**5. Browser renders** map markers (clustered) + virtualised card list
-from `state.results`.
+**5. Browser renders** map markers (clustered) from
+`decodeMarkers(state.result_markers)` + the card strip, first-painting
+the top-10 from `state.preview_cards`.
 
-**6. User hovers a card.** Pure frontend — reads `state.results[index]`.
-No network call.
+**6. User scrolls the strip past the preview.** Frontend windows the
+marker list, batches the newly-visible ids into
+`GET /api/listings?ids=&view=card`, and caches the returned cards in
+`cardCache`. Hovering an already-hydrated card is a pure cache read — no
+network call.
 
 **7. User clicks card #3.** Frontend updates `active_id` locally, fires
-`GET /api/listings/3`. `ListingService.get` returns tier-3 (~5ms PK
-lookup). Detail panel renders from HTTP response. Frontend writes the
+`GET /api/listings/3`. `ListingService.get_detail` returns tier-3 (~5ms
+PK lookup). Detail panel renders from HTTP response. Frontend writes the
 detail back to `state.active_listing_detail` so the agent has it on the
 next turn. Browser caches the HTTP response for 5 min.
 
-**8. User asks** *"of these, which are the quietest?"* — agent reads
-`state.results` (already in memory) and answers from the snapshot's
-`noise_label`. Zero DB hits.
+**8. User asks** *"of these, which are the quietest?"* — agent answers
+from the `preview_cards` already in memory (their `noise_label`). Zero
+DB hits for the head of the list.
 
 **9. User asks** *"show me only the quietest ones"* — agent calls
 `search_apartments` again with `max_noise: "quiet"` added. Steps 3–5

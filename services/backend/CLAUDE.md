@@ -13,7 +13,8 @@ src/flat_chat/
   api/                 → HTTP routes — thin
                           chat.py     POST /api/conversations + GET history
                           agent.py    POST /api/agent (AG-UI SSE)
-                          listings.py GET /api/listings/{id}   ← NEW
+                          listings.py GET /api/listings/{id} (detail)
+                                      + GET /api/listings?ids=&view=card (batch tier-2)
   chat/                → Agent orchestration domain
                           agent.py        Agent(toolsets=[toolset], instructions=...)
                           tools.py        FunctionToolset[ChatDeps]
@@ -24,16 +25,17 @@ src/flat_chat/
                           service.py      ChatService — dispatches AG-UI run
                           providers/      Provider dispatch (Anthropic / Azure)
   search/              → Query execution domain
-                          service.py      SearchService — async, returns list[UiApartment]
+                          service.py      SearchService — async, returns (markers, preview_cards, total)
                           schemas.py      SearchParams + SortBy
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
                           models.py       Listing + ListingGeoContext + ListingEmbedding ORMs
                           types.py        Literal types (NoiseLabel, MssStatus, ...)
-                          context.py      ListingDetail + UiApartment + nested dataclasses
+                          context.py      ListingDetail + ListingCard + nested dataclasses
+                          projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
                           labels.py       bucket_*, walk_minutes, encode_modes, ...
                           thresholds.py   Single source of truth for numeric constants
-                          service.py      ListingService — async get(id) / get_batch(ids)
+                          service.py      ListingService — async get_detail(id) / get_cards(ids)
 ```
 
 ## Layering rules
@@ -68,12 +70,18 @@ Decision doc: [`async-database-layer.md`](../../agent-compound-docs/decisions/as
 Two channels between frontend and backend:
 
 - **AG-UI SSE (`POST /api/agent`)** — chat + tool calls + state deltas.
-  Carries tier-1+2 listing data via `SessionState`. Hundreds of listings
-  fit (~260 KB for 500). Heavy data (tier-3, images) does NOT go here.
-- **HTTP REST (`GET /api/listings/{id}`)** — direct listing reads.
-  Tier-3 detail + image gallery URLs. `Cache-Control: 5min`. Same
-  `ListingService.get(id)` powers both this route AND the agent's
-  `open_listing` tool.
+  Carries tier-1 markers (EVERY match, ≤ `MARKER_CAP`=5000) + the top
+  `PREVIEW_N`=10 tier-2 cards via `SessionState`. Markers serialize
+  columnar on the wire so thousands stay cheap. Heavy data (tier-3,
+  images) and the remaining cards do NOT go here.
+- **HTTP REST** — direct listing reads.
+  - `GET /api/listings/{id}` → tier-3 detail + image gallery URLs.
+    `Cache-Control: 5min`. Backed by `ListingService.get_detail(id)`,
+    which also powers the agent's `open_listing` tool.
+  - `GET /api/listings?ids=&view=card` → batch tier-2 hydration in
+    request order (≤100 ids, cacheable). Backed by
+    `ListingService.get_cards(ids)`. This is the lazy-hydration channel
+    for cards beyond the preview window.
 
 `SearchService` is agent-only (`chat/tools.py` is the sole caller — no
 HTTP route exposes it). `ListingService` is shared.
@@ -90,23 +98,42 @@ the active conversation. One object, three readers:
 2. The frontend (renders markers/cards/detail from these fields)
 3. The pagination tool (zero-DB-hit re-read)
 
-Co-locates the applied search (`search_params`), the result set
-(`results`), and the focus (`active_id` + `active_listing_detail`). No
-more separate DataFrame + UiState split.
+Co-locates the applied search (`search_params`) with the result set,
+now split by tier:
+
+- `result_markers` — EVERY match as thin tier-1 markers
+  (`{id,lat,lng,price_warm}`, ≤ `MARKER_CAP`=5000). The map source AND
+  the ordered result set. Serialized COLUMNAR on the wire
+  (`{ids,lats,lngs,prices}`) via a `@field_serializer`, decoded back by
+  a paired `@field_validator` (symmetric — the AG-UI envelope echoes
+  state back and `_extract_incoming_state` re-validates it).
+- `preview_cards` — the top `PREVIEW_N`=10 full `ListingCard`s, hot for
+  the LLM and the card strip's first paint.
+- `total_results` — a real count (`len(result_markers)`, or `COUNT(*)`
+  when the 5000 cap binds).
+
+The rest of the cards hydrate on demand by id (see the batch route
+above). No more separate DataFrame + UiState split.
 
 Decision doc: [`session-state-design.md`](../../agent-compound-docs/decisions/session-state-design.md).
 
 ## Search query — B-tree on gold
 
 `SearchService.search()` joins `listings ⨝ listings_geo_context (⨝
-listings_embeddings)`. All geo-context filters are B-tree predicates on
-gold's denormalised columns — no LATERAL joins, no EXISTS-with-ST_DWithin,
-no per-row spatial work. The only spatial predicate that survives is
-`ST_DWithin` on `listings.location` for explicit `near_lat/near_lon`
-proximity search; it hits the functional GiST index.
+listings_embeddings)` and returns `(markers, preview_cards, total)` —
+all matching markers (hard-capped server-side at `MARKER_CAP`=5000), the
+top `PREVIEW_N`=10 tier-2 cards, and the count. There is no per-search
+`limit` arg anymore. The shared tier-2 projection lives in
+`listings/projection.py` and is reused by both this preview and
+`ListingService.get_cards(ids)`. All geo-context filters are B-tree
+predicates on gold's denormalised columns — no LATERAL joins, no
+EXISTS-with-ST_DWithin, no per-row spatial work. The only spatial
+predicate that survives is `ST_DWithin` on `listings.location` for
+explicit `near_lat/near_lon` proximity search; it hits the functional
+GiST index.
 
 The 12-query `open_listing` fan-out is gone — replaced by one PK lookup
-through `ListingService.get(id)` + 6 small top-N reads from the
+through `ListingService.get_detail(id)` + 6 small top-N reads from the
 junction tables.
 
 **POI filters** (transit / schools / hospitals / parks / playgrounds /
