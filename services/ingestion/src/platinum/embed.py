@@ -1,9 +1,11 @@
 """Embedding generation for listings.
 
 Reads `listings.title + description`, computes a 1024-dim Jina v3
-embedding, UPSERTs into `listings_embeddings`. Idempotent: re-running
-overwrites only the rows whose model_name doesn't match the configured
-one (or all, with --reembed).
+embedding under the `retrieval.passage` LoRA (Jina v3 is asymmetric — these
+documents must pair with `retrieval.query`-embedded search queries), and
+UPSERTs into `listings_embeddings`. Idempotent: re-running overwrites only
+the rows whose model_name doesn't match the configured one (or all, with
+--reembed).
 
 Provider configuration: set `JINA_API_KEY` in env. Free tier covers
 small backfills. The provider abstraction is intentionally thin — if you
@@ -68,6 +70,13 @@ EMBED_DIM: int = 1024
 JINA_API_URL: str = "https://api.jina.ai/v1/embeddings"
 JINA_MODEL_ID: str = "jina-embeddings-v3"
 
+# Jina v3 is an ASYMMETRIC retrieval model: documents must be embedded with the
+# `retrieval.passage` LoRA so they pair correctly with queries embedded under
+# `retrieval.query` (the backend's JinaTaskEmbedder sets that at search time).
+# We embed listing text here — these are passages. Omitting the task uses the
+# default LoRA, which does NOT match the query side and degrades ranking.
+JINA_TASK: str = "retrieval.passage"
+
 BATCH_SIZE: int = 64  # Jina free tier per-request cap
 
 
@@ -117,7 +126,7 @@ class JinaClient:
         (e.g. 401 bad key) raises on the first attempt."""
         response = self._client.post(
             JINA_API_URL,
-            json={"model": JINA_MODEL_ID, "input": texts},
+            json={"model": JINA_MODEL_ID, "input": texts, "task": JINA_TASK},
         )
         response.raise_for_status()
         return response.json()

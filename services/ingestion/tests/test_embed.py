@@ -97,6 +97,23 @@ def test_embed_maps_vectors_in_input_order_despite_reordered_response(monkeypatc
     assert [v[0] for v in vectors] == [0.0, 1.0, 2.0]
 
 
+def test_embed_sends_retrieval_passage_task(monkeypatch):
+    # Documents must be embedded with the `retrieval.passage` LoRA so they pair
+    # with `retrieval.query` at search time (Jina v3 is asymmetric).
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen["task"] = body.get("task")
+        return _ok_response(request)
+
+    _install_transport(monkeypatch, handler)
+    with embed.JinaClient() as client:
+        client.embed(["a"])
+
+    assert seen["task"] == "retrieval.passage"
+
+
 def test_embed_raises_on_dim_mismatch(monkeypatch):
     _install_transport(monkeypatch, lambda req: _ok_response(req, dim=512))
     with embed.JinaClient() as client, pytest.raises(RuntimeError, match="dim"):

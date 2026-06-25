@@ -120,6 +120,13 @@ Idempotent — re-running upserts the same embedding under the same
 `model_name`; `--reembed` regenerates everything (useful for swapping
 models).
 
+Documents are embedded with the **`retrieval.passage`** LoRA (`JINA_TASK`).
+Jina v3 is asymmetric: passages must pair with `retrieval.query`-embedded
+search queries (the backend's `JinaTaskEmbedder` sets `retrieval.query` at
+search time). Using the wrong/default task degrades ranking. If the task ever
+changes, existing rows must be regenerated with `--reembed` — `model_name`
+alone doesn't capture the task, so the NOT-EXISTS dedup won't notice.
+
 The Jina call retries transient failures (429 / 5xx / transport errors) via
 `tenacity` with exponential backoff, honoring `Retry-After`; a non-retryable
 4xx (e.g. 401 bad key) surfaces immediately. `embed_pending` **commits per
