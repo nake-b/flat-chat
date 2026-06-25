@@ -166,6 +166,43 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
     assert detail.disabled_parking_count == 3
 
 
+def test_get_caps_transit_at_top_n_in_rank_order(async_db_url):
+    """Single json_agg query honours the top-N cap + `ORDER BY rank`.
+
+    Seed 5 transit rows (ranks 1..5, distinct distances). `get()` must
+    return exactly `_TRANSIT_TOP_N` of them, ascending by rank.
+    """
+    from flat_chat.listings.service import _TRANSIT_TOP_N
+
+    listing = _listing_row(title="Transit-rich")
+    gold = _gold_row(listing["id"])
+    junctions = [
+        (
+            ListingNearbyTransit,
+            nearby_transit_row(
+                listing["id"],
+                stop_id=f"stop-{rank}",
+                name=f"Stop {rank}",
+                distance_m=100 * rank,
+                rank=rank,
+            ),
+        )
+        for rank in range(1, 6)
+    ]
+
+    async def body(session):
+        return await ListingService(session).get(listing["id"])
+
+    detail = with_session(async_db_url, [(listing, gold)], body, junctions=junctions)
+
+    assert detail is not None
+    stops = detail.nearest_transit_stops
+    assert len(stops) == _TRANSIT_TOP_N
+    # Ascending by rank → distances 100, 200, 300 (ranks 1, 2, 3).
+    assert [s.distance_m for s in stops] == [100, 200, 300]
+    assert [s.name for s in stops] == ["Stop 1", "Stop 2", "Stop 3"]
+
+
 def test_get_returns_tier2_only_when_no_gold_row(async_db_url):
     """LEFT OUTER JOIN branch — listing exists, gold row missing.
 

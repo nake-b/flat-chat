@@ -3,14 +3,14 @@ import { useEffect, useRef } from "react";
 import { useSessionState } from "../hooks/useSessionState";
 import {
   type ListingDetail,
-  type UiApartment,
+  type ListingCard,
 } from "../state/SessionState";
 
 // Detail panel: a card-sized white pane sitting at the top of the cards
 // slot, with the paper background of `CardsPane` showing beneath. The
 // pane sizes to its content — no stretching, no Option-X expansion, no
 // filler band. Matches the strip's "card-on-paper" visual density.
-export function CardDetail({ apt }: { apt: UiApartment }) {
+export function CardDetail({ apt }: { apt: ListingCard }) {
   const { state, activate } = useSessionState();
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -154,7 +154,7 @@ export function CardDetail({ apt }: { apt: UiApartment }) {
 // only mention what we know; nothing is invented. Falls back gracefully
 // when fields are null. Avoids both lorem ipsum and pretending we have
 // data we don't.
-function summarize(apt: UiApartment): string {
+function summarize(apt: ListingCard): string {
   const parts: string[] = [];
   const here = apt.district ?? "Berlin";
   parts.push(`Located in ${here}${apt.address ? ` (${apt.address})` : ""}.`);
@@ -198,7 +198,7 @@ function ImageGallery({
   apt,
 }: {
   detail: ListingDetail | null;
-  apt: UiApartment;
+  apt: ListingCard;
 }) {
   const images: string[] =
     detail && detail.images.length > 0
@@ -238,7 +238,7 @@ function ImageGallery({
 // `null` both stay hidden so the row reflects confirmed features, not
 // absence of data. WBS gets the leading slot because it's a hard
 // requirement signal in Berlin.
-function AmenityChips({ apt }: { apt: UiApartment }) {
+function AmenityChips({ apt }: { apt: ListingCard }) {
   const chips: { label: string; tone: "wbs" | "amenity" }[] = [];
   if (apt.wbs_required === true) chips.push({ label: "WBS", tone: "wbs" });
   if (apt.is_furnished === true) chips.push({ label: "Furnished", tone: "amenity" });
@@ -489,7 +489,7 @@ function formatNoiseBreakdown(noise: ListingDetail["noise"]): string | undefined
 // it from either source's amenity strings — see the data-quality audit.
 // Heating itself only fills ~11% of wg-gesucht and 0% of kleinanzeigen,
 // so the block self-hides when empty.
-function EnergyBlock({ apt }: { apt: UiApartment }) {
+function EnergyBlock({ apt }: { apt: ListingCard }) {
   if (!apt.heating) return null;
   return (
     <div className="border-t border-paper-rule px-7 py-2.5">

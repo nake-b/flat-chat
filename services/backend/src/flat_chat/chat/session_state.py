@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from flat_chat.listings.context import ListingDetail, UiApartment
+from flat_chat.listings.context import ListingDetail, ListingCard
 from flat_chat.search.schemas import SearchParams
 
 
@@ -53,7 +53,7 @@ class SessionState(BaseModel):
     """How many listings matched the active search in total (≥ len(results))."""
 
     # The materialized result set (the answer)
-    results: list[UiApartment] = Field(default_factory=list)
+    results: list[ListingCard] = Field(default_factory=list)
     """Apartments currently displayed on the map and in the card strip.
     Tier-2 each (~500 B); 500 results ≈ 250 KB — fine for SSE state."""
 

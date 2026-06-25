@@ -10,7 +10,7 @@ import type { FeatureCollection, Point } from "geojson";
 
 import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { type UiApartment } from "../state/SessionState";
+import { type ListingCard } from "../state/SessionState";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -302,4 +302,4 @@ interface ApartmentProps {
   district: string | null;
 }
 
-type ApartmentWithCoords = UiApartment & { lat: number; lng: number };
+type ApartmentWithCoords = ListingCard & { lat: number; lng: number };

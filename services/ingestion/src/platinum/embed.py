@@ -7,8 +7,8 @@ one (or all, with --reembed).
 
 Provider configuration: set `JINA_API_KEY` in env. Free tier covers
 small backfills. The provider abstraction is intentionally thin — if you
-need OpenAI / Cohere / a self-hosted model, replace `compute_embeddings`
-with the equivalent batch call.
+need OpenAI / Cohere / a self-hosted model, replace `JinaClient` with the
+equivalent connection-reusing client exposing `.embed(texts)`.
 
 NOTE: First-time bootstrap doesn't need this module — the 0005 migration
 copies existing `listings.embedding` data into `listings_embeddings`
@@ -47,36 +47,68 @@ def _listing_text(title: str | None, description: str | None) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def compute_embeddings(texts: list[str]) -> list[list[float]]:
-    """Call the embedding provider for a batch. Returns one vector per input.
+class JinaClient:
+    """Thin connection-reusing client for the Jina embeddings API.
 
-    Replace this function (or wire a different provider behind it) to swap
-    models. The rest of the pipeline doesn't care which provider produced
-    the vector — only the dim must match the schema.
+    Holds one `httpx.Client` so the TCP/TLS connection is reused across
+    batches (`embed_pending` issues one POST per BATCH_SIZE group). Reads
+    `JINA_API_KEY` once at construction. Use as a context manager (or call
+    `close()`) so the connection is released cleanly.
+
+    Replace this client (or wire a different provider behind `.embed`) to
+    swap models. The rest of the pipeline doesn't care which provider
+    produced the vector — only the dim must match the schema.
     """
-    api_key = os.environ.get("JINA_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "JINA_API_KEY not set — required for platinum.embed. "
-            "Free-tier key from https://jina.ai/embeddings/."
+
+    def __init__(self, *, timeout: float = 60.0) -> None:
+        api_key = os.environ.get("JINA_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "JINA_API_KEY not set — required for platinum.embed. "
+                "Free-tier key from https://jina.ai/embeddings/."
+            )
+        self._client = httpx.Client(
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=timeout,
         )
-    response = httpx.post(
-        JINA_API_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={"model": JINA_MODEL_ID, "input": texts},
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    vectors = [item["embedding"] for item in payload["data"]]
-    if any(len(v) != EMBED_DIM for v in vectors):
-        raise RuntimeError(
-            f"Provider returned dim != {EMBED_DIM} — check schema match."
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Call the embedding provider for a batch. Returns one vector per input."""
+        response = self._client.post(
+            JINA_API_URL,
+            json={"model": JINA_MODEL_ID, "input": texts},
         )
-    return vectors
+        response.raise_for_status()
+        payload = response.json()
+        vectors = [item["embedding"] for item in payload["data"]]
+        if any(len(v) != EMBED_DIM for v in vectors):
+            raise RuntimeError(
+                f"Provider returned dim != {EMBED_DIM} — check schema match."
+            )
+        return vectors
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> JinaClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+def compute_embeddings(texts: list[str]) -> list[list[float]]:
+    """Embed a single batch via a short-lived `JinaClient`.
+
+    Back-compat / convenience wrapper for one-off calls. For multi-batch
+    runs prefer constructing one `JinaClient` and reusing it (see
+    `embed_pending`) so the connection is shared across batches.
+    """
+    with JinaClient() as client:
+        return client.embed(texts)
 
 
 def _iter_pending(
@@ -128,32 +160,33 @@ def embed_pending(
         return 0, 0
 
     embedded = 0
-    for i in range(0, len(pending), batch_size):
-        batch = pending[i : i + batch_size]
-        ids = [p[0] for p in batch]
-        texts = [p[1] for p in batch]
-        vectors = compute_embeddings(texts)
-        for listing_id, vector in zip(ids, vectors, strict=True):
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO listings_embeddings
-                        (listing_id, embedding, model_name)
-                    VALUES (:id, :vec, :model)
-                    ON CONFLICT (listing_id) DO UPDATE
-                    SET embedding = EXCLUDED.embedding,
-                        model_name = EXCLUDED.model_name,
-                        embedded_at = now()
-                    """
-                ),
-                {"id": listing_id, "vec": str(vector), "model": MODEL_NAME},
+    with JinaClient() as client:
+        for i in range(0, len(pending), batch_size):
+            batch = pending[i : i + batch_size]
+            ids = [p[0] for p in batch]
+            texts = [p[1] for p in batch]
+            vectors = client.embed(texts)
+            for listing_id, vector in zip(ids, vectors, strict=True):
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO listings_embeddings
+                            (listing_id, embedding, model_name)
+                        VALUES (:id, :vec, :model)
+                        ON CONFLICT (listing_id) DO UPDATE
+                        SET embedding = EXCLUDED.embedding,
+                            model_name = EXCLUDED.model_name,
+                            embedded_at = now()
+                        """
+                    ),
+                    {"id": listing_id, "vec": str(vector), "model": MODEL_NAME},
+                )
+                embedded += 1
+            logger.info(
+                "embedded batch %d/%d (%d listings)",
+                i // batch_size + 1,
+                (len(pending) + batch_size - 1) // batch_size,
+                len(batch),
             )
-            embedded += 1
-        logger.info(
-            "embedded batch %d/%d (%d listings)",
-            i // batch_size + 1,
-            (len(pending) + batch_size - 1) // batch_size,
-            len(batch),
-        )
 
     return embedded, 0

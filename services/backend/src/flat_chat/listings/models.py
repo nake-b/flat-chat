@@ -42,7 +42,13 @@ from flat_chat.core.database import Base
 
 
 class IronCard(Base):
-    """Iron layer: raw card-level scrape output from list/search pages."""
+    """Iron layer: raw card-level scrape output from list/search pages.
+
+    The backend never queries iron/bronze — it reads silver/gold/platinum.
+    This class is registered on `Base` only so the declarative mapper can
+    resolve `Listing`'s FK/relationship back to its provenance row (and so
+    Alembic autogenerate stays aware of the full schema).
+    """
 
     __tablename__ = "iron_cards"
     __table_args__ = (
@@ -70,7 +76,11 @@ class IronCard(Base):
 
 
 class RawListing(Base):
-    """Bronze layer: raw detail-page scrape preserved as JSONB."""
+    """Bronze layer: raw detail-page scrape preserved as JSONB.
+
+    Like `IronCard`, kept here for FK/relationship + schema-metadata
+    resolution only — the backend reads silver/gold/platinum, not bronze.
+    """
 
     __tablename__ = "raw_listings"
     __table_args__ = (

@@ -26,6 +26,14 @@ except ImportError:  # pragma: no cover — observability is optional
 logger = logging.getLogger(__name__)
 
 
+class InvalidAgentRequestError(Exception):
+    """The AG-UI request envelope failed validation."""
+
+
+class LlmProviderUnavailableError(Exception):
+    """No LLM provider is configured / could be built for this run."""
+
+
 def _summarise_prompt(run_input: Any) -> str:
     """Last user message as a single short line for the dispatch log.
 
@@ -68,10 +76,6 @@ class ChatService:
         self.store = store
 
     async def dispatch_agent_request(self, request: Request) -> Response:
-        # Importing here keeps fastapi/starlette as the FastAPI-only deps and
-        # leaves room for the service to be wired into non-HTTP entry points.
-        from fastapi import HTTPException
-
         # Parse the AG-UI request envelope first so we can resolve the
         # session from its `thread_id` / conversation_id. The adapter
         # subsequently runs the agent, streams events back, and reads
@@ -79,7 +83,7 @@ class ChatService:
         try:
             adapter = await AGUIAdapter.from_request(request, agent=agent)
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise InvalidAgentRequestError(str(exc)) from exc
 
         session_id = adapter.conversation_id
         # Bind the request context for every log line + every SQL statement
@@ -146,8 +150,8 @@ class ChatService:
         try:
             model = build_chat_model()
         except RuntimeError as exc:
-            raise HTTPException(
-                status_code=503, detail="No LLM provider configured"
+            raise LlmProviderUnavailableError(
+                "No LLM provider configured"
             ) from exc
 
         stream = adapter.run_stream(
@@ -169,6 +173,11 @@ def _extract_incoming_state(adapter) -> SessionState | None:
     session state wins — defensive default keeps a malformed frontend
     push from clobbering known-good server state.
     """
+    # The AG-UI envelope surfaces `state` at one of two locations depending
+    # on the adapter version (directly on the adapter, or nested under
+    # `run_input`), so we probe both. The try/except + isinstance guard below
+    # defends against a malformed frontend push — defensive default of None
+    # lets the known-good persisted server state win.
     raw = getattr(adapter, "state", None) or getattr(
         getattr(adapter, "run_input", None), "state", None
     )

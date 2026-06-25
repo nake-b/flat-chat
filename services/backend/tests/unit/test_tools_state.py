@@ -32,7 +32,7 @@ from flat_chat.chat.tools import (
     open_listing,
     search_apartments,
 )
-from flat_chat.listings.context import ListingDetail, UiApartment
+from flat_chat.listings.context import ListingDetail, ListingCard
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ from flat_chat.listings.context import ListingDetail, UiApartment
 class _MockSearchService:
     """Returns canned (cards, total) for whatever SearchParams it gets."""
 
-    def __init__(self, cards: list[UiApartment], total: int):
+    def __init__(self, cards: list[ListingCard], total: int):
         self.cards = cards
         self.total = total
         self.called_with = None
@@ -75,8 +75,8 @@ def _ctx(state: SessionState, *, search=None, listing=None) -> SimpleNamespace:
     return SimpleNamespace(deps=deps)
 
 
-def _apt(idx: int, *, lat: float | None = 52.5, lng: float | None = 13.4) -> UiApartment:
-    return UiApartment(
+def _apt(idx: int, *, lat: float | None = 52.5, lng: float | None = 13.4) -> ListingCard:
+    return ListingCard(
         id=f"id-{idx}",
         title=f"Apt #{idx}",
         lat=lat,

@@ -131,10 +131,13 @@ class MssProfile(BaseModel):
 # `SessionState.results` carries. The frontend renders markers + cards
 # from this. Labels are populated at projection time from
 # `listings.labels` (raw values from gold get bucketed).
+# The three tiers (tier-1 markers, tier-2 cards = ListingCard, tier-3
+# detail = ListingDetail) are documented in
+# `agent-compound-docs/decisions/agent-vs-http-data-flow.md`.
 # ---------------------------------------------------------------------------
 
 
-class UiApartment(BaseModel):
+class ListingCard(BaseModel):
     """One listing as the frontend renders it on the map and in cards.
 
     Returned by `SearchService.search()`; mirrored to the frontend as
@@ -251,7 +254,7 @@ class ListingDetail(BaseModel):
     has_garden: bool | None = None
 
     # Free-form
-    features: list | None = None
+    features: list[str] | None = None
     images: list[str] = Field(default_factory=list)
 
     # Listing source signal

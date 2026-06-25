@@ -32,7 +32,7 @@ from flat_chat.listings.context import (
     NearestWater,
     NoiseProfile,
     SchoolCatchmentInfo,
-    UiApartment,
+    ListingCard,
 )
 from flat_chat.search.schemas import SearchParams
 
@@ -42,8 +42,8 @@ from flat_chat.search.schemas import SearchParams
 # ---------------------------------------------------------------------------
 
 
-def _apt(idx: int, **overrides) -> UiApartment:
-    """Build a UiApartment with the fields the formatters actually read."""
+def _apt(idx: int, **overrides) -> ListingCard:
+    """Build a ListingCard with the fields the formatters actually read."""
     defaults = dict(
         id=f"id-{idx}",
         title=f"Apt #{idx}",
@@ -56,7 +56,7 @@ def _apt(idx: int, **overrides) -> UiApartment:
         lng=13.4,
     )
     defaults.update(overrides)
-    return UiApartment(**defaults)
+    return ListingCard(**defaults)
 
 
 def _state_with_results(n: int, *, total: int | None = None) -> SessionState:

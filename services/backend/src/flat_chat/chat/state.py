@@ -34,9 +34,8 @@ class ChatSession:
     builder). Lives in a SessionStore so the storage backend (in-memory
     now, Postgres later) can swap without touching anything else.
 
-    Post-refactor: no more separate `result_set` / `ui_state` split —
-    everything's in `state`. The old DataFrame-backed LlmResultSetView is
-    gone; LLM prose is composed on-demand from `state.results` and
+    All conversation state — results, params, focus — lives in `state`.
+    LLM prose is composed on-demand from `state.results` and
     `state.active_listing_detail` in `chat/llm_context.py`.
     """
 

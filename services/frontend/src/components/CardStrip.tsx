@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { type UiApartment } from "../state/SessionState";
+import { type ListingCard } from "../state/SessionState";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -101,7 +101,7 @@ function ApartmentCard({
   onClick,
   onHoverChange,
 }: {
-  apt: UiApartment;
+  apt: ListingCard;
   index: number;
   hovered: boolean;
   onClick: () => void;
@@ -189,7 +189,7 @@ function ApartmentCard({
 // Render `true` only; `false`/`null` stay hidden so we never imply absence
 // of data. Geo chips use emoji prefixes to set them visually apart from
 // uppercase mono amenity chips.
-function CardChips({ apt }: { apt: UiApartment }) {
+function CardChips({ apt }: { apt: ListingCard }) {
   const chips: { key: string; label: string; wbs?: boolean }[] = [];
 
   // WBS — binary requirement, always shown when present.

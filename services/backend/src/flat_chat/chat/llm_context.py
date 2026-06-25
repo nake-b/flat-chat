@@ -5,7 +5,7 @@ per-turn state. Tools call into here to format their returns; the agent's
 dynamic-instructions decorator calls into here to build the per-turn state
 prompt. Nothing outside this module composes prose for the LLM.
 
-Post-refactor: reads from `SessionState.results` (typed `UiApartment`
+Post-refactor: reads from `SessionState.results` (typed `ListingCard`
 list) — no pandas, no DataFrame. The `LlmResultSetView` is a thin
 function over the state; the "snapshot" is `SessionState` itself.
 
@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
-from flat_chat.listings.context import ListingDetail, UiApartment
+from flat_chat.listings.context import ListingDetail, ListingCard
 
 
 def xml_block(tag: str, body: str) -> str:
@@ -40,7 +40,7 @@ class LlmResultSetView:
     """Thin formatter over the active SessionState — LLM-facing view.
 
     No DataFrame, no separate cache: reads `SessionState.results`
-    (a `list[UiApartment]`) directly. Pagination, detail formatting,
+    (a `list[ListingCard]`) directly. Pagination, detail formatting,
     summary prose all derive from that list.
     """
 
@@ -378,7 +378,7 @@ def _index_for_active(state: SessionState) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def _format_card_prose(apt: UiApartment, idx: int) -> str:
+def _format_card_prose(apt: ListingCard, idx: int) -> str:
     parts: list[str] = []
     if apt.title:
         parts.append(apt.title)
@@ -399,7 +399,7 @@ def _format_card_prose(apt: UiApartment, idx: int) -> str:
     return f"  {idx}. " + " | ".join(parts)
 
 
-def _format_card_csv(apt: UiApartment, idx: int) -> str:
+def _format_card_csv(apt: ListingCard, idx: int) -> str:
     cells = [
         str(idx),
         _csv_escape(apt.title or ""),
@@ -411,7 +411,7 @@ def _format_card_csv(apt: UiApartment, idx: int) -> str:
     return ",".join(cells)
 
 
-def _format_card_detail(apt: UiApartment, idx: int) -> str:
+def _format_card_detail(apt: ListingCard, idx: int) -> str:
     lines = [f"--- Listing #{idx} ---"]
     for label, value in [
         ("Title", apt.title),

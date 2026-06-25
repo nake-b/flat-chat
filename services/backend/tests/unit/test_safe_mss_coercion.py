@@ -5,7 +5,7 @@ listings whose `listings_geo_context.mss_status` carried the German
 publisher sentinel ``"Planungsraum ohne Zuordnung"`` ("planning area
 without assignment"). That string is not a real status label and isn't
 in the silver translation map historically, so it slipped through
-unmapped and the new `UiApartment` Pydantic model (typed
+unmapped and the new `ListingCard` Pydantic model (typed
 ``MssStatus | None``) blew up trying to validate it.
 
 The defensive coercion in `search/service.py` maps any unknown string

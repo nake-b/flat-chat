@@ -11,7 +11,7 @@ or to chat:
     `ListingService.get(id)` and stored in `SessionState.active_listing_detail`.
   - `labels`: bucket-label functions (`bucket_noise`, `walk_minutes`, …).
     Applied at the chat presentation layer when projecting raw gold values
-    into `UiApartment` and LLM prose. Search calls these only for filter
+    into `ListingCard` and LLM prose. Search calls these only for filter
     *parsing* (user "quiet" → threshold).
   - `thresholds`: numeric constants — single source of truth referenced by
     both labels and filter parsers. Each constant traces to a row in

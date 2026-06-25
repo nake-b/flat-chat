@@ -31,7 +31,7 @@ export type {
   SchoolCatchmentInfo,
   SearchParams,
   SessionState,
-  UiApartment,
+  ListingCard,
   UiState,
 } from "./SessionState";
 

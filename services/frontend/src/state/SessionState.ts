@@ -171,11 +171,11 @@ export interface ListingDetail {
 }
 
 // ---------------------------------------------------------------------------
-// UiApartment — tier-2 card shape. ~500 bytes per listing; the frontend
+// ListingCard — tier-2 card shape. ~500 bytes per listing; the frontend
 // renders markers + cards from a list of these.
 // ---------------------------------------------------------------------------
 
-export interface UiApartment {
+export interface ListingCard {
   id: string;
   lat: number | null;
   lng: number | null;
@@ -243,7 +243,7 @@ export type SearchParams = Record<string, unknown>;
 export interface SessionState {
   search_params: SearchParams | null;
   total_results: number;
-  results: UiApartment[];
+  results: ListingCard[];
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
 }

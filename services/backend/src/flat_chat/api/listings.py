@@ -15,7 +15,7 @@ multiple callers.
 Architecture-decision doc: `agent-compound-docs/decisions/agent-vs-http-data-flow.md`
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from flat_chat.core.dependencies import get_listing_service
 from flat_chat.listings.context import ListingDetail
@@ -38,6 +38,8 @@ async def get_listing(
     """
     detail = await service.get(listing_id)
     if detail is None:
-        raise HTTPException(status_code=404, detail="listing not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="listing not found"
+        )
     response.headers["Cache-Control"] = "public, max-age=300"
     return detail

@@ -1,22 +1,21 @@
 """SearchService — async filter+rank against the gold join.
 
-Post-refactor shape:
-  - Joins `listings ⨝ listings_geo_context ⨝ listings_embeddings` and
-    filters everything with plain B-tree predicates on the gold scalars
-    (no LATERAL chips, no EXISTS-with-ST_DWithin, no per-row spatial work).
-  - Returns `list[UiApartment]` — typed Pydantic, not pandas DataFrame.
+Design:
+  - Joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` and
+    filters with plain B-tree predicates on the gold scalars plus EXISTS
+    subqueries against the per-listing junction tables.
+  - Returns `list[ListingCard]` — typed Pydantic, not pandas DataFrame.
     The chat layer treats the list as the agent's working memory and
     pushes it to the frontend as `SessionState.results`.
-  - The only spatial predicate that survives is `ST_DWithin` on the
-    listing's own location for `near_lat/near_lon` proximity search —
-    that's a single condition on the listing's location, hits the
-    functional GiST index, and is cheap.
+  - The only spatial predicate is `ST_DWithin` on the listing's own
+    location for `near_lat/near_lon` proximity search — a single
+    condition on the listing's location that hits the functional GiST
+    index and is cheap.
 
-The 5 always-on LATERAL chips and 12-query detail fan-out are gone.
-Those are now precomputed at gold-ETL time (see
-`services/ingestion/src/gold/`). Detail fetches go through
-`ListingService.get(id)` via either the agent tool `open_listing` or
-the HTTP route `GET /api/listings/{id}`.
+Neighbour proximity and the chip scalars are precomputed at gold-ETL time
+(see `services/ingestion/src/gold/`). Detail fetches go through
+`ListingService.get(id)` via either the agent tool `open_listing` or the
+HTTP route `GET /api/listings/{id}`.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from pydantic_ai import Embedder
 from sqlalchemy import ARRAY, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import UiApartment
+from flat_chat.listings.context import ListingCard
 from flat_chat.listings.labels import (
     bucket_density,
     bucket_noise,
@@ -90,7 +89,7 @@ class SearchService:
         self.db = db
         self.embedder = embedder
 
-    async def search(self, params: SearchParams) -> tuple[list[UiApartment], int]:
+    async def search(self, params: SearchParams) -> tuple[list[ListingCard], int]:
         """Execute the search. Returns (results, total_count_hint).
 
         `total_count_hint` is the number of rows the query yielded before
@@ -283,13 +282,20 @@ class SearchService:
             stmt = self._apply_hospital_filter(stmt, params.hospital)
 
         if params.near_park is not None:
-            stmt = self._apply_near_park_filter(stmt, params.near_park)
+            # Cemeteries are excluded from listings_nearby_parks at ETL time.
+            stmt = self._apply_proximity_filter(
+                stmt, params.near_park, ListingNearbyPark
+            )
 
         if params.near_playground is not None:
-            stmt = self._apply_near_playground_filter(stmt, params.near_playground)
+            stmt = self._apply_proximity_filter(
+                stmt, params.near_playground, ListingNearbyPlayground
+            )
 
         if params.near_water is not None:
-            stmt = self._apply_near_water_filter(stmt, params.near_water)
+            stmt = self._apply_proximity_filter(
+                stmt, params.near_water, ListingNearbyWater
+            )
 
         # ----- Scalar / field filters on listings_geo_context -----
 
@@ -424,33 +430,16 @@ class SearchService:
         # f.tier == "any" → no tier predicate
         return stmt.where(subq.exists())
 
-    def _apply_near_park_filter(self, stmt: Select, spec) -> Select:
-        """EXISTS-any against `listings_nearby_parks` (cemeteries excluded at ETL)."""
-        nbr = ListingNearbyPark
-        max_m = resolve_near_spec(spec)
-        subq = select(nbr.listing_id).where(
-            nbr.listing_id == Listing.id,
-            nbr.distance_m <= max_m,
-        )
-        return stmt.where(subq.exists())
+    def _apply_proximity_filter(self, stmt: Select, spec, model) -> Select:
+        """EXISTS-any against a single-attribute proximity junction table.
 
-    def _apply_near_playground_filter(self, stmt: Select, spec) -> Select:
-        """EXISTS-any against `listings_nearby_playgrounds`."""
-        nbr = ListingNearbyPlayground
+        Shared by near_park / near_playground / near_water — these tables
+        carry no per-family attribute logic, only `(listing_id, distance_m)`.
+        """
         max_m = resolve_near_spec(spec)
-        subq = select(nbr.listing_id).where(
-            nbr.listing_id == Listing.id,
-            nbr.distance_m <= max_m,
-        )
-        return stmt.where(subq.exists())
-
-    def _apply_near_water_filter(self, stmt: Select, spec) -> Select:
-        """EXISTS-any against `listings_nearby_water`."""
-        nbr = ListingNearbyWater
-        max_m = resolve_near_spec(spec)
-        subq = select(nbr.listing_id).where(
-            nbr.listing_id == Listing.id,
-            nbr.distance_m <= max_m,
+        subq = select(model.listing_id).where(
+            model.listing_id == Listing.id,
+            model.distance_m <= max_m,
         )
         return stmt.where(subq.exists())
 
@@ -463,7 +452,7 @@ class SearchService:
 
 
 # ---------------------------------------------------------------------------
-# Row → UiApartment projection. Labels applied here via listings.labels —
+# Row → ListingCard projection. Labels applied here via listings.labels —
 # gold stores raw values; this is the point where presentation meets data.
 # ---------------------------------------------------------------------------
 
@@ -487,8 +476,8 @@ def _safe_mss_dynamics(value: str | None) -> str | None:
     return value if value in _MSS_DYNAMICS_VALUES else None
 
 
-def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
-    """Build a UiApartment from a SELECT row.
+def _row_to_uiapartment(row, *, with_score: bool) -> ListingCard:
+    """Build a ListingCard from a SELECT row.
 
     The row is the tuple shape `_build_statement` selects:
         (Listing, nearest_transit_lines, nearest_transit_m,
@@ -526,7 +515,7 @@ def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
         if raw is not None:
             sim_score = round(1 - float(raw), 4)
 
-    return UiApartment(
+    return ListingCard(
         id=str(listing.id),
         lat=listing.latitude,
         lng=listing.longitude,
