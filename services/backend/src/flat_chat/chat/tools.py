@@ -79,6 +79,8 @@ filters for `search_apartments`:
   - "near a Grundschule"        → school: {school_type: "Grundschule"}
   - "near a lake" /
     "by the water"              → near_water: "near"
+  - "arty / queer-friendly /
+    nightlife / loft vibe"      → query: "<the user's words>"
 </phrase_map>
 """
 
@@ -145,8 +147,10 @@ async def search_apartments(
     leave the rest unset.
 
     Args:
-        query: Natural language query for semantic matching. Optional —
-            structured filters (below) are the primary search surface.
+        query: Free-text semantic match (title + description) for subjective
+            intent no filter below captures ("arty", "queer-friendly",
+            "nightlife"); it ranks within the structured filters, so combine
+            them. Omit it for purely structural searches.
 
         price_warm_min: Minimum warm rent in euros (warm = incl. Nebenkosten).
         price_warm_max: Maximum warm rent in euros.
