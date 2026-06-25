@@ -107,14 +107,15 @@ async def run_conversation(label: str, turns: list[str]) -> None:
         print(f"thread_id: {thread_id}")
 
         messages: list[dict] = []
-        # Empty SessionState (renamed from UiState in the June 2026 refactor —
-        # see agent-compound-docs/decisions/session-state-design.md). Tracks
-        # both the agent-owned bits (search_params, results) and the
-        # frontend-owned focus (active_id, active_listing_detail).
+        # Empty SessionState (tiered result set — see
+        # agent-compound-docs/decisions/session-state-design.md). `result_markers`
+        # is the columnar wire shape every match ships in; `preview_cards` is the
+        # hot top-N; the frontend-owned focus is active_id/active_listing_detail.
         state: dict = {
             "search_params": None,
             "total_results": 0,
-            "results": [],
+            "result_markers": {"ids": [], "lats": [], "lngs": [], "prices": []},
+            "preview_cards": [],
             "active_id": None,
             "active_listing_detail": None,
         }
@@ -128,9 +129,14 @@ async def run_conversation(label: str, turns: list[str]) -> None:
             for tc in tools:
                 args_preview = tc["args"][:200] if isinstance(tc["args"], str) else ""
                 print(f"  TOOL: {tc['name']}({args_preview}{'…' if len(tc['args']) > 200 else ''})")
-            n_results = len(state.get("results", []) or [])
+            markers = (state.get("result_markers") or {}).get("ids", []) or []
+            n_preview = len(state.get("preview_cards", []) or [])
+            total = state.get("total_results")
             active = state.get("active_id")
-            print(f"  STATE: {n_results} results, active_id={active}")
+            print(
+                f"  STATE: {len(markers)} markers, {n_preview} preview cards, "
+                f"total={total}, active_id={active}"
+            )
             print(f"ASSISTANT: {text.strip()[:600]}")
 
 
