@@ -71,8 +71,8 @@ async def health(
     result = await db.execute(
         text(
             """
-            SELECT COUNT(*) FROM listings l
-            LEFT JOIN listings_geo_context lgc ON lgc.listing_id = l.id
+            SELECT COUNT(*) FROM world.listings l
+            LEFT JOIN world.listings_geo_context lgc ON lgc.listing_id = l.id
             WHERE l.location IS NOT NULL AND lgc.listing_id IS NULL
             """
         )

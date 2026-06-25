@@ -59,5 +59,28 @@ docker run --rm -i \
     --no-owner --no-acl --format=plain \
 | docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 --quiet
 
+# --- Post-restore sanity: the two-schema layout must have come across whole.
+# A plain pg_dump carries CREATE SCHEMA + both alembic_version tables; a partial
+# dump (or refreshing from a not-yet-migrated canonical) silently desyncs
+# migration state, so fail loudly here instead of at first query.
 echo
-echo "✓ Local DB refreshed from $REMOTE_HOST."
+echo "→ Verifying world/app schema layout…"
+MISSING=$(docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -tAc "
+  SELECT string_agg(missing, ', ') FROM (
+    SELECT 'schema world'            AS missing WHERE to_regnamespace('world') IS NULL
+    UNION ALL
+    SELECT 'world.listings'          WHERE to_regclass('world.listings') IS NULL
+    UNION ALL
+    SELECT 'world.alembic_version'   WHERE to_regclass('world.alembic_version') IS NULL
+  ) t;
+" | tr -d '[:space:]')
+
+if [ -n "$MISSING" ]; then
+  echo "✗ Refresh incomplete — missing: ${MISSING}" >&2
+  echo "  The source DB may predate the schema-ownership split, or the dump was partial." >&2
+  echo "  See agent-compound-docs/runbooks/schema-split-migration.md." >&2
+  exit 1
+fi
+
+echo
+echo "✓ Local DB refreshed from $REMOTE_HOST (world/app schemas verified)."

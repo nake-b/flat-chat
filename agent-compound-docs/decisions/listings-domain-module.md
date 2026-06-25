@@ -23,7 +23,7 @@ module that owns shared listing concerns:
 
 | Submodule | What it owns |
 |---|---|
-| `models.py` | `Listing`, `ListingGeoContext`, `ListingEmbedding` ORMs (+ `IronCard`, `RawListing` for the relationship chain) |
+| `models.py` | `Listing`, `ListingGeoContext`, `ListingEmbedding` + the `ListingNearby*` junction ORMs — all **read-only** views of the `world` schema (`{"schema": "world"}`; ingestion owns the DDL). `IronCard`/`RawListing` were removed in the schema-ownership split — the backend doesn't model iron/bronze. See [`schema-ownership-split.md`](schema-ownership-split.md). |
 | `types.py` | `NoiseLabel`, `DensityLabel`, `GreeneryLabel`, `MssStatus`, `MssDynamics`, `DistanceBucket`, `NearSpec`, `GtfsMode` Literal types |
 | `context.py` | `ListingDetail`, `UiApartment`, and all the nested dataclasses (`NearestTransitStop`, `NearestSchool`, …) |
 | `labels.py` | `bucket_noise`, `bucket_density`, `bucket_greenery`, `walk_minutes`, `encode_modes`, `decode_modes`, `resolve_near_spec` |

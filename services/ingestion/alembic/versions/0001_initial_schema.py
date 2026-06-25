@@ -19,8 +19,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-
+    # Extensions (vector/postgis) are created by the postgres bootstrap
+    # (services/postgres/init/), not here — they are DB-global and must exist
+    # before any schema's migrations run. Tables land in `world` via the
+    # search_path set in alembic/env.py. See schema-ownership-split.md.
     op.create_table(
         "iron_cards",
         sa.Column(
@@ -243,4 +245,5 @@ def downgrade() -> None:
     op.drop_table("listings")
     op.drop_table("raw_listings")
     op.drop_table("iron_cards")
-    op.execute("DROP EXTENSION IF EXISTS vector")
+    # Extension drop intentionally omitted — it is owned by the bootstrap, is
+    # DB-global, and other schemas may depend on it.

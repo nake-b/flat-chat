@@ -1,11 +1,16 @@
-"""ORM models for the listings domain.
+"""ORM models for the listings domain — READ-ONLY views of the `world` schema.
 
-Spans every layer that carries listing data:
-  - Iron / Bronze: `IronCard`, `RawListing` — raw scraper output and
-    parsed detail-page JSON. Used in foreign-key relationships from
-    `Listing` so the silver row remembers its provenance.
+Every table here lives in the `world` Postgres schema, owned and migrated by
+the INGESTION service (services/ingestion/alembic/). The backend never writes
+or migrates them — it reads them. These classes are the read side of the
+shared-kernel contract; a drift test (tests) checks them against the live
+`world` schema. See schema-ownership-split.md.
+
   - Silver: `Listing` — cleaned, typed, normalised. Source-faithful per
-    entity. This is the canonical "an apartment exists" record.
+    entity. This is the canonical "an apartment exists" record. (Its
+    iron/bronze provenance — `iron_cards` / `raw_listings` — is
+    ingestion-internal; the backend doesn't model those tables. `Listing`
+    keeps `raw_listing_id` as a plain column for fidelity, without an ORM FK.)
   - Gold: `ListingGeoContext` — denormalised pre-joined geo-context. One
     row per listing. Populated by `services/ingestion/src/gold/`. Search
     queries `listings ⨝ listings_geo_context` for chip-level filtering.
@@ -41,75 +46,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from flat_chat.core.database import Base
 
 
-class IronCard(Base):
-    """Iron layer: raw card-level scrape output from list/search pages.
-
-    The backend never queries iron/bronze — it reads silver/gold/platinum.
-    This class is registered on `Base` only so the declarative mapper can
-    resolve `Listing`'s FK/relationship back to its provenance row (and so
-    Alembic autogenerate stays aware of the full schema).
-    """
-
-    __tablename__ = "iron_cards"
-    __table_args__ = (
-        UniqueConstraint("source_name", "external_id", name="uq_iron_source_external"),
-        Index("ix_iron_cards_source_name", "source_name"),
-        Index("ix_iron_cards_pending", "source_name", "detail_scraped_at"),
-        Index("ix_iron_cards_scraped_at", "scraped_at"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    detail_url: Mapped[str] = mapped_column(Text, nullable=False)
-    source_url: Mapped[str | None] = mapped_column(Text)
-    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    ingested_at: Mapped[str] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
-    )
-    detail_scraped_at: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
-
-    raw_listings: Mapped[list[RawListing]] = relationship(back_populates="iron_card")
-
-
-class RawListing(Base):
-    """Bronze layer: raw detail-page scrape preserved as JSONB.
-
-    Like `IronCard`, kept here for FK/relationship + schema-metadata
-    resolution only — the backend reads silver/gold/platinum, not bronze.
-    """
-
-    __tablename__ = "raw_listings"
-    __table_args__ = (
-        UniqueConstraint("source_name", "external_id", name="uq_raw_source_external"),
-        Index("ix_raw_listings_source_name", "source_name"),
-        Index("ix_raw_listings_scraped_at", "scraped_at"),
-        Index("ix_raw_listings_iron_card_id", "iron_card_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    iron_card_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("iron_cards.id", ondelete="SET NULL"),
-    )
-    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    source_url: Mapped[str | None] = mapped_column(Text)
-    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    scraped_at: Mapped[str] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    ingested_at: Mapped[str] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    iron_card: Mapped[IronCard | None] = relationship(back_populates="raw_listings")
-    listing: Mapped[Listing | None] = relationship(back_populates="raw_listing")
-
-
 class Listing(Base):
     """Silver layer: cleaned, typed, normalized listing rows.
 
@@ -141,15 +77,16 @@ class Listing(Base):
             text("(location::geography)"),
             postgresql_using="gist",
         ),
+        {"schema": "world"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    raw_listing_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("raw_listings.id", ondelete="SET NULL"),
-    )
+    # Provenance pointer to world.raw_listings. Plain column (no ORM FK) — the
+    # actual FK constraint is ingestion-owned in the world schema; the backend
+    # neither models raw_listings nor joins to it.
+    raw_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
     # Source
     source_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -236,7 +173,6 @@ class Listing(Base):
         onupdate=func.now(),
     )
 
-    raw_listing: Mapped[RawListing | None] = relationship(back_populates="listing")
     geo_context: Mapped[ListingGeoContext | None] = relationship(
         back_populates="listing", uselist=False
     )
@@ -258,10 +194,11 @@ class ListingGeoContext(Base):
     """
 
     __tablename__ = "listings_geo_context"
+    __table_args__ = {"schema": "world"}
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
 
@@ -316,11 +253,12 @@ class ListingEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(1024), nullable=False)
@@ -348,11 +286,12 @@ class ListingNearbyTransit(Base):
         Index("ix_lnt_listing_distance", "listing_id", "distance_m"),
         Index("ix_lnt_modes", "modes", postgresql_using="gin"),
         Index("ix_lnt_lines", "lines", postgresql_using="gin"),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     stop_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -374,11 +313,12 @@ class ListingNearbySchool(Base):
             "school_type",
             postgresql_where=text("school_type IS NOT NULL"),
         ),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     school_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -399,11 +339,12 @@ class ListingNearbyHospital(Base):
             "tier",
             postgresql_where=text("tier IS NOT NULL"),
         ),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     hospital_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -419,11 +360,12 @@ class ListingNearbyPark(Base):
     __tablename__ = "listings_nearby_parks"
     __table_args__ = (
         Index("ix_lnp_listing_distance", "listing_id", "distance_m"),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     park_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -439,11 +381,12 @@ class ListingNearbyPlayground(Base):
     __tablename__ = "listings_nearby_playgrounds"
     __table_args__ = (
         Index("ix_lnpg_listing_distance", "listing_id", "distance_m"),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     playground_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -458,11 +401,12 @@ class ListingNearbyWater(Base):
     __tablename__ = "listings_nearby_water"
     __table_args__ = (
         Index("ix_lnw_listing_distance", "listing_id", "distance_m"),
+        {"schema": "world"},
     )
 
     listing_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("listings.id", ondelete="CASCADE"),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
         primary_key=True,
     )
     water_id: Mapped[str] = mapped_column(Text, primary_key=True)

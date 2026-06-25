@@ -49,8 +49,12 @@ services/ingestion/src/
 ## First-time setup
 
 ```bash
-# 1. Apply migrations (creates iron_cards, raw_listings, listings, pgvector extension)
-docker compose run --rm backend uv run alembic upgrade head
+# 1. Bootstrap (extensions + world/app schemas) then apply WORLD-schema migrations.
+#    Extensions/schemas come from the postgres bootstrap (services/postgres/init/
+#    on a fresh volume); on an existing volume run ./scripts/bootstrap-schemas.sh first.
+#    Ingestion (not backend) owns these migrations now — see
+#    agent-compound-docs/decisions/schema-ownership-split.md.
+docker compose run --rm ingestion uv run alembic upgrade head
 
 # 2. Install Node deps once (each scraper subdir + the shared _lib)
 cd services/ingestion/src/scraper/_lib            && npm install

@@ -82,37 +82,37 @@ _NEIGHBOURS_SQL = text(
 SELECT
   (SELECT json_agg(t ORDER BY t.rank) FROM (
      SELECT stop_id, name, modes, lines, distance_m, rank
-     FROM listings_nearby_transit
+     FROM world.listings_nearby_transit
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_TRANSIT_TOP_N}
    ) t) AS transit,
   (SELECT json_agg(s ORDER BY s.rank) FROM (
      SELECT name, school_type, distance_m, rank
-     FROM listings_nearby_schools
+     FROM world.listings_nearby_schools
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_SCHOOLS_TOP_N}
    ) s) AS schools,
   (SELECT json_agg(p ORDER BY p.rank) FROM (
      SELECT name, distance_m, rank
-     FROM listings_nearby_parks
+     FROM world.listings_nearby_parks
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_PARKS_TOP_N}
    ) p) AS parks,
   (SELECT json_agg(pg ORDER BY pg.rank) FROM (
      SELECT name, distance_m, rank
-     FROM listings_nearby_playgrounds
+     FROM world.listings_nearby_playgrounds
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_PLAYGROUNDS_TOP_N}
    ) pg) AS playgrounds,
   (SELECT json_agg(h ORDER BY h.rank) FROM (
      SELECT name, tier, distance_m, rank
-     FROM listings_nearby_hospitals
+     FROM world.listings_nearby_hospitals
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_HOSPITALS_TOP_N}
    ) h) AS hospitals,
   (SELECT json_agg(w ORDER BY w.rank) FROM (
      SELECT name, water_kind, distance_m, rank
-     FROM listings_nearby_water
+     FROM world.listings_nearby_water
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_WATER_TOP_N}
    ) w) AS water

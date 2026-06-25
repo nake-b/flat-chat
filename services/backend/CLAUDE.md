@@ -197,9 +197,18 @@ Each constant traces to a row in
 
 ```bash
 docker compose up backend                      # Backend at http://localhost (via nginx)
-cd services/backend && alembic upgrade head    # Apply migrations
-alembic downgrade -1 && alembic upgrade head   # Round-trip test
+cd services/backend && alembic upgrade head    # Apply APP-schema migrations (no-op today)
 ```
+
+> **Schema ownership.** The backend's Alembic owns only the `app` schema
+> (users/sessions/bookmarks — not built yet, so the history is empty). The
+> medallion + geo-context tables the backend READS live in the `world` schema,
+> owned and migrated by the **ingestion** service; the backend's ORM
+> (`listings/models.py`) carries `{"schema": "world"}` and a drift test
+> (`tests/integration/test_world_schema_drift.py`) guards it against the live
+> schema. The world-schema round-trip test moved to
+> `services/ingestion/tests/integration/`. See
+> [`schema-ownership-split.md`](../../agent-compound-docs/decisions/schema-ownership-split.md).
 
 ## Debugging
 
