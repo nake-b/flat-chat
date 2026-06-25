@@ -33,7 +33,6 @@ from flat_chat.listings.thresholds import (
     NOISE_QUIET_MAX_LDEN,
 )
 
-
 # ---------------------------------------------------------------------------
 # bucket_noise — `< quiet_max` quiet, `< lively_max` lively, else noisy
 # ---------------------------------------------------------------------------
