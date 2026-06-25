@@ -8,9 +8,9 @@ import type {
 } from "maplibre-gl";
 import type { FeatureCollection, Point } from "geojson";
 
-import { useUiState } from "../hooks/useUiState";
+import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
+import { decodeMarkers } from "../state/SessionState";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -150,14 +150,14 @@ export function MapPane() {
   // suffer from closure / re-attach races against CopilotKit's frequent
   // state updates. `interactiveLayerIds` populates `e.features` with the
   // hits at the click/move point, so we don't need queryRenderedFeatures.
-  const { setState } = useUiState();
+  const { activate } = useSessionState();
   const { setHover } = useHover();
 
-  // Stable refs so the handler closures always see the LATEST setState /
+  // Stable refs so the handler closures always see the LATEST activate /
   // setHover without needing to re-bind on every render. React's useState
-  // setters are stable; useCoAgent's may not be.
-  const setStateRef = useRef(setState);
-  setStateRef.current = setState;
+  // setters are stable; CopilotKit-derived ones may not be.
+  const activateRef = useRef(activate);
+  activateRef.current = activate;
   const setHoverRef = useRef(setHover);
   setHoverRef.current = setHover;
 
@@ -185,11 +185,12 @@ export function MapPane() {
       return;
     }
 
-    // Unclustered apartment dot — open detail in cards pane.
+    // Unclustered apartment dot — open detail in cards pane. Goes through
+    // the activate() helper so the HTTP detail fetch fires alongside the
+    // active_id update.
     const id = f.properties?.id ?? (f.id as string | undefined);
     if (id) {
-      const next = String(id);
-      setStateRef.current((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: next }));
+      void activateRef.current(String(id));
     }
   }, []);
 
@@ -232,27 +233,23 @@ export function MapPane() {
 }
 
 function ApartmentLayer() {
-  const { state } = useUiState();
+  const { state } = useSessionState();
   const { hoverId } = useHover();
   const { "apartments-map": map } = useMap();
   const lastFeatureStateIds = useRef<Set<string>>(new Set());
 
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
-    const features = (state?.results ?? [])
-      .filter((a): a is ApartmentWithCoords => a.lat != null && a.lng != null)
-      .map((a) => ({
-        type: "Feature" as const,
-        id: a.id,
-        geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
-        properties: {
-          id: a.id,
-          price_warm_eur: a.price_warm_eur,
-          title: a.title,
-          district: a.district,
-        },
-      }));
+    const features = decodeMarkers(state?.result_markers).map((m) => ({
+      type: "Feature" as const,
+      id: m.id,
+      geometry: { type: "Point" as const, coordinates: [m.lng, m.lat] },
+      properties: {
+        id: m.id,
+        price_warm_eur: m.price_warm_eur,
+      },
+    }));
     return { type: "FeatureCollection", features };
-  }, [state?.results]);
+  }, [state?.result_markers]);
 
   // Drive hover + active visual state by setFeatureState. Track which ids
   // we touched last frame so we can clean them up — feature-state persists
@@ -274,7 +271,7 @@ function ApartmentLayer() {
       m.setFeatureState({ source: src, id: state.active_id }, { active: true });
     }
     lastFeatureStateIds.current = next;
-  }, [map, hoverId, state?.active_id, state?.results]);
+  }, [map, hoverId, state?.active_id, state?.result_markers]);
 
   return (
     <Source
@@ -297,8 +294,4 @@ function ApartmentLayer() {
 interface ApartmentProps {
   id: string;
   price_warm_eur: number | null;
-  title: string | null;
-  district: string | null;
 }
-
-type ApartmentWithCoords = UiApartment & { lat: number; lng: number };

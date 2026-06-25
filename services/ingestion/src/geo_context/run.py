@@ -203,6 +203,22 @@ def main(argv: list[str] | None = None) -> int:
         gtfs_ok,
         gtfs_ok + gtfs_fail,
     )
+
+    # Chain gold re-enrichment if any silver geo-context family succeeded.
+    # When geo-context refreshes (e.g. updated noise raster, new MSS year),
+    # every listing's gold row needs to be re-computed against the new data
+    # — chaining here ensures the agent's search results reflect the
+    # refreshed truth without manual intervention. Skipped if everything
+    # failed (no point re-enriching against the previous-good snapshot;
+    # last run's gold is still valid).
+    if total_ok > 0:
+        logger.info("geo_context: chaining gold re-enrichment ...")
+        from gold.run import main as gold_main
+
+        gold_rc = gold_main([])
+        if gold_rc != 0:
+            logger.warning("geo_context→gold chain returned non-zero (%d)", gold_rc)
+
     return 1 if total_fail > 0 else 0
 
 

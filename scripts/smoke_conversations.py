@@ -20,7 +20,12 @@ import uuid
 
 import httpx
 
-BASE = "http://localhost:8000"
+import os
+
+# Default to nginx on the host (port 80, same path the browser uses).
+# Override with SMOKE_BASE=http://localhost:8000 to hit the backend
+# container directly, e.g. from inside docker compose exec.
+BASE = os.environ.get("SMOKE_BASE", "http://localhost")
 
 
 def make_user_msg(text: str) -> dict:
@@ -102,7 +107,18 @@ async def run_conversation(label: str, turns: list[str]) -> None:
         print(f"thread_id: {thread_id}")
 
         messages: list[dict] = []
-        state: dict = {"results": [], "active_id": None, "active_listing_context": None}
+        # Empty SessionState (tiered result set — see
+        # agent-compound-docs/decisions/session-state-design.md). `result_markers`
+        # is the columnar wire shape every match ships in; `preview_cards` is the
+        # hot top-N; the frontend-owned focus is active_id/active_listing_detail.
+        state: dict = {
+            "search_params": None,
+            "total_results": 0,
+            "result_markers": {"ids": [], "lats": [], "lngs": [], "prices": []},
+            "preview_cards": [],
+            "active_id": None,
+            "active_listing_detail": None,
+        }
 
         for i, user_text in enumerate(turns, start=1):
             print(f"\n--- Turn {i} ---")
@@ -113,9 +129,14 @@ async def run_conversation(label: str, turns: list[str]) -> None:
             for tc in tools:
                 args_preview = tc["args"][:200] if isinstance(tc["args"], str) else ""
                 print(f"  TOOL: {tc['name']}({args_preview}{'…' if len(tc['args']) > 200 else ''})")
-            n_results = len(state.get("results", []) or [])
+            markers = (state.get("result_markers") or {}).get("ids", []) or []
+            n_preview = len(state.get("preview_cards", []) or [])
+            total = state.get("total_results")
             active = state.get("active_id")
-            print(f"  STATE: {n_results} results, active_id={active}")
+            print(
+                f"  STATE: {len(markers)} markers, {n_preview} preview cards, "
+                f"total={total}, active_id={active}"
+            )
             print(f"ASSISTANT: {text.strip()[:600]}")
 
 

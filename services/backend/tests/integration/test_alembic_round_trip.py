@@ -30,7 +30,7 @@ from alembic import command
 from alembic.config import Config
 
 # Bump this when a new migration is added; the round-trip should land here.
-LATEST_REVISION = "0004_geo_context_hardening"
+LATEST_REVISION = "0006_spatial_junction_tables"
 
 _TEST_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 
@@ -56,7 +56,7 @@ def _alembic_config(url: str) -> Config:
     # The Dockerfile WORKDIR is /app where alembic.ini lives. When tests run
     # via `uv run pytest` we're in services/backend, so the ini is one level
     # up from the tests dir. Resolve relative to this file.
-    backend_root = Path(__file__).resolve().parents[1]
+    backend_root = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_root / "alembic"))
     # Override the URL so the test never touches the URL from settings.

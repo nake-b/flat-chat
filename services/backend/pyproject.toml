@@ -7,12 +7,14 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
+    # Two drivers: psycopg2 for Alembic + sync paths, asyncpg for the
+    # FastAPI request path (see agent-compound-docs/decisions/async-database-layer.md).
     "psycopg2-binary>=2.9",
+    "asyncpg>=0.30",
     "pgvector>=0.3",
     "pydantic-settings>=2.7",
     "pydantic-ai>=1.97,<2.0",
     "pydantic-ai-slim[ag-ui]>=1.97,<2.0",
-    "pandas>=2.0",
     "geoalchemy2>=0.17",
     "httpx>=0.28",
     "arize-phoenix-otel>=0.16,<0.17",
@@ -24,6 +26,7 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a7",
     "pytest>=8.0",
+    "greenlet>=3.5.0",
 ]
 
 [build-system]

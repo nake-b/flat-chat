@@ -1,18 +1,41 @@
+"""Search input + output schemas.
+
+`SearchParams` is the tool-arg surface for `search_apartments`. Wide and
+flat by design — LLMs handle ~30 flat optional fields better than deep
+nesting. Geo-context filters that have internal combinatorial structure
+(transit modes ∧ lines ∧ stop name, MSS status floor + dynamics) are
+allowed one level of nesting.
+
+Bucket labels (NoiseLabel, GreeneryLabel, DensityLabel) live in
+`listings.types` — single source of truth across the project.
+"""
+
 from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from flat_chat.listings.types import (
+    DensityLabel,
+    GreeneryLabel,
+    NearSpec,
+    NoiseLabel,
+)
+
 from .geo_filters import (
     HospitalFilter,
     MssFilter,
-    NearSpec,
     SchoolFilter,
     TransitFilter,
 )
 
 SortBy = Literal["relevance", "price", "area", "recent"]
+
+# Server-side caps (NOT LLM-tunable). A search returns EVERY match as a thin
+# marker, hard-capped at MARKER_CAP for the SSE snapshot, plus the top
+# PREVIEW_N as full cards. Known scale ceiling — grep `MARKER_CAP`.
+MARKER_CAP = 5000
+PREVIEW_N = 10
 
 
 class SearchParams(BaseModel):
@@ -80,4 +103,6 @@ class SearchParams(BaseModel):
     density: DensityLabel | None = None
 
     sort_by: SortBy = "relevance"
-    limit: int = Field(default=50, ge=1, le=200)
+    # No per-search `limit`: the model returns every match as a marker (hard-
+    # capped server-side at MARKER_CAP) + a fixed PREVIEW_N of full cards. The
+    # LLM doesn't tune result count — "show everything on the map" is the point.

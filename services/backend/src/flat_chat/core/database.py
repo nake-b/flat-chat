@@ -1,6 +1,32 @@
+"""Database engines and session factories.
+
+Two engines coexist:
+
+  - `sync_engine` / `SessionLocal` — used by Alembic migrations and any
+    sync-context code. Driver: `psycopg2`. Stays for migrations because
+    Alembic's async support is awkward.
+
+  - `async_engine` / `AsyncSessionLocal` — used by every FastAPI request
+    path. Driver: `asyncpg`. Non-blocking event loop is mandatory for
+    AG-UI SSE streaming and concurrent agent runs.
+
+Both engines wire the same observability hooks (per-request SQL comment
+tagging + DB-error logging through our handler). The contextvars in
+`observability.py` are set in `ChatService.dispatch_agent_request`; the
+hooks read them so SQL fired from anywhere inside a request carries the
+session+run id straight into Postgres for debugging stuck queries.
+
+Architecture-decision doc: `agent-compound-docs/decisions/async-database-layer.md`
+"""
+
 import logging
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from flat_chat.core.config import settings
@@ -8,19 +34,42 @@ from flat_chat.core.observability import run_id_var, session_id_var
 
 logger = logging.getLogger(__name__)
 
-# pool_pre_ping=True issues a cheap SELECT 1 before every checkout. Dead
-# pool entries (e.g. after a postgres restart) are dropped and replaced
-# transparently instead of raising `server closed the connection unexpectedly`
-# on the next query.
-engine = create_engine(settings.database_url, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# ---------------------------------------------------------------------------
+# Sync engine — Alembic, scripts, and anything that needs the sync API.
+# ---------------------------------------------------------------------------
+
+sync_engine = create_engine(settings.database_url, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+
+# ---------------------------------------------------------------------------
+# Async engine — FastAPI request path. Driver swap: postgresql+psycopg2 →
+# postgresql+asyncpg. Same connection string, different scheme.
+# ---------------------------------------------------------------------------
+
+_async_url = settings.database_url.replace(
+    "postgresql+psycopg2://", "postgresql+asyncpg://", 1
+).replace("postgresql://", "postgresql+asyncpg://", 1)
+
+async_engine = create_async_engine(_async_url, pool_pre_ping=True)
+AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=async_engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
 
 class Base(DeclarativeBase):
     pass
 
 
-@event.listens_for(engine, "before_cursor_execute", retval=True)
+# ---------------------------------------------------------------------------
+# Observability hooks — wired to BOTH engines so any SQL fired during a
+# request carries the session/run id, whether the path is sync or async.
+# ---------------------------------------------------------------------------
+
+
 def _inject_request_context_comment(
     conn, cursor, statement, params, context, executemany
 ):
@@ -48,16 +97,8 @@ def _inject_request_context_comment(
     return f"/* {' '.join(parts)} */ {statement}", params
 
 
-@event.listens_for(engine, "handle_error")
 def _log_dbapi_error(ctx):
-    """Emit every DBAPI error through our logger with the request context.
-
-    Without this, SQLAlchemy / psycopg2 errors only surface via the
-    exception's eventual re-raise path — which Pydantic AI catches inside
-    the tool wrapper, swallowing the trace from `docker compose logs`. The
-    [session=… run=…] prefix comes from the contextvar filter, so this
-    lands directly under the failing turn in the log stream.
-    """
+    """Emit every DBAPI error through our logger with the request context."""
     logger.exception(
         "DB error: %s",
         ctx.original_exception,
@@ -65,9 +106,39 @@ def _log_dbapi_error(ctx):
     )
 
 
+# Register hooks on the sync engine directly.
+event.listen(
+    sync_engine, "before_cursor_execute", _inject_request_context_comment, retval=True
+)
+event.listen(sync_engine, "handle_error", _log_dbapi_error)
+
+# For async engines, hooks attach to the underlying sync engine
+# (SQLAlchemy's async layer wraps sync DBAPI under the hood). `sync_engine`
+# attribute on the async engine surfaces that.
+event.listen(
+    async_engine.sync_engine,
+    "before_cursor_execute",
+    _inject_request_context_comment,
+    retval=True,
+)
+event.listen(async_engine.sync_engine, "handle_error", _log_dbapi_error)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI dependency entry points
+# ---------------------------------------------------------------------------
+
+
 def get_db():
+    """Sync session for any sync-context code paths."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+async def get_async_db():
+    """Async session for FastAPI route handlers and async services."""
+    async with AsyncSessionLocal() as session:
+        yield session

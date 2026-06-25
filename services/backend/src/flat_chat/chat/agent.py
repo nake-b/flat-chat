@@ -118,6 +118,7 @@ def add_dynamic_state(ctx: RunContext[ChatDeps]) -> str:
     """Inject the per-turn state snapshot (current search + user focus).
 
     Delegated to `llm_context.build_dynamic_state_prompt` so all LLM-facing
-    string composition stays in one module.
+    string composition stays in one module. Reads from `ctx.deps.state`
+    (SessionState) directly — no more separate result_set / ui_state split.
     """
-    return build_dynamic_state_prompt(ctx.deps)
+    return build_dynamic_state_prompt(ctx.deps.state)

@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.requests import Request
 from starlette.responses import Response
 
-from flat_chat.chat.service import ChatService
+from flat_chat.chat.service import (
+    ChatService,
+    InvalidAgentRequestError,
+    LlmProviderUnavailableError,
+)
 from flat_chat.chat.sessions import SessionNotFoundError
 from flat_chat.core.dependencies import get_chat_service
 
@@ -51,8 +55,9 @@ async def run_agent(
     `agents` list would make CopilotKit route messages via the runtime
     client, bypassing the `agents__unsafe_dev_only` HttpAgent we wired on
     the React side. The probe is allowed to flow into the AG-UI adapter
-    and 422 (now translated by `ChatService` instead of crashing with a
-    500); CopilotKit logs a warning and falls back to the self-managed
+    and 422 (translated here at the API layer from
+    `InvalidAgentRequestError` instead of crashing with a 500);
+    CopilotKit logs a warning and falls back to the self-managed
     agent. The visible dev-console nag is suppressed by the
     `<cpk-web-inspector>` hider in `main.tsx`. The GET probe routes above
     (`/api/agent/info`, `/api/agent/threads`) cover the runtime queries
@@ -62,6 +67,14 @@ async def run_agent(
         response = await chat.dispatch_agent_request(request)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    except InvalidAgentRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except LlmProviderUnavailableError as exc:
+        raise HTTPException(
+            status_code=503, detail="No LLM provider configured"
+        ) from exc
 
     # Belt-and-braces against intermediate proxies that re-enable buffering:
     # signal that no buffering should happen on the streaming response.

@@ -43,4 +43,4 @@ ignore = []
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-testpaths = ["src"]
+testpaths = ["src", "tests"]

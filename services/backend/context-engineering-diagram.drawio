@@ -1,0 +1,143 @@
+<mxfile host="Electron">
+  <diagram name="Context engineering" id="context-engineering">
+    <mxGraphModel dx="2000" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1620" pageHeight="1240" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=26;fontColor=#0f172a;align=left;fontStyle=1;" value="Flat Chat — Context Engineering" vertex="1">
+          <mxGeometry height="32" width="900" x="60" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=1;fontSize=14;fontColor=#64748b;align=left;" value="How each turn&#39;s system prompt is composed, and how the single SessionState snapshot feeds back into it" vertex="1">
+          <mxGeometry height="22" width="950" x="60" y="68" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#E2E8F0;strokeWidth=1;align=left;verticalAlign=top;spacingLeft=14;spacingTop=10;fontSize=12;" value="LEGEND" vertex="1">
+          <mxGeometry height="96" width="470" x="1090" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" edge="1" parent="1" style="endArrow=classic;endFill=1;html=1;strokeColor=#6366F1;strokeWidth=2.5;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1108" y="64" as="sourcePoint" />
+            <mxPoint x="1150" y="64" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg1t" parent="1" style="text;html=1;fontSize=12;fontColor=#334155;align=left;" value="static · cached prefix" vertex="1">
+          <mxGeometry height="20" width="180" x="1160" y="54" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" edge="1" parent="1" style="endArrow=classic;endFill=1;html=1;strokeColor=#F59E0B;strokeWidth=2.5;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1108" y="94" as="sourcePoint" />
+            <mxPoint x="1150" y="94" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg2t" parent="1" style="text;html=1;fontSize=12;fontColor=#334155;align=left;" value="per-turn dynamic / state write" vertex="1">
+          <mxGeometry height="20" width="220" x="1160" y="84" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" edge="1" parent="1" style="endArrow=classic;endFill=1;html=1;strokeColor=#64748b;strokeWidth=2.5;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1370" y="64" as="sourcePoint" />
+            <mxPoint x="1412" y="64" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg3t" parent="1" style="text;html=1;fontSize=12;fontColor=#334155;align=left;" value="read / fetch" vertex="1">
+          <mxGeometry height="20" width="130" x="1422" y="54" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" edge="1" parent="1" style="endArrow=classic;endFill=1;html=1;strokeColor=#10B981;strokeWidth=2.5;" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1370" y="94" as="sourcePoint" />
+            <mxPoint x="1412" y="94" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg4t" parent="1" style="text;html=1;fontSize=12;fontColor=#334155;align=left;" value="stream to UI" vertex="1">
+          <mxGeometry height="20" width="130" x="1422" y="84" as="geometry" />
+        </mxCell>
+
+        <mxCell id="z_tools" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#C4B5FD;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=10;spacingLeft=20;fontSize=15;fontStyle=1;fontColor=#5B21B6;" value="Agent tools · chat/tools.py  (mutate SessionState each call)" vertex="1">
+          <mxGeometry height="150" width="900" x="300" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="search_apartments" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#818CF8;strokeWidth=2;align=left;verticalAlign=top;spacingLeft=16;spacingTop=12;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:16px&#39;&gt;search_apartments&lt;/b&gt;&lt;div style=&#39;color:#64748b;font-size:13px;margin-top:8px&#39;&gt;SearchService → cards; replaces the result set&lt;/div&gt;" vertex="1">
+          <mxGeometry height="95" width="400" x="330" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="open_listing" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#818CF8;strokeWidth=2;align=left;verticalAlign=top;spacingLeft=16;spacingTop=12;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:16px&#39;&gt;open_listing&lt;/b&gt;&lt;div style=&#39;color:#64748b;font-size:13px;margin-top:8px&#39;&gt;sets active_id · fetches tier-3 detail&lt;/div&gt;" vertex="1">
+          <mxGeometry height="95" width="400" x="770" y="200" as="geometry" />
+        </mxCell>
+
+        <mxCell id="z_state" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEFCE8;strokeColor=#FBBF24;strokeWidth=2;verticalAlign=top;align=left;spacingTop=10;spacingLeft=20;fontSize=15;fontStyle=1;fontColor=#92400E;" value="★ Session state — ONE object (chat/session_state.py)   ·   replaces the old LlmResultSetView + UiState split" vertex="1">
+          <mxGeometry height="220" width="900" x="300" y="345" as="geometry" />
+        </mxCell>
+        <mxCell id="session_state" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#F59E0B;strokeWidth=3;align=left;verticalAlign=top;spacingLeft=18;spacingTop=14;fontSize=14;" value="&lt;b style=&#39;color:#92400E;font-size:17px&#39;&gt;SessionState&lt;/b&gt;&lt;div style=&#39;color:#78350F;font-size:13px;margin-top:10px&#39;&gt;search_params · total_results&lt;/div&gt;&lt;div style=&#39;color:#78350F;font-size:13px;margin-top:4px&#39;&gt;results: UiApartment[]  (tier-2 cards)&lt;/div&gt;&lt;div style=&#39;color:#78350F;font-size:13px;margin-top:4px&#39;&gt;active_id · active_listing_detail  (tier-3)&lt;/div&gt;&lt;div style=&#39;color:#B45309;font-size:12px;margin-top:10px&#39;&gt;LlmResultSetView is a thin formatter over this (summary / page / detail)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="840" x="330" y="395" as="geometry" />
+        </mxCell>
+        <mxCell id="listing_service" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#9A3412;strokeWidth=2.5;align=left;verticalAlign=top;spacingLeft=14;spacingTop=10;fontSize=13;" value="&lt;b style=&#39;color:#0f172a;font-size:15px&#39;&gt;ListingService.get(id)&lt;/b&gt;&lt;div style=&#39;color:#64748b;font-size:12px;margin-top:6px&#39;&gt;tier-3 detail · shared with GET /api/listings/&amp;#123;id&amp;#125;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="95" width="270" x="1250" y="395" as="geometry" />
+        </mxCell>
+        <mxCell id="frontend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0EA5E9;strokeWidth=2;align=left;verticalAlign=top;spacingLeft=14;spacingTop=10;fontSize=13;" value="&lt;b style=&#39;color:#0f172a;font-size:15px&#39;&gt;Frontend&lt;/b&gt;&lt;div style=&#39;color:#64748b;font-size:12px;margin-top:6px&#39;&gt;map + cards · detail panel&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="270" x="1250" y="510" as="geometry" />
+        </mxCell>
+
+        <mxCell id="z_ctx" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#99F6E4;strokeWidth=2;verticalAlign=top;align=left;spacingTop=10;spacingLeft=20;fontSize=15;fontStyle=1;fontColor=#0F766E;" value="chat/llm_context.py — sole owner of every byte the LLM sees" vertex="1">
+          <mxGeometry height="120" width="900" x="300" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="build_dyn" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0891B2;strokeWidth=2.5;align=left;verticalAlign=top;spacingLeft=18;spacingTop=12;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:16px&#39;&gt;build_dynamic_state_prompt(SessionState)&lt;/b&gt;&lt;div style=&#39;color:#64748b;font-size:13px;margin-top:8px&#39;&gt;reads results + active_listing_detail → emits the per-turn &amp;lt;current_state&amp;gt; + &amp;lt;user_focus&amp;gt; XML block&lt;/div&gt;" vertex="1">
+          <mxGeometry height="75" width="640" x="430" y="645" as="geometry" />
+        </mxCell>
+
+        <mxCell id="z_prompt" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF2FF;strokeColor=#A5B4FC;strokeWidth=2;verticalAlign=top;align=left;spacingTop=10;spacingLeft=20;fontSize=15;fontStyle=1;fontColor=#5B21B6;" value="System prompt — assembled by Pydantic AI every turn" vertex="1">
+          <mxGeometry height="265" width="900" x="300" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="instr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#6366F1;strokeWidth=2;align=left;verticalAlign=top;spacingLeft=16;spacingTop=10;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:15px&#39;&gt;instructions=&lt;/b&gt; &lt;span style=&#39;color:#6366F1;font-size:12px&#39;&gt;static · cached&lt;/span&gt;&lt;div style=&#39;color:#64748b;font-size:13px;margin-top:6px&#39;&gt;role · ui · honesty · neutrality  (chat/agent.py)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="78" width="500" x="330" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="toolproto" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#6366F1;strokeWidth=2;align=left;verticalAlign=top;spacingLeft=16;spacingTop=10;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:15px&#39;&gt;@toolset.instructions&lt;/b&gt; &lt;span style=&#39;color:#6366F1;font-size:12px&#39;&gt;static · cached&lt;/span&gt;&lt;div style=&#39;color:#64748b;font-size:13px;margin-top:6px&#39;&gt;tool_protocol + phrase_map  (chat/tools.py)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="78" width="500" x="330" y="910" as="geometry" />
+        </mxCell>
+        <mxCell id="dynblock" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F59E0B;strokeWidth=2.5;align=left;verticalAlign=top;spacingLeft=16;spacingTop=10;fontSize=14;" value="&lt;b style=&#39;color:#92400E;font-size:15px&#39;&gt;@agent.instructions&lt;/b&gt; &lt;span style=&#39;color:#B45309;font-size:12px&#39;&gt;per-turn&lt;/span&gt;&lt;div style=&#39;color:#78350F;font-size:13px;margin-top:8px&#39;&gt;&amp;lt;current_state&amp;gt; + &amp;lt;user_focus&amp;gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="105" width="300" x="860" y="843" as="geometry" />
+        </mxCell>
+        <mxCell id="cache_note" parent="1" style="text;html=1;fontSize=13;fontColor=#6366F1;align=left;fontStyle=2;" value="prompt caching: the two static layers form the cached prefix (~5600 tokens); only the per-turn block changes each turn" vertex="1">
+          <mxGeometry height="20" width="820" x="330" y="1000" as="geometry" />
+        </mxCell>
+
+        <mxCell id="z_model" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;strokeWidth=2;verticalAlign=top;align=left;spacingTop=10;spacingLeft=20;fontSize=15;fontStyle=1;fontColor=#475569;" value="Model · provider seam (chat/providers)" vertex="1">
+          <mxGeometry height="120" width="900" x="300" y="1075" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF2FF;strokeColor=#6366F1;strokeWidth=2;align=left;verticalAlign=middle;spacingLeft=18;fontSize=14;" value="&lt;b style=&#39;color:#0f172a;font-size:16px&#39;&gt;LLM&lt;/b&gt; &lt;span style=&#39;color:#94a3b8;font-size:12px&#39;&gt;Anthropic-direct (cached) · Azure OpenAI&lt;/span&gt;" vertex="1">
+          <mxGeometry height="70" width="420" x="540" y="1110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sa_state" edge="1" parent="1" source="search_apartments" target="session_state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2.5;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#F59E0B;fontColor=#B45309;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" value="writes results · params">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ol_ls" edge="1" parent="1" source="open_listing" target="listing_service" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#64748b;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="get(id)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1385" y="247" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ls_state" edge="1" parent="1" source="listing_service" target="session_state" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2.5;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#F59E0B;fontColor=#B45309;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.3;entryDx=0;entryDy=0;" value="active_listing_detail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_state_fe" edge="1" parent="1" source="session_state" target="frontend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#10B981;fontColor=#047857;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="JSON-Patch (AG-UI)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fe_ls" edge="1" parent="1" source="frontend" target="listing_service" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=12;strokeColor=#64748b;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=0.85;exitY=0;exitDx=0;exitDy=0;entryX=0.85;entryY=1;entryDx=0;entryDy=0;" value="GET /api/listings/&amp;#123;id&amp;#125;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_state_bd" edge="1" parent="1" source="session_state" target="build_dyn" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#64748b;fontColor=#475569;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="reads (current_state + user_focus)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd_dyn" edge="1" parent="1" source="build_dyn" target="dynblock" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#64748b;exitX=0.9;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_instr_llm" edge="1" parent="1" source="instr" target="llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#6366F1;fontColor=#6366F1;labelBackgroundColor=#FFFFFF;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.2;entryY=0;entryDx=0;entryDy=0;" value="cached prefix">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tp_llm" edge="1" parent="1" source="toolproto" target="llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#6366F1;fontColor=#6366F1;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.45;entryY=0;entryDx=0;entryDy=0;" value="cached prefix">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dyn_llm" edge="1" parent="1" source="dynblock" target="llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeWidth=2.5;endArrow=classic;endFill=1;html=1;fontSize=13;strokeColor=#F59E0B;fontColor=#B45309;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.8;entryY=0;entryDx=0;entryDy=0;" value="per-turn tail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

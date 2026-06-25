@@ -1,24 +1,27 @@
-"""Pydantic schemas for geo-context filters and per-listing context responses.
+"""Geo-context filter shapes — search input contract.
 
-Filters extend `SearchParams` (in `schemas.py`) — the LLM sets them through
-`search_apartments` tool args. Context shapes are returned by
-`GeoContextService.context_for(location)` and surfaced through
-`get_listing_details`.
+These Pydantic models are surfaced as nested arg objects in the
+`search_apartments` agent tool. They describe WHAT the user wants
+("near U-Bahn", "near a school", "improving area") in structured terms;
+`SearchService` translates them into B-tree predicates against gold's
+denormalised columns.
 
-Defaults and label vocab trace to `agent-compound-docs/decisions/
-geo-context-thresholds.md`.
+Used by:
+  - `search.schemas.SearchParams` — bundled into the full tool-arg surface
+  - `search.service.SearchService` — translates each filter into SQL
+
+The per-listing detail shapes (NearestTransitStop, NearestSchool, …) that
+used to live here have moved to `listings.context`. Filter inputs stay
+here; detail outputs are a listings-domain concern.
+
+Threshold doc: `agent-compound-docs/decisions/geo-context-thresholds.md`.
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .distances import DistanceBucket, NearSpec
-from .transit import GtfsMode
-
-# ---------------------------------------------------------------------------
-# Filter shapes — surfaced as nested arg objects in `search_apartments`.
-# ---------------------------------------------------------------------------
+from flat_chat.listings.types import GtfsMode, MssDynamics, MssStatus, NearSpec
 
 
 class TransitFilter(BaseModel):
@@ -38,15 +41,27 @@ class TransitFilter(BaseModel):
 
 
 class SchoolFilter(BaseModel):
-    """Filter listings by proximity to a school.
+    """Filter listings by proximity to (or catchment of) a school.
 
-    `school_type` matches against the Berlin Schulverzeichnis category
-    (e.g. "Grundschule", "Gymnasium", "ISS", "Berufsschule"). Left as
-    free-text since the source vocabulary is open.
+    Two intents this filter expresses:
+
+    - **Proximity** (default): "near a school within X meters", optionally
+      filtered by `school_type`. `school_type` matches against the Berlin
+      Schulverzeichnis category (e.g. "Grundschule", "Gymnasium", "ISS",
+      "Berufsschule") via case-insensitive substring; the vocabulary is
+      open so we don't enumerate it.
+    - **Catchment membership**: set `requires_catchment=True` for the
+      legal-attendance question ("which primary school is this kid
+      assigned to?"). Berlin tiles primary catchments across the whole
+      city, so this filter is usually combined with proximity for
+      meaningful narrowing.
+
+    Both checks AND together when both are requested.
     """
 
     distance: NearSpec = "near"
     school_type: str | None = None
+    requires_catchment: bool = False
 
 
 class HospitalFilter(BaseModel):
@@ -54,18 +69,12 @@ class HospitalFilter(BaseModel):
 
     `tier` defaults to `"plan_hospital"` for the filter — when the user
     says "near a hospital" they usually mean emergency-care reachability,
-    which is the Krankenhausplan network. The detail-enrichment path uses
-    `"any"` so the user sees specialty clinics too.
+    which is the Krankenhausplan network. The detail-enrichment path
+    uses `"any"` so the user sees specialty clinics too.
     """
 
     distance: NearSpec = "near"
     tier: Literal["plan_hospital", "any"] = "plan_hospital"
-
-
-# MSS status / dynamics labels — see thresholds doc §8 for the German→English
-# mapping. The neutrality requirement is enforced in the agent INSTRUCTIONS.
-MssStatus = Literal["disadvantaged", "lower-income", "mixed", "affluent"]
-MssDynamics = Literal["slipping", "stable", "improving"]
 
 
 class MssFilter(BaseModel):
@@ -84,131 +93,12 @@ class MssFilter(BaseModel):
     dynamics: MssDynamics | None = None
 
 
-# ---------------------------------------------------------------------------
-# Per-listing context shapes — returned by GeoContextService.context_for().
-# ---------------------------------------------------------------------------
-
-
-class NearestTransitStop(BaseModel):
-    stop_id: str
-    name: str
-    modes: list[GtfsMode]
-    lines: list[str]
-    distance_m: int
-    walk_minutes: int
-
-
-class NearestSchool(BaseModel):
-    name: str | None
-    school_type: str | None
-    distance_m: int
-    operator: str | None = None
-
-
-class SchoolCatchmentInfo(BaseModel):
-    """The primary-school catchment (ESB) the listing falls inside."""
-
-    catchment_id: str | None
-    school_number: str | None
-    school_name: str | None
-
-
-class NearestPark(BaseModel):
-    name: str | None
-    object_type: str | None
-    distance_m: int
-    area_m2: float | None = None
-
-
-class NearestPlayground(BaseModel):
-    name: str | None
-    distance_m: int
-    play_area_m2: float | None = None
-
-
-class NearestHospital(BaseModel):
-    name: str | None
-    tier: Literal["plan_hospital", "other"]
-    distance_m: int
-    total_beds: int | None = None
-
-
-class NearestWater(BaseModel):
-    name: str | None
-    water_kind: str | None
-    distance_m: int
-
-
-class NoiseProfile(BaseModel):
-    label: Literal["quiet", "lively", "noisy"] | None
-    total_lden: float | None
-    street_lden: float | None
-    rail_lden: float | None
-
-
-class GreeneryProfile(BaseModel):
-    """Greenery composite. Cemeteries counted at 0.5 weight (thresholds doc §5)."""
-
-    label: Literal["concrete", "leafy", "very_leafy"] | None
-    green_m2_within_300m: float | None
-
-
-class DensityProfile(BaseModel):
-    label: Literal["sparse", "moderate", "dense"] | None
-    persons_per_hectare: float | None
-    age_under_18_pct: float | None
-    age_65_plus_pct: float | None
-
-
-class MssProfile(BaseModel):
-    """Sozialmonitoring profile. Labels are neutral re-codings (thresholds doc §8)."""
-
-    status_label: MssStatus | None
-    dynamics_label: MssDynamics | None
-    social_inequality_label: str | None
-    residents: int | None
-
-
-class ListingContext(BaseModel):
-    """Full per-listing geo-context blob returned by `get_listing_details`."""
-
-    transit: list[NearestTransitStop] = Field(default_factory=list)
-    school_catchment: SchoolCatchmentInfo | None = None
-    nearest_schools: list[NearestSchool] = Field(default_factory=list)
-    nearest_parks: list[NearestPark] = Field(default_factory=list)
-    nearest_playground: NearestPlayground | None = None
-    nearest_hospitals: list[NearestHospital] = Field(default_factory=list)
-    nearest_water: NearestWater | None = None
-    noise: NoiseProfile | None = None
-    greenery: GreeneryProfile | None = None
-    density: DensityProfile | None = None
-    mss: MssProfile | None = None
-    disabled_parking_count: int = 0
-
-
-__all__ = [
-    # Filter shapes
-    "TransitFilter",
-    "SchoolFilter",
-    "HospitalFilter",
-    "MssFilter",
-    "MssStatus",
-    "MssDynamics",
-    # Re-exported type aliases
-    "DistanceBucket",
-    "NearSpec",
-    "GtfsMode",
-    # Context shapes
-    "ListingContext",
-    "NearestTransitStop",
-    "NearestSchool",
-    "SchoolCatchmentInfo",
-    "NearestPark",
-    "NearestPlayground",
-    "NearestHospital",
-    "NearestWater",
-    "NoiseProfile",
-    "GreeneryProfile",
-    "DensityProfile",
-    "MssProfile",
-]
+# Used by `SearchService` to translate `mss.status_min` into a SQL
+# threshold — higher value = more affluent. Co-located here because it's
+# inherent to the MSS status enum (not a tweakable threshold).
+MSS_STATUS_RANK: dict[MssStatus, int] = {
+    "disadvantaged": 0,
+    "lower-income": 1,
+    "mixed": 2,
+    "affluent": 3,
+}

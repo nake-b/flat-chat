@@ -3,14 +3,17 @@ from datetime import date
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import FunctionToolset, RunContext, ToolReturn
 
-from flat_chat.chat.llm_context import LlmResultSetView, format_geo_context_prose
+from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.ui_state import UiApartment
-from flat_chat.search.buckets import DensityLabel, GreeneryLabel, NoiseLabel
+from flat_chat.listings.types import (
+    DensityLabel,
+    GreeneryLabel,
+    NearSpec,
+    NoiseLabel,
+)
 from flat_chat.search.geo_filters import (
     HospitalFilter,
     MssFilter,
-    NearSpec,
     SchoolFilter,
     TransitFilter,
 )
@@ -76,6 +79,8 @@ filters for `search_apartments`:
   - "near a Grundschule"        → school: {school_type: "Grundschule"}
   - "near a lake" /
     "by the water"              → near_water: "near"
+  - "arty / queer-friendly /
+    nightlife / loft vibe"      → query: "<the user's words>"
 </phrase_map>
 """
 
@@ -142,8 +147,10 @@ async def search_apartments(
     leave the rest unset.
 
     Args:
-        query: Natural language query for semantic matching. Optional —
-            structured filters (below) are the primary search surface.
+        query: Free-text semantic match (title + description) for subjective
+            intent no filter below captures ("arty", "queer-friendly",
+            "nightlife"); it ranks within the structured filters, so combine
+            them. Omit it for purely structural searches.
 
         price_warm_min: Minimum warm rent in euros (warm = incl. Nebenkosten).
         price_warm_max: Maximum warm rent in euros.
@@ -300,46 +307,23 @@ async def search_apartments(
         sort_by=sort_by,
     )
 
-    # Surface soft-fallback signals to the LLM via LlmResultSetView.notes — these
-    # also flow back to the user. The service silently degrades, so this is
-    # the user-facing voice for those degradations.
-    notes: list[str] = []
-    if params.query and ctx.deps.search_service.embedder is None:
-        notes.append(
-            "Semantic ranking unavailable (no embedder configured) — results "
-            "filtered by metadata only and sorted by recency instead of relevance."
-        )
-    elif params.sort_by == "relevance" and not params.query:
-        notes.append(
-            "Sort=relevance requires a query — results sorted by recency instead."
-        )
+    # Execute the search. SearchService drops null-coordinate listings and
+    # returns markers (EVERY match, ≤ MARKER_CAP), the top-N preview cards,
+    # and the total.
+    markers, preview, total = await ctx.deps.search_service.search(params)
 
-    df = await ctx.deps.search_service.search(params)
-
-    # Drop listings without coordinates BEFORE building the view + UiState so
-    # all three counts (chat prose, cards, map) agree — the map can only render
-    # markers for apartments with lat/lng, and silently dropping them downstream
-    # caused user-visible count mismatches. The filter belongs at the tool layer;
-    # SearchService stays general.
-    df = df.dropna(subset=["latitude", "longitude"])
-    df = df.reset_index(drop=True)
-
-    ctx.deps.session.result_set = LlmResultSetView(df=df, params=params, notes=notes)
-
-    # Mirror into the frontend-facing UiState. The agent never reads from
-    # ctx.deps.state — it's exclusively for the UI to render the map + cards.
-    # Status-pill copy is owned entirely by the frontend (state/toolStatus.ts);
-    # tools push data only.
-    ctx.deps.state.results = [
-        UiApartment.from_dataframe_row(row) for _, row in df.iterrows()
-    ]
+    # SessionState is the canonical in-memory snapshot. Both the LLM (via
+    # build_dynamic_state_prompt) and the frontend (via the AG-UI state
+    # stream) read from here. One representation, two consumers.
+    ctx.deps.state.search_params = params
+    ctx.deps.state.total_results = total
+    ctx.deps.state.result_markers = markers
+    ctx.deps.state.preview_cards = preview
     ctx.deps.state.active_id = None
-    ctx.deps.state.active_listing_context = None
+    ctx.deps.state.active_listing_detail = None
 
-    return _return_with_state(
-        return_value=ctx.deps.session.result_set.summary(),
-        ui_state=ctx.deps.state,
-    )
+    summary = LlmResultSetView(ctx.deps.state).summary(preview)
+    return _return_with_state(return_value=summary, session_state=ctx.deps.state)
 
 
 # TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
@@ -373,35 +357,59 @@ async def open_listing(
             output. NEVER pass UUIDs, external IDs, or anything that isn't a
             simple 1-based number visible to the user.
     """
-    rs = ctx.deps.session.result_set
-    if rs is None:
+    markers = ctx.deps.state.result_markers
+    if not markers:
         return "No active search results. Run search_apartments first."
+    if not indices:
+        return "Pass at least one 1-based index, e.g. open_listing([1])."
 
-    # Clear unconditionally on entry so a stale blob from a prior single-index
-    # call can't leak into a subsequent multi-index / out-of-range / no-detail
-    # response. Only the single-index success path repopulates it below.
-    ctx.deps.state.active_listing_context = None
+    rs = LlmResultSetView(ctx.deps.state)
+    preview = ctx.deps.state.preview_cards
 
-    # Anchor the detail panel to indices[0] regardless of count, so the UI
-    # has a consistent "the first card the user asked about" anchor.
+    # Clear unconditionally on entry so a stale blob from a prior call
+    # doesn't leak into a multi-index / out-of-range response.
+    ctx.deps.state.active_listing_detail = None
+
+    # Anchor the detail panel to indices[0] regardless of count. Indices
+    # resolve against the marker order (the canonical result set).
     first = indices[0]
     pos = first - 1
-    geo_prose = ""
-    if 0 <= pos < len(ctx.deps.state.results):
-        active = ctx.deps.state.results[pos]
-        ctx.deps.state.active_id = active.id
-        # Single-index calls fetch the geo-context blob and surface it both
-        # in UiState (so the frontend Neighbourhood panel renders) AND in
-        # the tool's return value (so the LLM can answer follow-up questions
-        # about transit / schools / noise / MSS without re-fetching).
+    if 0 <= pos < len(markers):
+        ctx.deps.state.active_id = markers[pos].id
+        # Single-index calls fetch tier 3 via ListingService and store it
+        # in state. The LLM reads this via build_dynamic_state_prompt's
+        # `<user_focus>` block on the next prompt build — so there's no
+        # need to embed the detail prose in this tool's return value.
         if len(indices) == 1:
-            detail = ctx.deps.search_service.get_listing_details(active.id)
+            detail = await ctx.deps.listing_service.get_detail(markers[pos].id)
             if detail is not None:
-                ctx.deps.state.active_listing_context = detail.context
-                geo_prose = "\n\n" + format_geo_context_prose(first, detail.context)
+                ctx.deps.state.active_listing_detail = detail
+
+    # Resolve a tier-2 card for each requested index (for the prose). The
+    # hot preview covers the top-N; anything beyond hydrates on demand by
+    # marker id.
+    need_ids = [
+        markers[i - 1].id
+        for i in indices
+        if 0 <= i - 1 < len(markers) and (i - 1) >= len(preview)
+    ]
+    hydrated = (
+        {c.id: c for c in await ctx.deps.listing_service.get_cards(need_ids)}
+        if need_ids
+        else {}
+    )
+    items = []
+    for i in indices:
+        p = i - 1
+        if not (0 <= p < len(markers)):
+            items.append((i, None))
+        elif p < len(preview):
+            items.append((i, preview[p]))
+        else:
+            items.append((i, hydrated.get(markers[p].id)))
 
     return _return_with_state(
-        return_value=rs.detail(indices) + geo_prose, ui_state=ctx.deps.state
+        return_value=rs.detail(items), session_state=ctx.deps.state
     )
 
 
@@ -413,35 +421,63 @@ async def get_result_page(
 ) -> str:
     """Show a compact page of the current result set.
 
-    Pure read of `LlmResultSetView` — does not mutate UiState, so no snapshot
-    is emitted. The agent uses this to peek beyond the top-5 shown by the
-    initial `search_apartments` summary.
+    Does NOT mutate state (no snapshot emitted); it hydrates the page's cards
+    on demand by marker id (the preview covers page 1). The agent uses this to
+    peek beyond the top-5 shown by the initial `search_apartments` summary.
 
     Args:
         page: 1-based page number.
         page_size: Listings per page (default 10).
     """
-    rs = ctx.deps.session.result_set
-    if rs is None:
+    markers = ctx.deps.state.result_markers
+    if not markers:
         return "No active search results. Run search_apartments first."
 
-    return rs.page(page, page_size)
+    rs = LlmResultSetView(ctx.deps.state)
+    total = rs.total
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page < 1 or page > total_pages:
+        return (
+            f"Page {page} is out of range. There are {total} results "
+            f"({total_pages} pages of {page_size})."
+        )
+
+    start = (page - 1) * page_size
+    if start >= len(markers):
+        # Beyond the markers we materialised (only possible past MARKER_CAP).
+        return (
+            f"Page {page} is beyond the {len(markers)} listings loaded on the "
+            "map. Refine your search to narrow it down."
+        )
+    end = min(start + page_size, len(markers))
+
+    preview = ctx.deps.state.preview_cards
+    if end <= len(preview):
+        cards = preview[start:end]
+    else:
+        ids = [m.id for m in markers[start:end]]
+        cards = await ctx.deps.listing_service.get_cards(ids)
+
+    return rs.page(
+        cards, start=start, page=page, total_pages=total_pages, page_size=page_size
+    )
 
 
-def _return_with_state(*, return_value: str, ui_state) -> ToolReturn:
+def _return_with_state(*, return_value: str, session_state) -> ToolReturn:
     """Emit a STATE_SNAPSHOT alongside the tool's normal return value.
 
     Pydantic AI's AG-UI adapter yields any `BaseEvent` placed in
     `ToolReturn.metadata`. Snapshotting the full state on every mutating
-    tool call is simpler than diffing — the payload is small (≤ a few KB)
-    and CopilotKit applies snapshots idempotently.
+    tool call is simpler than diffing — the payload is bounded
+    (≤ 260 KB for 500 listings + active detail) and CopilotKit applies
+    snapshots idempotently.
     """
     return ToolReturn(
         return_value=return_value,
         metadata=[
             StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
-                snapshot=ui_state.model_dump(),
+                snapshot=session_state.model_dump(),
             ),
         ],
     )

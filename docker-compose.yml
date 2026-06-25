@@ -108,7 +108,9 @@ services:
 
   # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
   # Opt-in via `--profile geo-context`; does not run on `docker compose up`.
-  # See services/ingestion/src/geo_context/README.md for the runbook.
+  # Chains gold re-enrichment at the end (if any WFS/GTFS family succeeded)
+  # so the agent's search results reflect the refreshed truth without a
+  # manual `gold.run`. See services/ingestion/src/geo_context/README.md.
   geo-context:
     build: services/ingestion/
     profiles:
@@ -119,6 +121,36 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     command: ["uv", "run", "--no-dev", "python", "-m", "geo_context.run"]
+
+  # Gold layer enrichment — populates listings_geo_context from existing
+  # silver listings + silver geo-context. Standalone-runnable when you
+  # need to re-enrich without scraping or refreshing geo-context.
+  # Auto-chained at the end of `silver.run` and `geo_context.run`.
+  gold:
+    build: services/ingestion/
+    profiles:
+      - gold
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ["uv", "run", "--no-dev", "python", "-m", "gold.run"]
+
+  # Platinum layer — embedding backfill for listings_embeddings. Requires
+  # JINA_API_KEY to call Jina v3. Auto-chained at the end of `silver.run`
+  # (best-effort; skipped silently if no key).
+  platinum:
+    build: services/ingestion/
+    profiles:
+      - platinum
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - JINA_API_KEY=${JINA_API_KEY:-}
+    command: ["uv", "run", "--no-dev", "python", "-m", "platinum.run"]
 
 volumes:
   postgres_data:

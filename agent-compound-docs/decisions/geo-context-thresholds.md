@@ -2,7 +2,17 @@
 
 Decided 2026-06-14 while designing the integration of the geo-context silver tables into the search module and agent tooling.
 
-This doc is the **audit trail for every numeric constant and label choice** used to interpret geo-context data — "what does *near* mean", "what counts as a *quiet* street", "is *Status hoch* good or bad". Every constant in `services/backend/src/flat_chat/search/distances.py`, `…/buckets.py`, and `…/transit.py` traces to a row in this doc. Every label in the MSS English re-labelling lives here.
+> **June 2026 update.** Files moved during the search-perf refactor:
+> - `search/distances.py` + `search/buckets.py` + `search/transit.py` →
+>   merged into [`listings/labels.py`](../../services/backend/src/flat_chat/listings/labels.py)
+>   + [`listings/thresholds.py`](../../services/backend/src/flat_chat/listings/thresholds.py).
+> - MSS German→English maps moved out of the backend entirely. They now
+>   live in silver-transform code at
+>   [`services/ingestion/src/geo_context/transform/wfs.py`](../../services/ingestion/src/geo_context/transform/wfs.py).
+>   The data layer (silver onwards) is canonically English.
+> Values unchanged — only file locations moved.
+
+This doc is the **audit trail for every numeric constant and label choice** used to interpret geo-context data — "what does *near* mean", "what counts as a *quiet* street", "is *Status hoch* good or bad". Every constant in `listings/thresholds.py` + `listings/labels.py` traces to a row in this doc. The MSS German→English mapping table also lives here (now applied at silver-ingest time, not in the backend).
 
 **Rule**: constants without a row in this doc are technical debt. Doc-first, code-second.
 

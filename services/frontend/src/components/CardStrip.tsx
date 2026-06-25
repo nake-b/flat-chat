@@ -1,13 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { useUiState } from "../hooks/useUiState";
+import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
-import { EMPTY_UI_STATE, type UiApartment } from "../state/UiState";
+import { useCardCache } from "../state/cardCache";
+import { decodeMarkers, type ListingCard, type MarkerPoint } from "../state/SessionState";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
 const MIN_CARD_W = 220;
 const MAX_CARD_W = 320;
+
+// Lazy-hydration tuning. The result set can be up to 5000 markers; only the
+// top-10 arrive hot as `preview_cards`. The rest are fetched in batches via
+// GET /api/listings?ids=…&view=card as they scroll into view.
+const HYDRATION_BATCH = 100; // backend caps ids at 100/request (422 over)
+const HYDRATION_DEBOUNCE_MS = 150;
+const BUFFER_CARDS = 6; // overscan on each side of the visible window
 
 function pickCardCount(containerWidth: number): number {
   if (containerWidth <= 0) return 2;
@@ -24,33 +32,164 @@ function pickCardCount(containerWidth: number): number {
 // that slides in from the left on hover. Clicking a card sets active_id,
 // which the CardsPane reacts to by swapping in <CardDetail/> and triggers
 // the parent layout to grow this pane to 50% (Option X).
+//
+// Tiered rendering: the ordered list is driven by `result_markers` (EVERY
+// match, ≤5000). The top-10 paint instantly from `preview_cards`; the rest
+// are hydrated lazily from the card cache as they scroll into view. At up to
+// 5000 markers we cannot mount 5000 DOM cards, so we manually window — only
+// the visible range (+ buffer) mounts, inside a spacer of the full width.
+//
+// Windowing approach: MANUAL (scrollLeft-driven), not react-window. See the
+// implementation report — react-window v2's API is vertical-List-first and
+// its horizontal story is awkward, and its bundled types clash with the
+// stale `@types/react-window@1` on npm. A scrollLeft window is ~30 lines,
+// has zero new deps, and is trivially type-safe.
 export function CardStrip() {
-  const { state, setState } = useUiState();
+  const { state, activate } = useSessionState();
   const setHover = useHover((s) => s.setHover);
   const hoverId = useHover((s) => s.hoverId);
-  const apartments = state?.results ?? [];
 
-  // Measure the scroll container and compute the per-card width so that an
-  // integer number of cards fit edge-to-edge with no cut-off. The effect must
-  // re-run when results arrive — the scroller is conditionally rendered (we
-  // show an empty state when there are 0 apartments), so on first mount the
-  // scroller element doesn't exist yet and `scrollerRef.current` is null.
+  const cardCache = useCardCache((s) => s.cards);
+  const mergeCards = useCardCache((s) => s.merge);
+  const clearCache = useCardCache((s) => s.clear);
+
+  // The ordered result set — one entry per match. Card data is resolved from
+  // the cache by id; missing ids render a skeleton and trigger hydration.
+  const markers = useMemo(
+    () => decodeMarkers(state?.result_markers),
+    [state?.result_markers],
+  );
+  const total = markers.length;
+  const headerCount = state?.total_results ?? total;
+  const previewCards = state?.preview_cards;
+
+  // A cheap, stable fingerprint of the result set: length + first/last id. A
+  // new search (different filters) yields a different list, hence a different
+  // signature; the same result set echoed across turns keeps the same one even
+  // though `state.result_markers` is a fresh reference each snapshot. Drives
+  // the cache-reset effect below without clearing on every turn.
+  const markersSig = useMemo(
+    () =>
+      `${markers.length}:${markers[0]?.id ?? ""}:${markers[markers.length - 1]?.id ?? ""}`,
+    [markers],
+  );
+
+  // --- Measure scroller → per-card width (integer N fits edge-to-edge) ----
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [cardCount, setCardCount] = useState(2);
-  const hasApartments = apartments.length > 0;
+  const [viewport, setViewport] = useState({ scrollLeft: 0, clientWidth: 0 });
+  const hasMarkers = total > 0;
 
   useEffect(() => {
-    if (!hasApartments) return;
+    if (!hasMarkers) return;
     const el = scrollerRef.current;
     if (!el) return;
-    const update = () => setCardCount(pickCardCount(el.clientWidth));
+    const update = () => {
+      setCardCount(pickCardCount(el.clientWidth));
+      setViewport({ scrollLeft: el.scrollLeft, clientWidth: el.clientWidth });
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [hasApartments]);
+  }, [hasMarkers]);
 
-  if (apartments.length === 0) {
+  // --- Windowing: derive the visible index range from scrollLeft ----------
+  const cardWidth =
+    viewport.clientWidth > 0 ? viewport.clientWidth / cardCount : 0;
+  const { startIndex, endIndex } = useMemo(() => {
+    if (cardWidth <= 0 || total === 0) {
+      return { startIndex: 0, endIndex: Math.min(total, 12) };
+    }
+    const first = Math.floor(viewport.scrollLeft / cardWidth);
+    const visible = Math.ceil(viewport.clientWidth / cardWidth);
+    const start = Math.max(0, first - BUFFER_CARDS);
+    const end = Math.min(total, first + visible + BUFFER_CARDS);
+    return { startIndex: start, endIndex: end };
+  }, [viewport.scrollLeft, viewport.clientWidth, cardWidth, total]);
+
+  const onScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setViewport({ scrollLeft: el.scrollLeft, clientWidth: el.clientWidth });
+  }, []);
+
+  // --- Lazy hydration: fetch cards for visible ids not yet in the cache ----
+  // `inFlight` dedupes concurrent requests; `notFound` is a tombstone set for
+  // ids the backend has no listing for (deleted/expired between search and
+  // scroll) — without it those ids would re-fetch forever, since they never
+  // land in the cache.
+  const inFlight = useRef<Set<string>>(new Set());
+  const notFound = useRef<Set<string>>(new Set());
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // On a NEW result set (signature change): drop the stale hydrated-card cache
+  // and tombstones, reset the scroll window to the top (the new — possibly
+  // shorter — list must not inherit a scrollLeft past its end), then seed the
+  // cache from preview_cards so the first paint needs no fetch. Guarded by the
+  // signature so it does NOT run on every turn that merely echoes the same
+  // result set back.
+  const prevSig = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevSig.current === markersSig) return;
+    prevSig.current = markersSig;
+    clearCache();
+    notFound.current.clear();
+    inFlight.current.clear();
+    const el = scrollerRef.current;
+    if (el) el.scrollLeft = 0;
+    setViewport((v) => ({ ...v, scrollLeft: 0 }));
+    if (previewCards && previewCards.length > 0) mergeCards(previewCards);
+  }, [markersSig, previewCards, clearCache, mergeCards]);
+
+  useEffect(() => {
+    // Read the live cache (this effect is intentionally NOT subscribed to the
+    // cache — re-running it on every merge would let a merge's effect-cleanup
+    // cancel a debounced fetch scheduled for a different window).
+    const cache = useCardCache.getState().cards;
+    // Collect visible-window ids that are neither cached, in flight, nor known-
+    // absent.
+    const missing: string[] = [];
+    for (let i = startIndex; i < endIndex; i++) {
+      const id = markers[i]?.id;
+      if (!id) continue;
+      if (cache.has(id) || inFlight.current.has(id) || notFound.current.has(id))
+        continue;
+      missing.push(id);
+    }
+    if (missing.length === 0) return;
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      // Re-dedupe against the live cache at fire time (it may have filled
+      // during the debounce).
+      const live = useCardCache.getState().cards;
+      const toFetch = missing.filter(
+        (id) =>
+          !live.has(id) && !inFlight.current.has(id) && !notFound.current.has(id),
+      );
+      if (toFetch.length === 0) return;
+      for (const id of toFetch) inFlight.current.add(id);
+
+      // Chunk to the backend's 100-id cap.
+      for (let i = 0; i < toFetch.length; i += HYDRATION_BATCH) {
+        const batch = toFetch.slice(i, i + HYDRATION_BATCH);
+        void hydrateBatch(batch, mergeCards, inFlight.current, notFound.current);
+      }
+    }, HYDRATION_DEBOUNCE_MS);
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [startIndex, endIndex, markers, mergeCards]);
+
+  // Keep the window honest on first paint once the scroller exists.
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (el) setViewport({ scrollLeft: el.scrollLeft, clientWidth: el.clientWidth });
+  }, [hasMarkers]);
+
+  if (total === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
         <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
@@ -63,11 +202,15 @@ export function CardStrip() {
     );
   }
 
+  // Spacer width = full strip; visible cards are absolutely offset within it
+  // so the scrollbar reflects all `total` cards while only the window mounts.
+  const visibleMarkers = markers.slice(startIndex, endIndex);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-baseline justify-between border-b border-paper-rule px-6 py-2.5">
         <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-          {apartments.length} {apartments.length === 1 ? "result" : "results"}{" "}
+          {headerCount} {headerCount === 1 ? "result" : "results"}{" "}
           <span className="text-ink-ghost">· scroll →</span>
         </span>
         <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
@@ -76,22 +219,90 @@ export function CardStrip() {
       </div>
       <div
         ref={scrollerRef}
-        className="flex flex-1 snap-x snap-mandatory gap-0 overflow-x-auto overflow-y-hidden"
-        style={{ ["--card-count" as string]: cardCount }}
+        onScroll={onScroll}
+        className="relative flex-1 overflow-x-auto overflow-y-hidden"
       >
-        {apartments.map((a, idx) => (
-          <ApartmentCard
-            key={a.id}
-            apt={a}
-            index={idx + 1}
-            hovered={hoverId === a.id}
-            onHoverChange={(hover) => setHover(hover ? a.id : null)}
-            onClick={() => setState((prev) => ({ ...(prev ?? EMPTY_UI_STATE), active_id: a.id }))}
-          />
-        ))}
+        {/* Spacer sets the true scroll width for all `total` cards. */}
+        <div
+          className="relative h-full"
+          style={{ width: cardWidth > 0 ? `${cardWidth * total}px` : "100%" }}
+        >
+          {visibleMarkers.map((m, i) => {
+            const idx = startIndex + i;
+            const card = cardCache.get(m.id);
+            const left = cardWidth > 0 ? cardWidth * idx : 0;
+            return (
+              <div
+                key={m.id}
+                className="absolute top-0 h-full"
+                style={{
+                  left: `${left}px`,
+                  width: cardWidth > 0 ? `${cardWidth}px` : undefined,
+                }}
+              >
+                {card ? (
+                  <ApartmentCard
+                    apt={card}
+                    index={idx + 1}
+                    hovered={hoverId === m.id}
+                    onHoverChange={(hover) => setHover(hover ? m.id : null)}
+                    onClick={() => {
+                      void activate(m.id);
+                    }}
+                  />
+                ) : (
+                  <SkeletonCard
+                    marker={m}
+                    index={idx + 1}
+                    hovered={hoverId === m.id}
+                    onHoverChange={(hover) => setHover(hover ? m.id : null)}
+                    onClick={() => {
+                      void activate(m.id);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+// Fetch a batch of tier-2 cards and merge them into the cache. Always clears
+// the requested ids from the in-flight set on completion (success or error)
+// so a transient failure doesn't permanently block re-fetch. Uses a relative
+// URL like useSessionState.activate — works via Vite proxy and Nginx alike.
+//
+// On a SUCCESSFUL response, any requested id the backend didn't return (no
+// matching listing — deleted/expired) is tombstoned in `notFound` so it isn't
+// re-requested on the next window pass. A network/HTTP error is left out of
+// `notFound` — it's transient, so the id stays eligible for retry.
+async function hydrateBatch(
+  ids: string[],
+  merge: (cards: ListingCard[]) => void,
+  inFlight: Set<string>,
+  notFound: Set<string>,
+): Promise<void> {
+  try {
+    const params = ids
+      .map((id) => `ids=${encodeURIComponent(id)}`)
+      .join("&");
+    const res = await fetch(`/api/listings?${params}&view=card`);
+    if (!res.ok) {
+      console.warn("card hydration failed", res.status, ids.length);
+      return;
+    }
+    const cards: ListingCard[] = await res.json();
+    merge(cards);
+    const returned = new Set(cards.map((c) => c.id));
+    for (const id of ids) if (!returned.has(id)) notFound.add(id);
+  } catch (err) {
+    console.warn("card hydration errored", err);
+  } finally {
+    for (const id of ids) inFlight.delete(id);
+  }
 }
 
 function ApartmentCard({
@@ -101,7 +312,7 @@ function ApartmentCard({
   onClick,
   onHoverChange,
 }: {
-  apt: UiApartment;
+  apt: ListingCard;
   index: number;
   hovered: boolean;
   onClick: () => void;
@@ -113,8 +324,7 @@ function ApartmentCard({
     <button
       type="button"
       data-hovered={hovered ? "true" : "false"}
-      className="fc-card group h-full shrink-0 snap-start border-r border-paper-rule bg-white px-5 pt-4 pb-6 text-left transition-colors duration-200 ease-snap hover:bg-paper-dim/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red"
-      style={{ flex: "0 0 calc(100% / var(--card-count, 2))" }}
+      className="fc-card group h-full w-full border-r border-paper-rule bg-white px-5 pt-4 pb-6 text-left transition-colors duration-200 ease-snap hover:bg-paper-dim/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red"
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
       onClick={onClick}
@@ -183,13 +393,70 @@ function ApartmentCard({
   );
 }
 
+// Placeholder shown for a marker whose tier-2 card hasn't hydrated yet.
+// Still clickable — clicking activates the listing (the detail panel works
+// from tier-3 alone) and the price from the marker gives an instant anchor.
+// Carries hover wiring so map ↔ strip highlight still works pre-hydration.
+function SkeletonCard({
+  marker,
+  index,
+  hovered,
+  onClick,
+  onHoverChange,
+}: {
+  marker: MarkerPoint;
+  index: number;
+  hovered: boolean;
+  onClick: () => void;
+  onHoverChange: (hover: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-hovered={hovered ? "true" : "false"}
+      className="fc-card group h-full w-full border-r border-paper-rule bg-white px-5 pt-4 pb-6 text-left transition-colors duration-200 ease-snap hover:bg-paper-dim/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red"
+      onMouseEnter={() => onHoverChange(true)}
+      onMouseLeave={() => onHoverChange(false)}
+      onClick={onClick}
+    >
+      <div className="flex h-full flex-col justify-between gap-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] tabular-nums uppercase tracking-widest text-ink-ghost">
+              {String(index).padStart(2, "0")}
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+              Berlin
+            </span>
+          </div>
+          <div className="h-3.5 w-3/4 animate-pulse bg-paper-rule" />
+          <div className="h-3 w-1/2 animate-pulse bg-paper-rule" />
+        </div>
+        <div className="flex items-end justify-between border-t border-paper-rule pt-1.5">
+          <div className="flex flex-col">
+            <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
+              warm
+            </span>
+            <span className="font-mono text-lg font-medium tabular-nums tracking-tight text-ink">
+              {marker.price_warm_eur != null
+                ? `€${Math.round(marker.price_warm_eur).toLocaleString("de-DE")}`
+                : "€—"}
+            </span>
+          </div>
+          <div className="h-3 w-10 animate-pulse bg-paper-rule" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
 // At most four chips on a compact card — readability budget is tight at
 // ~220px. Priority order: WBS (binary requirement, red badge), then
 // geo-context chips (transit / park / noise), then high-signal amenities.
 // Render `true` only; `false`/`null` stay hidden so we never imply absence
 // of data. Geo chips use emoji prefixes to set them visually apart from
 // uppercase mono amenity chips.
-function CardChips({ apt }: { apt: UiApartment }) {
+function CardChips({ apt }: { apt: ListingCard }) {
   const chips: { key: string; label: string; wbs?: boolean }[] = [];
 
   // WBS — binary requirement, always shown when present.
