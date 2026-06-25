@@ -189,3 +189,59 @@ def test_list_listings_over_cap_is_rejected(async_db_url):
 
     response = _drive(async_db_url, [], body)
     assert response.status_code == 422
+
+
+def test_list_listings_exactly_at_cap_is_accepted(async_db_url):
+    """100 ids is the boundary (only 101+ is rejected). One real listing
+    among 99 unknowns → 200 with just the real card."""
+    real = _listing_row(title="Real", warm_rent_eur=1234.0)
+    seeds = [(real, _gold_row(real["id"]))]
+    params = [("ids", str(real["id"]))] + [
+        ("ids", str(uuid.uuid4())) for _ in range(99)
+    ]
+    params.append(("view", "card"))
+
+    async def body(client):
+        return await client.get("/api/listings", params=params)
+
+    response = _drive(async_db_url, seeds, body)
+    assert response.status_code == 200
+    payload = response.json()
+    assert [c["id"] for c in payload] == [str(real["id"])]
+
+
+def test_list_listings_non_uuid_id_is_dropped_not_rejected(async_db_url):
+    """A malformed id mixed into the batch is silently dropped (not a 422):
+    the route returns 200 with only the cards for the valid ids."""
+    real = _listing_row(title="Real", warm_rent_eur=999.0)
+    seeds = [(real, _gold_row(real["id"]))]
+
+    async def body(client):
+        return await client.get(
+            "/api/listings",
+            params=[("ids", "not-a-uuid"), ("ids", str(real["id"])), ("view", "card")],
+        )
+
+    response = _drive(async_db_url, seeds, body)
+    assert response.status_code == 200
+    payload = response.json()
+    assert [c["id"] for c in payload] == [str(real["id"])]
+
+
+def test_list_listings_unknown_uuid_is_omitted(async_db_url):
+    """A valid-but-unknown UUID in the batch is omitted from the result
+    (shorter list), not a 404."""
+    real = _listing_row(title="Real", warm_rent_eur=999.0)
+    seeds = [(real, _gold_row(real["id"]))]
+    unknown = uuid.uuid4()
+
+    async def body(client):
+        return await client.get(
+            "/api/listings",
+            params=[("ids", str(unknown)), ("ids", str(real["id"])), ("view", "card")],
+        )
+
+    response = _drive(async_db_url, seeds, body)
+    assert response.status_code == 200
+    payload = response.json()
+    assert [c["id"] for c in payload] == [str(real["id"])]

@@ -13,6 +13,9 @@ No DB, no LLM.
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import Marker
 
@@ -87,3 +90,48 @@ def test_empty_markers_round_trip():
     state = SessionState()
     restored = SessionState.model_validate(state.model_dump())
     assert restored.result_markers == []
+
+
+def test_validator_raises_on_mismatched_column_lengths():
+    # A corrupt/partial columnar payload must RAISE rather than silently
+    # truncate to the shortest column (which would drop or misalign markers).
+    # `_extract_incoming_state` catches this and keeps the server state.
+    envelope = {
+        "result_markers": {
+            "ids": ["a", "b", "c"],
+            "lats": [52.5, 52.6],  # short by one
+            "lngs": [13.4, 13.5, 13.6],
+            "prices": [1, 2, 3],
+        }
+    }
+    with pytest.raises(ValidationError):
+        SessionState.model_validate(envelope)
+
+
+def test_validator_raises_on_short_prices_column():
+    # `prices` may be ABSENT (defaults to all-None), but a PRESENT-but-short
+    # prices column is a corrupt payload and must raise.
+    envelope = {
+        "result_markers": {
+            "ids": ["a", "b"],
+            "lats": [52.5, 52.6],
+            "lngs": [13.4, 13.5],
+            "prices": [1200],  # present but short
+        }
+    }
+    with pytest.raises(ValidationError):
+        SessionState.model_validate(envelope)
+
+
+def test_validator_allows_absent_prices_column():
+    # Old/empty envelopes legitimately omit `prices` — defaults to all-None.
+    envelope = {
+        "result_markers": {
+            "ids": ["a", "b"],
+            "lats": [52.5, 52.6],
+            "lngs": [13.4, 13.5],
+        }
+    }
+    state = SessionState.model_validate(envelope)
+    assert [m.id for m in state.result_markers] == ["a", "b"]
+    assert all(m.price_warm_eur is None for m in state.result_markers)

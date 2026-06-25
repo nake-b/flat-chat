@@ -125,7 +125,20 @@ all matching markers (hard-capped server-side at `MARKER_CAP`=5000), the
 top `PREVIEW_N`=10 tier-2 cards, and the count. There is no per-search
 `limit` arg anymore. The shared tier-2 projection lives in
 `listings/projection.py` and is reused by both this preview and
-`ListingService.get_cards(ids)`. All geo-context filters are B-tree
+`ListingService.get_cards(ids)`.
+
+**Deterministic order — the marker/preview prefix invariant.** Markers and
+preview are two separate executions (LIMIT `MARKER_CAP` vs `PREVIEW_N`) over
+the SAME filter + `ORDER BY`, and every `ORDER BY` ends with `Listing.id` as a
+unique tie-break. Without it, Postgres may order tied rows (equal price/area,
+batch-shared `ingested_at`, or NULL cosine distance) differently between the
+two queries, breaking the rule that the preview is a true PREFIX of the markers
+— which is what makes the LLM's 1-based indices point at the card the user
+sees. For `sort_by=relevance`, un-embedded rows (NULL distance — the common
+state) sort `nulls_last` and degrade to `ingested_at DESC, id` (recency), not
+an arbitrary order.
+
+All geo-context filters are B-tree
 predicates on gold's denormalised columns — no LATERAL joins, no
 EXISTS-with-ST_DWithin, no per-row spatial work. The only spatial
 predicate that survives is `ST_DWithin` on `listings.location` for

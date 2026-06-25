@@ -89,10 +89,15 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
   // `open_listing` tool via state delta. Either way it lives in SessionState
   // as `active_listing_detail`. We only render it for the *currently active*
   // listing so stale data can't leak across selections.
+  // Gate on the detail blob's OWN id matching active_id (not just `apt`): when
+  // a new active_id arrives before its detail delta is applied, the previous
+  // listing's `active_listing_detail` is still in state — keying on `apt`
+  // alone would render that stale tier-3 data for a frame. `detail.id ===
+  // activeId` is the only safe condition for both the card-click and the
+  // agent (`apt == null`) paths.
+  const candidateDetail = state?.active_listing_detail ?? null;
   const detail: ListingDetail | null =
-    activeId != null && (apt == null || activeId === apt.id)
-      ? state?.active_listing_detail ?? null
-      : null;
+    activeId != null && candidateDetail?.id === activeId ? candidateDetail : null;
   // Back-compat alias for the existing rendering code below — `ctx` was the
   // old name; ListingDetail is a superset of what ListingContext exposed.
   const ctx = detail;
@@ -107,9 +112,13 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
     void activate(null);
   };
 
+  // Re-focus the back button when the active listing changes, not just on
+  // mount — CardsPane keeps this component mounted and swaps active_id when
+  // navigating card→card, so a `[]` dep would leave focus (and the
+  // Escape-to-close handler) on the previously focused element.
   useEffect(() => {
     backButtonRef.current?.focus();
-  }, []);
+  }, [activeId]);
 
   // Defensive: active_id set but neither tier-2 card nor tier-3 detail has
   // arrived yet (e.g. agent set active_id, HTTP fetch in flight). Render a

@@ -120,6 +120,16 @@ Idempotent — re-running upserts the same embedding under the same
 `model_name`; `--reembed` regenerates everything (useful for swapping
 models).
 
+The Jina call retries transient failures (429 / 5xx / transport errors) via
+`tenacity` with exponential backoff, honoring `Retry-After`; a non-retryable
+4xx (e.g. 401 bad key) surfaces immediately. `embed_pending` **commits per
+batch** (the UPSERTs are idempotent), so a mid-run failure keeps completed
+batches and the next run resumes — hence `platinum/run.py` uses a commit-as-
+you-go `engine.connect()`, not a begin-once `engine.begin()`. Response items
+are re-sorted by Jina's per-item `index` before assignment so a reordered
+response can't misassign vectors. Covered by `tests/test_embed.py` (mocked
+transport — no network/key needed).
+
 To swap models: change `MODEL_NAME` in `platinum/embed.py`, run
 `platinum.run --reembed`. Migration 0005 already declared
 `listings_embeddings.model_name` so multiple models can coexist if we

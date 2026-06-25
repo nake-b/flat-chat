@@ -255,6 +255,11 @@ class ListingService:
         `CARD_COLUMNS` projection. SQL `id = ANY(...)` does NOT preserve input
         order, so we reorder in Python by the caller's `ids`; unknown ids are
         simply absent from the result. Malformed (non-UUID) ids are dropped.
+
+        This method is UNBOUNDED — the caller owns batching. The HTTP route
+        (`GET /api/listings?ids=&view=card`) enforces a ≤100-id cap; the agent
+        tool path passes only the small visible/preview window. A future
+        bookmarks reader that could pass a large list must chunk it itself.
         """
         if not ids:
             return []
@@ -263,6 +268,7 @@ class ListingService:
             try:
                 uids.append(uuid.UUID(str(raw)))
             except ValueError:
+                logger.debug("get_cards: skipping non-UUID id %r", raw)
                 continue
         if not uids:
             return []

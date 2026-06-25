@@ -51,6 +51,7 @@ export function CardStrip() {
 
   const cardCache = useCardCache((s) => s.cards);
   const mergeCards = useCardCache((s) => s.merge);
+  const clearCache = useCardCache((s) => s.clear);
 
   // The ordered result set — one entry per match. Card data is resolved from
   // the cache by id; missing ids render a skeleton and trigger hydration.
@@ -60,12 +61,18 @@ export function CardStrip() {
   );
   const total = markers.length;
   const headerCount = state?.total_results ?? total;
-
-  // Seed the cache from preview_cards so the top-10 paint without a fetch.
   const previewCards = state?.preview_cards;
-  useEffect(() => {
-    if (previewCards && previewCards.length > 0) mergeCards(previewCards);
-  }, [previewCards, mergeCards]);
+
+  // A cheap, stable fingerprint of the result set: length + first/last id. A
+  // new search (different filters) yields a different list, hence a different
+  // signature; the same result set echoed across turns keeps the same one even
+  // though `state.result_markers` is a fresh reference each snapshot. Drives
+  // the cache-reset effect below without clearing on every turn.
+  const markersSig = useMemo(
+    () =>
+      `${markers.length}:${markers[0]?.id ?? ""}:${markers[markers.length - 1]?.id ?? ""}`,
+    [markers],
+  );
 
   // --- Measure scroller → per-card width (integer N fits edge-to-edge) ----
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -108,26 +115,58 @@ export function CardStrip() {
   }, []);
 
   // --- Lazy hydration: fetch cards for visible ids not yet in the cache ----
-  // Track in-flight ids so the same id is never requested twice concurrently.
+  // `inFlight` dedupes concurrent requests; `notFound` is a tombstone set for
+  // ids the backend has no listing for (deleted/expired between search and
+  // scroll) — without it those ids would re-fetch forever, since they never
+  // land in the cache.
   const inFlight = useRef<Set<string>>(new Set());
+  const notFound = useRef<Set<string>>(new Set());
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // On a NEW result set (signature change): drop the stale hydrated-card cache
+  // and tombstones, reset the scroll window to the top (the new — possibly
+  // shorter — list must not inherit a scrollLeft past its end), then seed the
+  // cache from preview_cards so the first paint needs no fetch. Guarded by the
+  // signature so it does NOT run on every turn that merely echoes the same
+  // result set back.
+  const prevSig = useRef<string | null>(null);
   useEffect(() => {
-    // Collect visible-window ids that are neither cached nor in flight.
+    if (prevSig.current === markersSig) return;
+    prevSig.current = markersSig;
+    clearCache();
+    notFound.current.clear();
+    inFlight.current.clear();
+    const el = scrollerRef.current;
+    if (el) el.scrollLeft = 0;
+    setViewport((v) => ({ ...v, scrollLeft: 0 }));
+    if (previewCards && previewCards.length > 0) mergeCards(previewCards);
+  }, [markersSig, previewCards, clearCache, mergeCards]);
+
+  useEffect(() => {
+    // Read the live cache (this effect is intentionally NOT subscribed to the
+    // cache — re-running it on every merge would let a merge's effect-cleanup
+    // cancel a debounced fetch scheduled for a different window).
+    const cache = useCardCache.getState().cards;
+    // Collect visible-window ids that are neither cached, in flight, nor known-
+    // absent.
     const missing: string[] = [];
     for (let i = startIndex; i < endIndex; i++) {
       const id = markers[i]?.id;
       if (!id) continue;
-      if (cardCache.has(id) || inFlight.current.has(id)) continue;
+      if (cache.has(id) || inFlight.current.has(id) || notFound.current.has(id))
+        continue;
       missing.push(id);
     }
     if (missing.length === 0) return;
 
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
-      // Re-dedupe at fire time (cache may have filled during the debounce).
+      // Re-dedupe against the live cache at fire time (it may have filled
+      // during the debounce).
+      const live = useCardCache.getState().cards;
       const toFetch = missing.filter(
-        (id) => !cardCache.has(id) && !inFlight.current.has(id),
+        (id) =>
+          !live.has(id) && !inFlight.current.has(id) && !notFound.current.has(id),
       );
       if (toFetch.length === 0) return;
       for (const id of toFetch) inFlight.current.add(id);
@@ -135,14 +174,14 @@ export function CardStrip() {
       // Chunk to the backend's 100-id cap.
       for (let i = 0; i < toFetch.length; i += HYDRATION_BATCH) {
         const batch = toFetch.slice(i, i + HYDRATION_BATCH);
-        void hydrateBatch(batch, mergeCards, inFlight.current);
+        void hydrateBatch(batch, mergeCards, inFlight.current, notFound.current);
       }
     }, HYDRATION_DEBOUNCE_MS);
 
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [startIndex, endIndex, markers, cardCache, mergeCards]);
+  }, [startIndex, endIndex, markers, mergeCards]);
 
   // Keep the window honest on first paint once the scroller exists.
   useLayoutEffect(() => {
@@ -235,10 +274,16 @@ export function CardStrip() {
 // the requested ids from the in-flight set on completion (success or error)
 // so a transient failure doesn't permanently block re-fetch. Uses a relative
 // URL like useSessionState.activate — works via Vite proxy and Nginx alike.
+//
+// On a SUCCESSFUL response, any requested id the backend didn't return (no
+// matching listing — deleted/expired) is tombstoned in `notFound` so it isn't
+// re-requested on the next window pass. A network/HTTP error is left out of
+// `notFound` — it's transient, so the id stays eligible for retry.
 async function hydrateBatch(
   ids: string[],
   merge: (cards: ListingCard[]) => void,
   inFlight: Set<string>,
+  notFound: Set<string>,
 ): Promise<void> {
   try {
     const params = ids
@@ -251,6 +296,8 @@ async function hydrateBatch(
     }
     const cards: ListingCard[] = await res.json();
     merge(cards);
+    const returned = new Set(cards.map((c) => c.id));
+    for (const id of ids) if (!returned.has(id)) notFound.add(id);
   } catch (err) {
     console.warn("card hydration errored", err);
   } finally {

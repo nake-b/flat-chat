@@ -119,7 +119,11 @@ class ChatService:
         # The envelope wins for fields the frontend owns (active_id,
         # active_listing_detail); the session wins for fields the agent
         # owns (results, search_params, total_results).
-        deps_state = session.state.model_copy()
+        # Deep copy: tools currently REASSIGN the tier lists (result_markers /
+        # preview_cards) so a shallow copy would be safe today, but a future
+        # tool that mutates a list in place (e.g. `.append`) would corrupt the
+        # persisted session state mid-run before `on_complete` reassigns it.
+        deps_state = session.state.model_copy(deep=True)
         incoming_state = _extract_incoming_state(adapter)
         if incoming_state is not None:
             if incoming_state.active_id is not None:

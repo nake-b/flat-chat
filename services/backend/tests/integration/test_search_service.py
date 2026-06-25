@@ -26,6 +26,8 @@ Run:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from flat_chat.listings.models import (
     ListingNearbyHospital,
     ListingNearbyPark,
@@ -40,7 +42,7 @@ from flat_chat.search.geo_filters import (
     SchoolFilter,
     TransitFilter,
 )
-from flat_chat.search.schemas import SearchParams
+from flat_chat.search.schemas import PREVIEW_N, SearchParams
 
 from ..conftest import DB_REQUIRED
 from ..fixtures.factories import (
@@ -612,6 +614,48 @@ def test_search_returns_markers_preview_and_total(async_db_url):
     assert len(marker_ids) == 3
     # Preview is a true prefix of the marker order (shared filter/sort).
     assert preview_ids == marker_ids[: len(preview_ids)]
+
+
+def test_preview_is_prefix_of_markers_with_tied_price(async_db_url):
+    """Regression for the missing ORDER BY tie-break.
+
+    The marker query (LIMIT MARKER_CAP) and preview query (LIMIT PREVIEW_N)
+    are separate executions. With every row sharing the same `warm_rent_eur`,
+    a non-unique `ORDER BY warm_rent_eur` lets Postgres order the two queries'
+    tied rows differently, so `preview[k]` would not equal `marker[k]`. The
+    `Listing.id` tie-break makes both orders identical and deterministic.
+    Seed well past PREVIEW_N so the preview is a strict prefix.
+    """
+    listings = [_listing_row(warm_rent_eur=1200.0) for _ in range(PREVIEW_N + 5)]
+    seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
+
+    async def body(service):
+        markers, preview, _ = await service.search(SearchParams(sort_by="price"))
+        return [m.id for m in markers], [c.id for c in preview]
+
+    marker_ids, preview_ids = _drive(async_db_url, seeds, body)
+    assert len(marker_ids) == PREVIEW_N + 5
+    assert len(preview_ids) == PREVIEW_N
+    assert preview_ids == marker_ids[:PREVIEW_N]
+
+
+def test_preview_is_prefix_of_markers_with_tied_recency(async_db_url):
+    """Same prefix invariant for the recency sort with an identical
+    `ingested_at` across all rows — the `Listing.id` tie-break is what makes
+    `ORDER BY ingested_at DESC` deterministic between the two queries. This is
+    also the order the `relevance` sort degrades to for un-embedded rows.
+    """
+    stamp = datetime.now(tz=UTC)
+    listings = [_listing_row(ingested_at=stamp) for _ in range(PREVIEW_N + 5)]
+    seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
+
+    async def body(service):
+        markers, preview, _ = await service.search(SearchParams(sort_by="recent"))
+        return [m.id for m in markers], [c.id for c in preview]
+
+    marker_ids, preview_ids = _drive(async_db_url, seeds, body)
+    assert len(marker_ids) == PREVIEW_N + 5
+    assert preview_ids == marker_ids[:PREVIEW_N]
 
 
 def test_search_drops_null_coordinate_listings_from_markers(async_db_url):

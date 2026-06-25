@@ -35,8 +35,9 @@ class ChatSession:
     now, Postgres later) can swap without touching anything else.
 
     All conversation state — results, params, focus — lives in `state`.
-    LLM prose is composed on-demand from `state.results` and
-    `state.active_listing_detail` in `chat/llm_context.py`.
+    LLM prose is composed on-demand from `state.result_markers` /
+    `state.preview_cards` and `state.active_listing_detail` in
+    `chat/llm_context.py`.
     """
 
     id: str

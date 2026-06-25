@@ -93,7 +93,13 @@ mutators.
   windows the full marker list. First-paints from `state.preview_cards`
   (top-10), then lazy-hydrates the rest as they scroll into view via
   `GET /api/listings?ids=&view=card` into the `cardCache` zustand store.
-  Click → `activate(id)`.
+  Click → `activate(id)`. Hydration lifecycle: a new result set (detected
+  via a cheap `length:firstId:lastId` signature) clears `cardCache`, resets
+  the scroll window to the top, and re-seeds from `preview_cards`; the debounce
+  effect is NOT subscribed to the cache (it reads `useCardCache.getState()`)
+  so a cache write can't cancel an in-flight fetch; and ids the backend has no
+  listing for are recorded in a `notFound` tombstone ref so a deleted/expired
+  listing isn't re-requested every window pass.
 - **Card detail** (`CardDetail.tsx`) — when `state.active_id` is set,
   swaps in. Reads tier-3 detail from `state.active_listing_detail` (its
   `apt` tier-2 prop is now optional; the active card is resolved from

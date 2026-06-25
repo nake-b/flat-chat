@@ -24,8 +24,38 @@ from collections.abc import Iterable
 
 import httpx
 from sqlalchemy import Connection, text
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+
+
+# Transient statuses worth retrying: rate-limit + the 5xx family the gateway
+# emits under load. A 4xx like 401 (bad key) is NOT retryable and must surface
+# immediately.
+_RETRYABLE_STATUS = {429, 502, 503, 504}
+_MAX_ATTEMPTS = 5
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_STATUS
+    return False
+
+
+def _retry_wait(retry_state) -> float:
+    """Honor a numeric `Retry-After` header when present; else exponential
+    backoff with a 30 s ceiling."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, httpx.HTTPStatusError):
+        retry_after = exc.response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return float(retry_after)
+            except ValueError:
+                pass  # HTTP-date form — fall through to backoff
+    return wait_exponential(multiplier=1, max=30)(retry_state)
 
 
 # Locked in revision 0002 — the schema is `vector(1024)` so the model
@@ -75,15 +105,32 @@ class JinaClient:
             timeout=timeout,
         )
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """Call the embedding provider for a batch. Returns one vector per input."""
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        wait=_retry_wait,
+        stop=stop_after_attempt(_MAX_ATTEMPTS),
+        reraise=True,
+    )
+    def _post(self, texts: list[str]) -> dict:
+        """POST one batch and return the parsed payload. Retried on transient
+        429/5xx + transport errors (honoring Retry-After); a non-retryable 4xx
+        (e.g. 401 bad key) raises on the first attempt."""
         response = self._client.post(
             JINA_API_URL,
             json={"model": JINA_MODEL_ID, "input": texts},
         )
         response.raise_for_status()
-        payload = response.json()
-        vectors = [item["embedding"] for item in payload["data"]]
+        return response.json()
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Call the embedding provider for a batch. Returns one vector per input,
+        in the SAME order as `texts`."""
+        payload = self._post(texts)
+        # Jina returns a per-item `index`; never assume response order. Sorting
+        # by index guarantees vectors map back to the right input — a silent
+        # mis-assignment would be data corruption no exception could catch.
+        data = sorted(payload["data"], key=lambda item: item["index"])
+        vectors = [item["embedding"] for item in data]
         if any(len(v) != EMBED_DIM for v in vectors):
             raise RuntimeError(
                 f"Provider returned dim != {EMBED_DIM} — check schema match."
@@ -98,17 +145,6 @@ class JinaClient:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-
-def compute_embeddings(texts: list[str]) -> list[list[float]]:
-    """Embed a single batch via a short-lived `JinaClient`.
-
-    Back-compat / convenience wrapper for one-off calls. For multi-batch
-    runs prefer constructing one `JinaClient` and reusing it (see
-    `embed_pending`) so the connection is shared across batches.
-    """
-    with JinaClient() as client:
-        return client.embed(texts)
 
 
 def _iter_pending(
@@ -154,6 +190,12 @@ def embed_pending(
     """UPSERT embeddings for listings that don't have one (or all if reembed).
 
     Returns (embedded, skipped). `skipped` counts listings with no text.
+
+    COMMITS PER BATCH: the UPSERTs are idempotent, so committing after each
+    batch means a transient failure mid-run preserves completed batches (the
+    next run picks up where this one stopped) rather than discarding hours of
+    work. Requires the caller to pass a commit-as-you-go `Connection`
+    (`engine.connect()`), NOT a begin-once `engine.begin()` block.
     """
     pending = list(_iter_pending(conn, reembed=reembed, since=since))
     if not pending:
@@ -182,6 +224,7 @@ def embed_pending(
                     {"id": listing_id, "vec": str(vector), "model": MODEL_NAME},
                 )
                 embedded += 1
+            conn.commit()
             logger.info(
                 "embedded batch %d/%d (%d listings)",
                 i // batch_size + 1,

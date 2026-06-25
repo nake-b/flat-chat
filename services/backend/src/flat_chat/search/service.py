@@ -207,14 +207,26 @@ class SearchService:
             if add_score:
                 stmt = stmt.add_columns(distance.label("similarity_score"))
 
+        # Every branch ends with `Listing.id` as a unique, deterministic
+        # tie-break. The marker query (LIMIT MARKER_CAP) and the preview query
+        # (LIMIT PREVIEW_N) are separate executions over non-unique sort
+        # columns; without a unique final key Postgres is free to order tied
+        # rows differently between the two, breaking the invariant that the
+        # preview is a true PREFIX of the markers (which is what makes the
+        # LLM's 1-based indices line up with the cards the user sees).
         if sort_effective == "relevance" and distance is not None:
-            stmt = stmt.order_by(distance)
+            # Embedded rows rank by cosine distance; un-embedded rows (distance
+            # NULL — the common state) fall to the back and degrade to recency,
+            # then id, rather than an arbitrary order.
+            stmt = stmt.order_by(
+                distance.nulls_last(), Listing.ingested_at.desc(), Listing.id
+            )
         elif sort_effective == "price":
-            stmt = stmt.order_by(Listing.warm_rent_eur.asc().nulls_last())
+            stmt = stmt.order_by(Listing.warm_rent_eur.asc().nulls_last(), Listing.id)
         elif sort_effective == "area":
-            stmt = stmt.order_by(Listing.area_sqm.desc().nulls_last())
+            stmt = stmt.order_by(Listing.area_sqm.desc().nulls_last(), Listing.id)
         else:
-            stmt = stmt.order_by(Listing.ingested_at.desc())
+            stmt = stmt.order_by(Listing.ingested_at.desc(), Listing.id)
         return stmt
 
     def _count_statement(self, params: SearchParams) -> Select:

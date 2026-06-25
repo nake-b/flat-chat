@@ -356,6 +356,8 @@ async def open_listing(
     markers = ctx.deps.state.result_markers
     if not markers:
         return "No active search results. Run search_apartments first."
+    if not indices:
+        return "Pass at least one 1-based index, e.g. open_listing([1])."
 
     rs = LlmResultSetView(ctx.deps.state)
     preview = ctx.deps.state.preview_cards

@@ -95,14 +95,33 @@ class SessionState(BaseModel):
         Symmetric with `_serialize_markers` so `model_validate(model_dump(s))
         == s`. The frontend (CopilotKit) stores the wire shape and echoes it
         back in the AG-UI envelope; this runs every turn. A plain list passes
-        through unchanged (in-process construction / tests)."""
+        through unchanged (in-process construction / tests).
+
+        A length-mismatched payload RAISES (rather than silently truncating to
+        the shortest column with `zip`): the columns are positional, so a
+        mismatch means the wire form is corrupt and decoding it would drop or
+        misalign markers. `chat/service.py:_extract_incoming_state` catches the
+        error and falls back to the authoritative persisted server state — the
+        documented "a malformed frontend push must not clobber server state"
+        behaviour."""
         if isinstance(value, dict):
             ids = value.get("ids") or []
+            n = len(ids)
             lats = value.get("lats") or []
             lngs = value.get("lngs") or []
-            prices = value.get("prices") or [None] * len(ids)
+            # `prices` is legitimately absent on old/empty envelopes; default
+            # it to all-None. Any present column, though, must match `ids`.
+            prices = value.get("prices")
+            if prices is None:
+                prices = [None] * n
+            if len(lats) != n or len(lngs) != n or len(prices) != n:
+                raise ValueError(
+                    "columnar result_markers has mismatched column lengths "
+                    f"(ids={n}, lats={len(lats)}, lngs={len(lngs)}, "
+                    f"prices={len(prices)})"
+                )
             return [
                 {"id": i, "lat": la, "lng": lo, "price_warm_eur": pr}
-                for i, la, lo, pr in zip(ids, lats, lngs, prices, strict=False)
+                for i, la, lo, pr in zip(ids, lats, lngs, prices, strict=True)
             ]
         return value

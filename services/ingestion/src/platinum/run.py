@@ -5,9 +5,10 @@ Usage:
     python -m platinum.run --reembed               # re-embed everything
     python -m platinum.run --since 2026-06-01      # only listings since date
 
-Wraps in a single transaction so a mid-run failure rolls back partial
-writes. Embedding generation calls the Jina v3 API (free tier);
-provider details in `embed.py`.
+Commits per batch (see `embed.py:embed_pending`): the embedding UPSERTs are
+idempotent, so a mid-run failure keeps completed batches and the next run
+resumes from where it stopped. Embedding generation calls the Jina v3 API
+(free tier, with retry/backoff); provider details in `embed.py`.
 """
 
 from __future__ import annotations
@@ -48,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        with engine.begin() as conn:
+        # Commit-as-you-go (NOT engine.begin's begin-once): embed_pending
+        # commits each batch so a mid-run failure preserves completed work.
+        with engine.connect() as conn:
             embedded, skipped = platinum.embed_pending(
                 conn, reembed=args.reembed, since=args.since
             )
@@ -57,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     except Exception:
-        logger.error("FAIL platinum (rolled back):\n%s", traceback.format_exc())
+        logger.error(
+            "FAIL platinum (completed batches kept):\n%s", traceback.format_exc()
+        )
         return 1
 
 
