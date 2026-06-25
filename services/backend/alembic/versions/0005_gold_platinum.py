@@ -8,7 +8,7 @@ Introduces the two new medallion layers that sit above silver:
 
   - GOLD (`listings_geo_context`) — one row per listing, denormalised join
     of every nearby geo-context fact (transit / parks / schools / hospitals /
-    noise / density / MSS / water / playground / disabled-parking). Filled
+    noise / density / water / playground / disabled-parking). Filled
     by `services/ingestion/src/gold/`. The search hot-path now hits this
     table via B-tree filters instead of running spatial subqueries per
     request. JSONB blobs carry the detail-panel data so `open_listing`
@@ -26,7 +26,7 @@ before the column is dropped — round-trip safe.
 Index policy:
   - Gold scalar chips get plain b-tree indexes — these are the columns the
     rewritten search query filters on (e.g. `WHERE nearest_transit_m <= 400
-    AND mss_status = 'disadvantaged'`). Single-column indexes; Postgres
+    AND noise_total_lden < 55`). Single-column indexes; Postgres
     bitmap-ANDs across them when filters combine.
   - Gold JSONB detail blobs get NO indexes — only fetched by PK
     (`listings_geo_context.listing_id = ?`), so the PK already covers them.
@@ -73,8 +73,6 @@ def upgrade() -> None:
             nearest_park_m          INTEGER,
             noise_total_lden        REAL,
             persons_per_hectare     REAL,
-            mss_status              TEXT,
-            mss_dynamics            TEXT,
 
             -- Detail-panel blobs. Frozen at gold-build time; fetched as one
             -- PK lookup by `ListingService.get(id)` / `GET /api/listings/{id}`.
@@ -88,7 +86,6 @@ def upgrade() -> None:
             noise_profile           JSONB,  -- NoiseProfile { street_lden, rail_lden, total_lden }
             greenery_profile        JSONB,  -- GreeneryProfile { green_m2_within_300m }
             density_profile         JSONB,  -- DensityProfile { persons_per_ha, age_buckets }
-            mss_profile             JSONB,  -- MssProfile { status, dynamics, social_inequality, residents }
             disabled_parking_count  INTEGER,
 
             enriched_at             TIMESTAMP WITH TIME ZONE
@@ -119,17 +116,6 @@ def upgrade() -> None:
         "ON listings_geo_context (persons_per_hectare) "
         "WHERE persons_per_hectare IS NOT NULL"
     )
-    op.execute(
-        "CREATE INDEX ix_lgc_mss_status "
-        "ON listings_geo_context (mss_status) "
-        "WHERE mss_status IS NOT NULL"
-    )
-    op.execute(
-        "CREATE INDEX ix_lgc_mss_dynamics "
-        "ON listings_geo_context (mss_dynamics) "
-        "WHERE mss_dynamics IS NOT NULL"
-    )
-
     # GIN index on the transit-lines TEXT[] so "near U8 or S5" filters can
     # use the array-overlap operator `&&` index-aware.
     op.execute(
@@ -221,8 +207,6 @@ def downgrade() -> None:
 
     # Drop gold indexes + table.
     op.execute("DROP INDEX IF EXISTS ix_lgc_nearest_transit_lines")
-    op.execute("DROP INDEX IF EXISTS ix_lgc_mss_dynamics")
-    op.execute("DROP INDEX IF EXISTS ix_lgc_mss_status")
     op.execute("DROP INDEX IF EXISTS ix_lgc_persons_per_hectare")
     op.execute("DROP INDEX IF EXISTS ix_lgc_noise_total_lden")
     op.execute("DROP INDEX IF EXISTS ix_lgc_nearest_park_m")

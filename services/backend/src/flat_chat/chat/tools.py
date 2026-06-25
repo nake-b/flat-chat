@@ -13,7 +13,8 @@ from flat_chat.listings.types import (
 )
 from flat_chat.search.geo_filters import (
     HospitalFilter,
-    MssFilter,
+    LandmarkFilter,
+    NamedGeoContextFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -35,13 +36,25 @@ There is ONE active result set per conversation. Listings are referenced by
 1-based indices into it — the same numbers shown on the card strip.
 Indices are stable until the next `search_apartments` call.
 
+Geo search guidance:
+  - Use `landmark` (ALKIS named buildings) or `named_geo` (school/park/water/…)
+    when the user mentions a place by NAME (e.g. "Fernsehturm", "Uber Arena",
+    "Görlitzer Park"). This is robust even when you don't know coordinates.
+  - IMPORTANT: Do NOT silently translate a landmark into a transit stop.
+    Example: "Fernsehturm" is NOT "Alexanderplatz station" unless the user
+    explicitly asks for "Alexanderplatz" / "S+U Alexanderplatz" / "U-Bahnhof".
+  - Use `near_lat`/`near_lon` ONLY when the user provides coordinates or an
+    explicit address/location you can express as coordinates. Don't "guess"
+    landmark coordinates and default to `radius_km=2.0` for "in der Nähe" —
+    use `distance="near"` (or meters) on the name-based filters instead.
+
 Tools:
   - `search_apartments(...)` — run or REPLACE the active result set. To
     refine, call again with ALL filters you want to keep (omitted args are
     dropped). Never volunteer a filter the user did not explicitly ask for.
   - `open_listing(indices=[k])` — open the detail panel for listing #k AND
     attach the neighbourhood-context blob (transit, schools, parks, noise,
-    MSS, hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
+    hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
     prose; UI focus anchors to the first index. NEVER pass UUIDs, external
     IDs, or anything that isn't a 1-based number visible on the cards.
   - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
@@ -70,15 +83,23 @@ filters for `search_apartments`:
   - "family-friendly" /
     "good for kids"             → near_park: "near", near_playground: "near",
                                   max_noise: "quiet"
-  - "affluent neighbourhood"    → mss: {status_min: "affluent"}
-  - "stable affluent area"      → mss: {status_min: "affluent",
-                                        dynamics: "stable"}
-  - "up-and-coming" /
-    "gentrifying"               → mss: {status_min: "disadvantaged",
-                                        dynamics: "improving"}
   - "near a Grundschule"        → school: {school_type: "Grundschule"}
+  - "nahe Kita [Name]"          → named_geo: [{kind: "kita", name: "[Name]", distance: "near"}]
+  - "in der Nähe des Fernsehturms" / "near the Fernsehturm"
+                                → landmark: {name: "Fernsehturm", distance: "near"}
+  - "nahe Uber Arena" / "close to Uber Arena"
+                                → landmark: {name: "Uber Arena", distance: "near"}
+  - "in Fahrraddistanz zur Uber Arena" / "bike distance to Uber Arena"
+                                → landmark: {name: "Uber Arena", distance: "bike_distance"}
+  - "in Laufdistanz zum Fernsehturm" / "walking distance to Fernsehturm"
+                                → landmark: {name: "Fernsehturm", distance: "walking_distance"}
+  - "500m um den Fernsehturm"    → landmark: {name: "Fernsehturm", distance: 500}
+  - "nahe Rosa Parks Schule"     → named_geo: [{kind: "school", name: "Rosa Parks", distance: "near"}]
+  - "nahe Görlitzer Park"        → named_geo: [{kind: "park", name: "Görlitzer", distance: "near"}]
   - "near a lake" /
     "by the water"              → near_water: "near"
+    - "near a public toilet" / "toilet nearby" → has_nearby_toilet: True
+    - "trees nearby" / "lots of trees"         → has_tree_within_100m: True
 </phrase_map>
 """
 
@@ -125,17 +146,21 @@ async def search_apartments(
     has_kitchen: bool | None = None,
     has_elevator: bool | None = None,
     has_images: bool | None = None,
-    # Geo-context (Berlin Sozialmonitoring / transit / parks / noise / ...)
+    # Geo-context (transit / parks / noise / ...)
     transit: TransitFilter | None = None,
     school: SchoolFilter | None = None,
     hospital: HospitalFilter | None = None,
-    mss: MssFilter | None = None,
+    landmark: LandmarkFilter | None = None,
+    named_geo: list[NamedGeoContextFilter] | None = None,
     near_park: NearSpec | None = None,
     near_playground: NearSpec | None = None,
     near_water: NearSpec | None = None,
     max_noise: NoiseLabel | None = None,
     min_greenery: GreeneryLabel | None = None,
     density: DensityLabel | None = None,
+    # Toilets / trees
+    has_nearby_toilet: bool | None = None,
+    has_tree_within_100m: bool | None = None,
     sort_by: SortBy = "relevance",
 ) -> ToolReturn:
     """Search for apartments in Berlin. Replaces the current result set.
@@ -225,18 +250,12 @@ async def search_apartments(
             clinics too. Example: "hospital nearby" →
             `{"distance": "walking_distance"}`.
 
-        mss: Filter by neighbourhood socioeconomic character
-            (Sozialmonitoring). Fields:
-              - `status_min`: minimum status floor — one of
-                `"disadvantaged"`, `"lower-income"` (default), `"mixed"`,
-                `"affluent"`. `"mixed"` matches mixed AND affluent areas.
-              - `dynamics`: exact trend match — one of `"improving"`,
-                `"stable"`, `"slipping"` (the last is counterintuitive — it
-                means improving slower than the citywide trend).
-            Neutral labels, not value judgements. Examples:
-            "affluent neighbourhood" → `{"status_min": "affluent"}`.
-            "up-and-coming" → `{"status_min": "disadvantaged",
-            "dynamics": "improving"}` (the classic gentrification signature).
+        landmark: Filter by proximity to a named landmark / Sehenswürdigkeit
+            (ALKIS named buildings). Pass as `{"name": "Fernsehturm"}`.
+
+        named_geo: Generic "near X by name" filter for other geo-context
+            families. Pass as a list of objects like
+            `[{"kind": "school", "name": "Rosa Parks", "distance": "near"}]`.
 
         near_park: Require a non-cemetery park within this distance.
             Same `NearSpec` ladder as `transit.distance` — `"next_to"` /
@@ -293,13 +312,16 @@ async def search_apartments(
         transit=transit,
         school=school,
         hospital=hospital,
-        mss=mss,
+        landmark=landmark,
+        named_geo=named_geo,
         near_park=near_park,
         near_playground=near_playground,
         near_water=near_water,
         max_noise=max_noise,
         min_greenery=min_greenery,
         density=density,
+        has_nearby_toilet=has_nearby_toilet,
+        has_tree_within_100m=has_tree_within_100m,
         sort_by=sort_by,
     )
 
@@ -346,7 +368,7 @@ async def open_listing(
 
     Single-index call (`indices=[k]`) opens the detail panel for listing #k
     AND attaches the neighbourhood-context blob (transit, schools, parks,
-    noise, MSS, hospitals). Multi-index calls (`indices=[k, m, …]`) anchor
+    noise, hospitals). Multi-index calls (`indices=[k, m, …]`) anchor
     UI focus to the first index but return prose for all; no geo-context
     fetch (use it for side-by-side comparison).
 

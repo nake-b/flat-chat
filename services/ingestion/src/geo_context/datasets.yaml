@@ -48,10 +48,10 @@ wfs:
     update_cadence: yearly
     description: "Residents per planning area (LOR) with age-band breakdown."
 
-  - key: street_noise_2022
+  - key: noise_levels
     dataset: ua_stratlaerm_2022
     layer: aa_fp_gesamt2022
-    table: street_noise_2022
+    table: noise_levels
     geom_type: Point
     enabled: true
     status: stable
@@ -136,17 +136,93 @@ wfs:
     update_cadence: monthly
     description: "Reserved disabled-parking spots with address and count."
 
-  - key: social_monitoring_2025
-    dataset: mss_2025
-    layer: mss2025_indizes_542
-    table: social_monitoring_2025
+  - key: public_toilets
+    dataset: toiletten
+    layer: toiletten
+    table: public_toilets
+    geom_type: Point
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/toiletten"
+    update_cadence: monthly
+    description: "Public toilets with operator, opening hours, fees, payment and accessibility attributes."
+
+  - key: park_trees
+    dataset: baumbestand
+    layer: anlagenbaeume
+    table: trees
+    geom_type: Point
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/baumbestand"
+    update_cadence: unknown
+    description: "Tree inventory in parks and public green facilities."
+    extra:
+      tree_type: park
+
+  - key: street_trees
+    dataset: baumbestand
+    layer: strassenbaeume
+    table: trees
+    geom_type: Point
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/baumbestand"
+    update_cadence: unknown
+    description: "Street-tree inventory with street and house-number reference."
+    extra:
+      tree_type: street
+
+  - key: alkis_buildings
+    dataset: alkis_gebaeude
+    layer: gebaeude
+    table: buildings
     geom_type: MultiPolygon
     enabled: true
     status: wip
     license: "dl-de/by-2-0"
-    source_url: "https://gdi.berlin.de/services/wfs/mss_2025"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_gebaeude"
     update_cadence: yearly
-    description: "Monitoring Soziale Stadtentwicklung — Status/Dynamics/Social-Inequality indices per planning area."
+    description: "ALKIS buildings (building footprints). Only features with a `nam` (name) are useful for landmarks/POI searches."
+
+  - key: alkis_ortsteile
+    dataset: alkis_ortsteile
+    layer: ortsteile
+    table: ortsteile
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_ortsteile"
+    update_cadence: yearly
+    description: "ALKIS Ortsteile polygons (district subdivisions)."
+
+  - key: alkis_bezirke
+    dataset: alkis_bezirke
+    layer: alkis_bezirke:bezirke
+    table: bezirke
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_bezirke"
+    update_cadence: yearly
+    description: "ALKIS Bezirke polygons."
+
+  - key: kitas
+    dataset: kita
+    layer: kita
+    table: kitas
+    geom_type: Point
+    enabled: true
+    status: wip
+    license: "dl-de/by-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/kita"
+    update_cadence: monthly
+    description: "Kindertagesstätten (Kitas) in Berlin."
 
   - key: water_bodies
     dataset: gewaesserkarte

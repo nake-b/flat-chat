@@ -188,22 +188,86 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     },
 
     # ---------------------------------------------------------------------
-    # mss_2025  (Monitoring Soziale Stadtentwicklung — composite indices)
+    # toiletten  (public toilets)
     # ---------------------------------------------------------------------
-    ("mss_2025", "mss2025_indizes_542"): {
-        "plr_id": "planning_area_id",
-        "plr_name": "planning_area_name",
-        "bez_id": "district_id",
-        "ew": "residents",
-        "di_n": "dynamics_index_score",
-        "di_v": "dynamics_index_label",
-        "sdi": "social_inequality_category",
-        "sdi_n": "social_inequality_score",
-        "sdi_v": "social_inequality_label",
-        "si_n": "status_index_score",
-        "si_v": "status_index_label",
-        "zeit": "year",
-        "kom": "notes",
+    ("toiletten", "toiletten"): {
+        "fid": "fid",
+        "bezirk": "district",
+        "standort": "location",
+        "vertrag": "contract",
+        "betreiber": "operator",
+        "modelltyp": "model_type",
+        "symbol": "symbol",
+        "oeffnungszeiten": "opening_hours",
+        "nutzungsentgelt": "usage_fee",
+        "zahlungsart": "payment_type",
+        "barrierefrei": "wheelchair_accessible",
+        "barrierearm": "low_barrier",
+        "wickeltisch": "changing_table",
+    },
+
+    # ---------------------------------------------------------------------
+    # baumbestand  (park/facility trees + street trees)
+    # Both layers feed one `trees` table. The orchestrator injects
+    # `tree_type` from datasets.yaml so the source family stays visible.
+    # ---------------------------------------------------------------------
+    ("baumbestand", "anlagenbaeume"): {
+        "gisid": "gis_id",
+        "pitid": "pit_id",
+        "standortnr": "tree_number",
+        "kennzeich": "object_number",
+        "namenr": "object_name",
+        "art_dtsch": "species_de",
+        "art_bot": "species_botanical",
+        "gattung_deutsch": "genus_de",
+        "gattung": "genus",
+        "art_gruppe": "species_group",
+        "pflanzjahr": "planting_year",
+        "standalter": "age_years",
+        "kronedurch": "crown_diameter_m",
+        "stammumfg": "trunk_circumference_cm",
+        "baumhoehe": "height_m",
+        "eigentuemer": "owner",
+        "bezirk": "district",
+    },
+    ("baumbestand", "strassenbaeume"): {
+        "gisid": "gis_id",
+        "pitid": "pit_id",
+        "standortnr": "tree_number",
+        "kennzeich": "object_number",
+        "namenr": "object_name",
+        "art_dtsch": "species_de",
+        "art_bot": "species_botanical",
+        "gattung_deutsch": "genus_de",
+        "gattung": "genus",
+        "art_gruppe": "species_group",
+        "strnr": "street_number",
+        "strname": "street_name",
+        "hausnr": "house_number",
+        "zusatz": "house_number_suffix",
+        "pflanzjahr": "planting_year",
+        "standalter": "age_years",
+        "kronedurch": "crown_diameter_m",
+        "stammumfg": "trunk_circumference_cm",
+        "baumhoehe": "height_m",
+        "eigentuemer": "owner",
+        "bezirk": "district",
+    },
+
+    # ---------------------------------------------------------------------
+    # kita  (Kindertagesstätten)
+    # ---------------------------------------------------------------------
+    ("kita", "kita"): {
+        "name": "name",
+        "traeger": "operator",
+        "strasse": "street",
+        "hausnr": "house_number",
+        "plz": "postal_code",
+        "bezirk": "district",
+        "ortsteil": "neighborhood",
+        "telefon": "phone",
+        "email": "email",
+        "internet": "website",
     },
 
     # ---------------------------------------------------------------------
@@ -224,5 +288,31 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "gewart": "water_kind",
         "gewordng": "water_class",
         "bemerkunge": "notes",
+    },
+    # ---------------------------------------------------------------------
+    # alkis_gebaeude  (ALKIS building footprints)
+    # Keep only named buildings — `nam` is the primary Name field in ALKIS.
+    # See context_ingestion/documentation/alkis_gebaeude.txt for source column list.
+    # ---------------------------------------------------------------------
+    ("alkis_gebaeude", "gebaeude"): {
+        "nam": "name",
+        "bezeich": "description",
+        "namlag": "street_name",
+        "hnr": "house_number",
+        "pnr": "pseudo_number",
+        "shape_area": "area_m2",
+        "aog": "num_storeys",
+    },
+    # ---------------------------------------------------------------------
+    # alkis_ortsteile / alkis_bezirke (administrative polygons)
+    # ---------------------------------------------------------------------
+    ("alkis_ortsteile", "ortsteile"): {
+        "nam": "name",
+    },
+    ("alkis_bezirke", "bezirke"): {
+        "nam": "name",
+    },
+    ("alkis_bezirke", "alkis_bezirke:bezirke"): {
+        "nam": "name",
     },
 }

@@ -25,9 +25,12 @@ Run:
 
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from flat_chat.search.geo_filters import (
     HospitalFilter,
-    MssFilter,
+    LandmarkFilter,
+    NamedGeoContextFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -188,6 +191,187 @@ def test_transit_stop_name_filter_uses_ilike(async_db_url):
     assert str(listing["id"]) in ids
 
 
+def test_landmark_name_filter_executes(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(listing["id"])
+
+    async def body(service):
+        # Seed a matching ALKIS building footprint and a listing point inside it.
+        await service.db.execute(
+            text(
+                """
+                INSERT INTO buildings (name, description, geom)
+                VALUES (
+                    'Fernsehturm',
+                    'Turm',
+                    ST_GeomFromText(
+                        'MULTIPOLYGON(((13.4090 52.5206, 13.4090 52.5210, 13.4098 52.5210, 13.4098 52.5206, 13.4090 52.5206)))',
+                        4326
+                    )
+                )
+                """
+            )
+        )
+        await service.db.execute(
+            text(
+                """
+                UPDATE listings
+                SET location = ST_SetSRID(ST_MakePoint(13.4094, 52.5208), 4326)
+                WHERE id = :id
+                """
+            ),
+            {"id": listing["id"]},
+        )
+        params = SearchParams(
+            landmark=LandmarkFilter(name="Fernsehturm", distance="near")
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) in ids
+
+
+def test_landmark_name_filter_misses_when_only_other_landmark(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(listing["id"])
+
+    async def body(service):
+        # Listing is near a building, but the building name doesn't match the filter.
+        await service.db.execute(
+            text(
+                """
+                INSERT INTO buildings (name, description, geom)
+                VALUES (
+                    'Alexanderplatz',
+                    'Platz',
+                    ST_GeomFromText(
+                        'MULTIPOLYGON(((13.4090 52.5206, 13.4090 52.5210, 13.4098 52.5210, 13.4098 52.5206, 13.4090 52.5206)))',
+                        4326
+                    )
+                )
+                """
+            )
+        )
+        await service.db.execute(
+            text(
+                """
+                UPDATE listings
+                SET location = ST_SetSRID(ST_MakePoint(13.4094, 52.5208), 4326)
+                WHERE id = :id
+                """
+            ),
+            {"id": listing["id"]},
+        )
+        params = SearchParams(
+            landmark=LandmarkFilter(name="Fernsehturm", distance="near")
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) not in ids
+
+
+def test_landmark_name_filter_matches_name_variants(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(listing["id"])
+
+    async def body(service):
+        # ALKIS name variant with hyphen + "zu Berlin" should still match
+        # user phrase "Humboldt Universität Berlin".
+        await service.db.execute(
+            text(
+                """
+                INSERT INTO buildings (name, description, geom)
+                VALUES (
+                    'Humboldt-Universität zu Berlin',
+                    'Universität',
+                    ST_GeomFromText(
+                        'MULTIPOLYGON(((13.3920 52.5172, 13.3920 52.5176, 13.3926 52.5176, 13.3926 52.5172, 13.3920 52.5172)))',
+                        4326
+                    )
+                )
+                """
+            )
+        )
+        await service.db.execute(
+            text(
+                """
+                UPDATE listings
+                SET location = ST_SetSRID(ST_MakePoint(13.3923, 52.5174), 4326)
+                WHERE id = :id
+                """
+            ),
+            {"id": listing["id"]},
+        )
+
+        params = SearchParams(
+            landmark=LandmarkFilter(name="Humboldt Universität Berlin", distance=1000)
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) in ids
+
+
+def test_named_geo_school_name_filter_executes(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(
+        listing["id"],
+        schools_top3=[
+            {"name": "Rosa-Parks-Grundschule", "school_type": "Grundschule", "distance_m": 600}
+        ],
+    )
+
+    async def body(service):
+        params = SearchParams(
+            named_geo=[NamedGeoContextFilter(kind="school", name="Rosa Parks", distance="near")]
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) in ids
+
+
+def test_named_geo_park_name_filter_executes(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(
+        listing["id"],
+        parks_top2=[{"name": "Görlitzer Park", "distance_m": 500}],
+    )
+
+    async def body(service):
+        params = SearchParams(
+            named_geo=[NamedGeoContextFilter(kind="park", name="Görlitzer", distance="near")]
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) in ids
+
+
+def test_named_geo_water_name_filter_executes(async_db_url):
+    listing = _listing_row()
+    gold = _gold_row(
+        listing["id"],
+        water={"name": "Landwehrkanal", "water_kind": "canal", "distance_m": 1200},
+    )
+
+    async def body(service):
+        params = SearchParams(
+            named_geo=[NamedGeoContextFilter(kind="water", name="Landwehr", distance="walking_distance")]
+        )
+        results, _ = await service.search(params)
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, [(listing, gold)], body)
+    assert str(listing["id"]) in ids
+
+
 # ---------------------------------------------------------------------------
 # Remaining geo filters — same shape, each guards its own operator class.
 # ---------------------------------------------------------------------------
@@ -227,53 +411,6 @@ def test_hospital_filter(async_db_url):
     ids = _drive(async_db_url, seeds, body)
     assert str(has_hosp["id"]) in ids
     assert str(no_hosp["id"]) not in ids
-
-
-def test_mss_status_floor(async_db_url):
-    """status_min='mixed' matches 'mixed' and 'affluent' but not 'disadvantaged'."""
-    aff = _listing_row()
-    mix = _listing_row()
-    dis = _listing_row()
-    seeds = [
-        (aff, _gold_row(aff["id"], mss_status="affluent")),
-        (mix, _gold_row(mix["id"], mss_status="mixed")),
-        (dis, _gold_row(dis["id"], mss_status="disadvantaged")),
-    ]
-
-    async def body(service):
-        params = SearchParams(mss=MssFilter(status_min="mixed"))
-        results, _ = await service.search(params)
-        return {r.id for r in results}
-
-    ids = _drive(async_db_url, seeds, body)
-    assert str(aff["id"]) in ids
-    assert str(mix["id"]) in ids
-    assert str(dis["id"]) not in ids
-
-
-def test_mss_dynamics_exact(async_db_url):
-    improving = _listing_row()
-    stable = _listing_row()
-    seeds = [
-        (
-            improving,
-            _gold_row(
-                improving["id"], mss_status="mixed", mss_dynamics="improving"
-            ),
-        ),
-        (stable, _gold_row(stable["id"], mss_status="mixed", mss_dynamics="stable")),
-    ]
-
-    async def body(service):
-        params = SearchParams(
-            mss=MssFilter(status_min="mixed", dynamics="improving"),
-        )
-        results, _ = await service.search(params)
-        return {r.id for r in results}
-
-    ids = _drive(async_db_url, seeds, body)
-    assert str(improving["id"]) in ids
-    assert str(stable["id"]) not in ids
 
 
 def test_near_park_filter(async_db_url):
@@ -395,8 +532,8 @@ def test_density_sparse_filter(async_db_url):
 def test_combined_filters_kitchen_sink(async_db_url):
     """The slow-and-broken query from the bug report.
 
-    'find 2-room flats in Kreuzberg near U-Bahn, low noise, improving
-    area, near park, near school, low density, with balcony' — every
+    'find 2-room flats in Kreuzberg near U-Bahn, low noise, near park,
+    near school, low density, with balcony' — every
     geo-context filter set at once.
     """
     listing = _listing_row(
@@ -417,8 +554,6 @@ def test_combined_filters_kitchen_sink(async_db_url):
         hospitals_top2=[{"name": "Charité"}],
         noise_total_lden=48.0,
         persons_per_hectare=40.0,  # < DENSITY_SPARSE_MAX (50) so density="sparse" matches
-        mss_status="mixed",
-        mss_dynamics="improving",
         greenery_profile={"green_m2_within_300m": 6000.0},
         playground={"distance_m": 300},
         water={"distance_m": 800},
@@ -433,7 +568,6 @@ def test_combined_filters_kitchen_sink(async_db_url):
             price_warm_max=1500,
             transit=TransitFilter(modes=["u_bahn"], distance="near"),
             school=SchoolFilter(),
-            mss=MssFilter(status_min="mixed", dynamics="improving"),
             near_park="near",
             near_playground="walking_distance",
             max_noise="quiet",

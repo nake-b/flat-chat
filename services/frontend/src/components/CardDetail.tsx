@@ -267,7 +267,7 @@ function AmenityChips({ apt }: { apt: UiApartment }) {
   );
 }
 
-// Geo-context block: nearby transit / schools / parks / noise / MSS / hospitals.
+// Geo-context block: nearby transit / schools / parks / noise / hospitals.
 // Only sections with data render; partial backend wiring produces partial UI,
 // not stale empty rows. Pulls from SessionState.active_listing_detail, which
 // is populated by the frontend's HTTP fetch on card click OR by the agent's
@@ -276,14 +276,15 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
   const hasAny =
     ctx.nearest_transit_stops.length > 0 ||
     ctx.nearest_schools.length > 0 ||
+    ctx.nearest_kitas.length > 0 ||
     ctx.nearest_parks.length > 0 ||
     ctx.nearest_hospitals.length > 0 ||
     ctx.nearest_water != null ||
     ctx.nearest_playground != null ||
+    ctx.trees_within_100_count > 0 ||
     ctx.noise != null ||
     ctx.greenery != null ||
     ctx.density != null ||
-    ctx.mss != null ||
     ctx.school_catchment != null ||
     ctx.disabled_parking_count > 0;
   if (!hasAny) return null;
@@ -337,6 +338,30 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
               </li>
             ))}
           </ul>
+        </Section>
+      )}
+
+      {ctx.nearest_kitas.length > 0 && (
+        <Section title="Kitas nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_kitas.map((k, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{k.name ?? "unnamed"}</span>
+                {k.operator && <span className="text-ink-ghost"> · {k.operator}</span>}
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {k.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      {ctx.kitas_within_500_count > 0 && (
+        <Section title="Kitas within 500m">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.kitas_within_500_count}
+          </div>
         </Section>
       )}
 
@@ -396,6 +421,13 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
           </ul>
         </Section>
       )}
+      {ctx.trees_within_100_count > 0 && (
+        <Section title="Trees within 100m">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.trees_within_100_count}
+          </div>
+        </Section>
+      )}
 
       {/* Character labels — short row of label-value pairs. */}
       <CharacterRow ctx={ctx} />
@@ -425,8 +457,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 // Single-row strip of character labels with raw values underneath. Each
 // cell only renders when its label is non-null. Now surfaces the raw
-// numerics (Lden / m² / persons-per-hectare) and the MSS social-inequality
-// label so users see the data behind the bucket.
+// numerics (Lden / m² / persons-per-hectare) so users see the data
+// behind the bucket.
 function CharacterRow({ ctx }: { ctx: ListingDetail }) {
   const cells: { label: string; value: string; sub?: string }[] = [];
   if (ctx.noise?.label) {
@@ -446,15 +478,6 @@ function CharacterRow({ ctx }: { ctx: ListingDetail }) {
         ? `${Math.round(ctx.density.persons_per_hectare)} ppl/ha`
         : undefined;
     cells.push({ label: "Density", value: ctx.density.label, sub });
-  }
-  if (ctx.mss?.status) {
-    const v = ctx.mss.dynamics
-      ? `${ctx.mss.status} · ${ctx.mss.dynamics}`
-      : ctx.mss.status;
-    const sub = ctx.mss.social_inequality
-      ? `inequality: ${ctx.mss.social_inequality}`
-      : undefined;
-    cells.push({ label: "Sozialmonitoring", value: v, sub });
   }
   if (cells.length === 0) return null;
 

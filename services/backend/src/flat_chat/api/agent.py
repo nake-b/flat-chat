@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 # Reply shape for CopilotKit's runtime discovery probe. Served from
-# `GET /api/agent/info`. Returning a healthy "no managed agents" body
+# `GET /    /info`. Returning a healthy "no managed agents" body
 # silences the dev-console auto-open and the "runtime info request failed"
 # red banner. The POST route deliberately does NOT short-circuit
 # `{method:"info"}` — see the note on `run_agent` below.

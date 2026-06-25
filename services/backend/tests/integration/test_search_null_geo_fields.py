@@ -18,7 +18,7 @@ constrained searches, eroding the user's trust in the filter set.
 
 from __future__ import annotations
 
-from flat_chat.search.geo_filters import MssFilter, TransitFilter
+from flat_chat.search.geo_filters import TransitFilter
 from flat_chat.search.schemas import SearchParams
 
 from ..conftest import DB_REQUIRED
@@ -85,25 +85,6 @@ def test_null_transit_distance_drops_listing_from_transit_filter(async_db_url):
     ids = _drive(async_db_url, seeds, body)
     assert str(near["id"]) in ids
     assert str(null_transit["id"]) not in ids
-
-
-def test_null_mss_status_drops_listing_from_status_floor(async_db_url):
-    """`mss_status IN (...)` against NULL returns NULL → row drops."""
-    affluent = _listing_row()
-    null_mss = _listing_row()
-    seeds = [
-        (affluent, _gold_row(affluent["id"], mss_status="affluent")),
-        (null_mss, _gold_row(null_mss["id"], mss_status=None)),
-    ]
-
-    async def body(service):
-        params = SearchParams(mss=MssFilter(status_min="mixed"))
-        results, _ = await service.search(params)
-        return {r.id for r in results}
-
-    ids = _drive(async_db_url, seeds, body)
-    assert str(affluent["id"]) in ids
-    assert str(null_mss["id"]) not in ids
 
 
 def test_null_park_distance_drops_listing_from_near_park_filter(async_db_url):

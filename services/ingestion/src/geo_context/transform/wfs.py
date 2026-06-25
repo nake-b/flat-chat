@@ -5,9 +5,6 @@ Steps applied to every layer:
   2. Rename source columns to the English silver-column names via aliases
   3. Drop any unaliased columns (avoids accidental leakage of German names)
   4. Optionally inject extra fixed columns (e.g. `tier` for hospitals)
-  5. Apply value-level translations (e.g. MSS German→English labels) so
-     silver stores canonical English — the data layer is language-agnostic
-     and downstream consumers (gold, search, frontend) never see German.
 """
 
 from __future__ import annotations
@@ -16,6 +13,7 @@ import logging
 
 import geopandas as gpd
 import pandas as pd
+import numpy as np
 from shapely import make_valid
 from shapely.geometry.base import BaseGeometry
 
@@ -25,68 +23,16 @@ logger = logging.getLogger(__name__)
 
 SILVER_SRID = 4326
 
-
-# ---------------------------------------------------------------------------
-# Value-level translations: German source labels → canonical English silver
-# values. Threshold doc §8 owns the MSS label vocabulary; this table is the
-# *single point* where the publisher's German strings stop existing.
-#
-# Why this lives here (not in the backend): silver is the canonical clean
-# form. If the publisher renames a label, only this map changes and a
-# geo_context.run refresh propagates English everywhere downstream — gold,
-# search filters, agent prose, frontend chips. No code in
-# `services/backend/` ever sees German.
-# ---------------------------------------------------------------------------
-
-_MSS_STATUS_DE_TO_EN: dict[str, str] = {
-    "sehr niedrig": "disadvantaged",
-    "niedrig": "lower-income",
-    "mittel": "mixed",
-    "hoch": "affluent",
+_FORCE_INT_COLUMNS = {
+    "num_storeys",
+    "planting_year",
+    "age_years",
 }
-
-_MSS_DYNAMICS_DE_TO_EN: dict[str, str] = {
-    "positiv": "improving",
-    "stabil": "stable",
-    "negativ": "slipping",
-}
-
-# Social-inequality composite label translation. The source publishes a
-# pattern like "Status mittel , Dynamik stabil" — we machine-translate
-# the two known German tokens into English. The "Status / Dynamik" frame
-# stays as-is because it's structural, not idiomatic.
-def _translate_social_inequality(val: str) -> str:
-    if not isinstance(val, str):
-        return val
-    out = val
-    for de, en in (
-        ("sehr niedrig", "disadvantaged"),
-        ("niedrig", "lower-income"),
-        ("mittel", "mixed"),
-        ("hoch", "affluent"),
-        ("positiv", "improving"),
-        ("stabil", "stable"),
-        ("negativ", "slipping"),
-        ("Status", "Status"),
-        ("Dynamik", "Dynamics"),
-    ):
-        out = out.replace(de, en)
-    return out
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
 
 
-_MSS_SOCIAL_INEQUALITY_TRANSLATE = _translate_social_inequality
-
-
-# Per-dataset/layer translation specs. Keyed by (dataset, layer) — same
-# shape as ALIASES so the lookup is consistent. Values are either a dict
-# (lookup) or a callable (str → str transform).
-_VALUE_TRANSLATIONS: dict[tuple[str, str], dict] = {
-    ("mss_2025", "mss2025_indizes_542"): {
-        "status_index_label": _MSS_STATUS_DE_TO_EN,
-        "dynamics_index_label": _MSS_DYNAMICS_DE_TO_EN,
-        "social_inequality_label": _MSS_SOCIAL_INEQUALITY_TRANSLATE,
-    },
-}
+_VALUE_TRANSLATIONS: dict[tuple[str, str], dict] = {}
 
 
 def transform_wfs_layer(
@@ -152,9 +98,55 @@ def transform_wfs_layer(
         for col, value in extra_columns.items():
             renamed[col] = value
 
-    # 4b. Value-level translations (e.g. MSS German labels → English).
-    # Applied per dataset/layer; the spec is a no-op for everything except
-    # the MSS planning-area indices. Spec values are either a `dict`
+    if key == ("kita", "kita"):
+        if "address" not in renamed.columns:
+            renamed["address"] = None
+        if "street" in renamed.columns:
+            street = renamed["street"].fillna("").astype(str).str.strip()
+            house = (
+                renamed["house_number"].fillna("").astype(str).str.strip()
+                if "house_number" in renamed.columns
+                else ""
+            )
+            composed = (street + " " + house).str.strip()
+            renamed["address"] = renamed["address"].where(
+                renamed["address"].notna(),
+                composed.replace("", pd.NA),
+            )
+
+    if key == ("alkis_gebaeude", "gebaeude") and "name" in renamed.columns:
+        names = renamed["name"].astype("string")
+        keep_mask = names.notna() & names.str.strip().ne("")
+        dropped = int((~keep_mask).sum())
+        if dropped > 0:
+            logger.info(
+                "%s/%s: dropping %d unnamed building features",
+                dataset,
+                layer,
+                dropped,
+            )
+        renamed = renamed.loc[keep_mask].copy()
+
+    for col in _FORCE_INT_COLUMNS:
+        if col in renamed.columns:
+            numeric = pd.to_numeric(renamed[col], errors="coerce")
+            numeric = numeric.where(np.isfinite(numeric), np.nan)
+            rounded = np.round(numeric)
+            in_range = rounded.between(_INT64_MIN, _INT64_MAX, inclusive="both")
+            overflow_count = int((rounded.notna() & ~in_range).sum())
+            if overflow_count > 0:
+                logger.warning(
+                    "%s/%s: column %s has %d out-of-range values for Int64; coercing to NULL",
+                    dataset,
+                    layer,
+                    col,
+                    overflow_count,
+                )
+            rounded = rounded.where(in_range, np.nan)
+            renamed[col] = pd.array(rounded, dtype="Int64")
+
+    # 4b. Value-level translations for selected dataset/layer pairs.
+    # Spec values are either a `dict`
     # (lookup table — unmapped values fall through unchanged and are
     # logged) or a `callable` (custom transform — applied to every
     # non-null cell).
@@ -183,13 +175,42 @@ def transform_wfs_layer(
     # → 1.0, 2.0, NaN); Postgres COPY then refuses "1.0" for an INTEGER
     # column. If every non-null value is a whole number, treat the column
     # as integer.
+
+    # 5. Coerce whole-number float columns to nullable Int64. pandas turns
+    # any integer source column containing nulls into float64 (1, 2, NaN
+    # → 1.0, 2.0, NaN); Postgres COPY then refuses "1.0" for an INTEGER
+    # column. If every non-null value is a whole number, treat the column
+    # as integer.
+
     for col in renamed.columns:
         if col == "geom":
             continue
-        s = renamed[col]
-        if pd.api.types.is_float_dtype(s):
-            non_null = s.dropna()
-            if not non_null.empty and (non_null % 1 == 0).all():
-                renamed[col] = s.astype("Int64")
+
+        try:
+            s = renamed[col]
+
+            # only numeric columns
+            if not pd.api.types.is_numeric_dtype(s):
+                continue
+
+            s = pd.to_numeric(s, errors="coerce")
+
+            # fix float noise
+            s = np.round(s)
+
+            # ONLY cast if safe
+            if (s.dropna() % 1 == 0).all():
+                # Vektorisierter, sicherer Cast für Float64 mit NaNs zu Int64
+                mask = s.isna()
+                filled = s.fillna(0).astype("int64")
+                casted = pd.Series(filled, dtype="Int64", index=s.index)
+                casted[mask] = pd.NA
+                renamed[col] = casted
+            else:
+                renamed[col] = s
+
+        except Exception:
+            logger.exception("failed column %s", col)
+            
 
     return renamed

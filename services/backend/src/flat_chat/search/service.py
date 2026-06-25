@@ -21,6 +21,7 @@ the HTTP route `GET /api/listings/{id}`.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 
@@ -28,8 +29,8 @@ from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
 from pgvector.sqlalchemy import Vector
 from pydantic_ai import Embedder
-from sqlalchemy import ARRAY, Select, Text, cast, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ARRAY, Select, Text, case, cast, column, exists, func, or_, select, table
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import UiApartment
@@ -49,7 +50,11 @@ from flat_chat.listings.thresholds import (
     NOISE_QUIET_MAX_LDEN,
 )
 
-from .geo_filters import MSS_STATUS_RANK, TransitFilter
+from .geo_filters import (
+    LandmarkFilter,
+    NamedGeoContextFilter,
+    TransitFilter,
+)
 from .schemas import SearchParams
 
 logger = logging.getLogger(__name__)
@@ -58,10 +63,128 @@ logger = logging.getLogger(__name__)
 # SQL LIKE patterns containing `%` or `_` need escaping when we want a
 # literal substring match. Mirrors the helper in the old service.
 _LIKE_META = re.compile(r"([%_\\])")
+_TOKEN_SPLIT = re.compile(r"[\W_]+", flags=re.UNICODE)
+_LANDMARK_STOPWORDS = {
+    "the",
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "zu",
+    "zur",
+    "zum",
+    "in",
+    "im",
+    "am",
+    "an",
+    "von",
+    "of",
+}
+_LANDMARK_ABBREV_EXPANSIONS: dict[str, list[str]] = {
+    # Common shorthand used by users for Humboldt-Universitaet.
+    "hu": ["humboldt", "universitaet"],
+}
 
 
 def _escape_for_substring(s: str) -> str:
     return f"%{_LIKE_META.sub(r'\\\1', s)}%"
+
+
+def _jsonpath_regex(s: str) -> str:
+    escaped = re.escape(s)
+    return json.dumps(f".*{escaped}.*")
+
+
+def _jsonpath_like_distance_filter(*, name: str, max_m: int, name_key: str = "name") -> str:
+    return (
+        f'$[*] ? (@.{name_key} like_regex {_jsonpath_regex(name)} '
+        f'flag "i" && @.distance_m <= {max_m})'
+    )
+
+
+_BUILDINGS = table("buildings", column("name"), column("geom"))
+
+
+def _landmark_name_tokens(name: str) -> list[str]:
+    raw_tokens = [part.lower() for part in _TOKEN_SPLIT.split(name) if part]
+    expanded_tokens: list[str] = []
+    for token in raw_tokens:
+        expanded_tokens.append(token)
+        expanded_tokens.extend(_LANDMARK_ABBREV_EXPANSIONS.get(token, []))
+
+    filtered = [
+        token
+        for token in expanded_tokens
+        if token not in _LANDMARK_STOPWORDS and (len(token) >= 3 or (len(token) == 2 and token.isalpha()))
+    ]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for token in filtered:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    return deduped
+
+
+def _token_variants(token: str) -> set[str]:
+    variants = {token}
+    variants.add(
+        token.replace("ae", "ä").replace("oe", "ö").replace("ue", "ü").replace("ss", "ß")
+    )
+    variants.add(
+        token.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    )
+    return {variant for variant in variants if variant}
+
+
+def _landmark_name_predicate(name: str):
+    full_pattern = _escape_for_substring(name)
+    full_phrase = _BUILDINGS.c.name.ilike(full_pattern, escape="\\")
+
+    tokens = _landmark_name_tokens(name)
+    if not tokens:
+        return full_phrase
+
+    token_matches = []
+    for token in tokens:
+        if len(token) <= 2:
+            # Short acronyms (e.g. "HU") should match as standalone words,
+            # not as arbitrary substrings inside other words.
+            regex = rf"(^|[^[:alnum:]]){re.escape(token)}([^[:alnum:]]|$)"
+            token_clause = _BUILDINGS.c.name.op("~*")(regex)
+        else:
+            variant_clauses = [
+                _BUILDINGS.c.name.ilike(_escape_for_substring(variant), escape="\\")
+                for variant in _token_variants(token)
+            ]
+            token_clause = or_(*variant_clauses)
+        token_matches.append(case((token_clause, 1), else_=0))
+    required = len(tokens) if len(tokens) <= 2 else 2
+    token_threshold = sum(token_matches) >= required
+    return or_(full_phrase, token_threshold)
+
+
+def _landmark_within_exists(*, name: str, max_m: int):
+    """True radius search: listing within `max_m` meters of a named ALKIS building footprint."""
+    subq = (
+        select(1)
+        .select_from(_BUILDINGS)
+        .where(
+            _BUILDINGS.c.name.is_not(None),
+            _BUILDINGS.c.geom.is_not(None),
+            _landmark_name_predicate(name),
+            geo_func.ST_DWithin(
+                cast(Listing.location, Geography),
+                cast(_BUILDINGS.c.geom, Geography),
+                max_m,
+            ),
+        )
+        .correlate(Listing)
+    )
+    return exists(subq)
 
 
 class SearchService:
@@ -115,8 +238,6 @@ class SearchService:
                 ListingGeoContext.nearest_park_m,
                 ListingGeoContext.noise_total_lden,
                 ListingGeoContext.persons_per_hectare,
-                ListingGeoContext.mss_status,
-                ListingGeoContext.mss_dynamics,
             )
             .outerjoin(
                 ListingGeoContext, ListingGeoContext.listing_id == Listing.id
@@ -209,10 +330,16 @@ class SearchService:
 
         # District substring match — OR across multiple districts.
         if params.districts:
-            district_clauses = [
-                Listing.district.ilike(_escape_for_substring(d), escape="\\")
-                for d in params.districts
-            ]
+            district_clauses = []
+            for district in params.districts:
+                pattern = _escape_for_substring(district)
+                district_clauses.append(
+                    or_(
+                        Listing.district.ilike(pattern, escape="\\"),
+                        ListingGeoContext.listing_bezirk.ilike(pattern, escape="\\"),
+                        ListingGeoContext.listing_ortsteil.ilike(pattern, escape="\\"),
+                    )
+                )
             stmt = stmt.where(or_(*district_clauses))
 
         # Images present
@@ -263,18 +390,6 @@ class SearchService:
         if params.hospital is not None:
             stmt = stmt.where(lgc.hospitals_top2.is_not(None))
 
-        # MSS — status floor + optional dynamics. Status floor uses the
-        # ordered ranking from `MSS_STATUS_RANK` so "lower-income" matches
-        # lower-income, mixed, and affluent.
-        if params.mss is not None:
-            min_rank = MSS_STATUS_RANK[params.mss.status_min]
-            # Inline the rank → English-label set so the WHERE is a plain
-            # IN against the indexed mss_status column.
-            allowed = [k for k, v in MSS_STATUS_RANK.items() if v >= min_rank]
-            stmt = stmt.where(lgc.mss_status.in_(allowed))
-            if params.mss.dynamics is not None:
-                stmt = stmt.where(lgc.mss_dynamics == params.mss.dynamics)
-
         # Near-park / near-playground / near-water filters — distance cutoff
         if params.near_park is not None:
             stmt = stmt.where(
@@ -292,6 +407,27 @@ class SearchService:
         if params.near_water is not None:
             radius = resolve_near_spec(params.near_water)
             stmt = stmt.where(lgc.water["distance_m"].as_integer() <= radius)
+
+        # Toilets — require nearest_toilet_m to be within default cap
+        if getattr(params, "has_nearby_toilet", None) is not None:
+            if params.has_nearby_toilet:
+                # any toilet within 1500m (same cap as transit by default)
+                stmt = stmt.where(lgc.nearest_toilet_m.is_not(None), lgc.nearest_toilet_m <= 1500)
+            else:
+                stmt = stmt.where(lgc.nearest_toilet_m.is_(None) | (lgc.nearest_toilet_m > 1500))
+
+        # Trees — require at least one tree within 100m
+        if getattr(params, "has_tree_within_100m", None) is not None:
+            if params.has_tree_within_100m:
+                stmt = stmt.where(
+                    lgc.trees_within_100_count.is_not(None),
+                    lgc.trees_within_100_count >= 1,
+                )
+            else:
+                stmt = stmt.where(
+                    (lgc.trees_within_100_count.is_(None))
+                    | (lgc.trees_within_100_count == 0)
+                )
 
         # Noise — user picks max bucket; convert to dB threshold.
         if params.max_noise is not None:
@@ -318,6 +454,22 @@ class SearchService:
                     >= GREENERY_VERY_LEAFY_MIN_M2
                 )
 
+        # Landmark filter — named ALKIS building/POI proximity.
+        if getattr(params, "landmark", None) is not None:
+            max_m = resolve_near_spec(params.landmark.distance)
+            # Preserve the post-refactor invariant: any geo predicate must exclude
+            # listings without a gold row (otherwise cards render without chips).
+            stmt = stmt.where(
+                lgc.listing_id.is_not(None),
+                _landmark_within_exists(name=params.landmark.name, max_m=max_m),
+            )
+
+        # Generic name-based "near X" filters (schools, parks, water, …).
+        # AND semantics across the list: every named_geo constraint must match.
+        if getattr(params, "named_geo", None):
+            for filt in params.named_geo or []:
+                stmt = self._apply_named_geo_filter(stmt, filt)
+
         # Density — exact bucket
         if params.density is not None:
             if params.density == "sparse":
@@ -331,6 +483,65 @@ class SearchService:
                 stmt = stmt.where(lgc.persons_per_hectare >= DENSITY_MODERATE_MAX)
 
         return stmt
+
+    def _apply_named_geo_filter(self, stmt: Select, filt: NamedGeoContextFilter) -> Select:
+        lgc = ListingGeoContext
+        max_m = resolve_near_spec(filt.distance)
+
+        if filt.kind == "landmark":
+            stmt = stmt.where(lgc.listing_id.is_not(None))
+            return stmt.where(_landmark_within_exists(name=filt.name, max_m=max_m))
+
+        if filt.kind == "school":
+            path = _jsonpath_like_distance_filter(name=filt.name, max_m=max_m, name_key="name")
+            return stmt.where(
+                lgc.schools_top3.is_not(None),
+                func.jsonb_path_exists(lgc.schools_top3, cast(path, JSONPATH)),
+            )
+
+        if filt.kind == "kita":
+            path = _jsonpath_like_distance_filter(name=filt.name, max_m=max_m, name_key="name")
+            return stmt.where(
+                lgc.kitas_top3.is_not(None),
+                func.jsonb_path_exists(lgc.kitas_top3, cast(path, JSONPATH)),
+            )
+
+        if filt.kind == "park":
+            path = _jsonpath_like_distance_filter(name=filt.name, max_m=max_m, name_key="name")
+            return stmt.where(
+                lgc.parks_top2.is_not(None),
+                func.jsonb_path_exists(lgc.parks_top2, cast(path, JSONPATH)),
+            )
+
+        if filt.kind == "hospital":
+            path = _jsonpath_like_distance_filter(name=filt.name, max_m=max_m, name_key="name")
+            return stmt.where(
+                lgc.hospitals_top2.is_not(None),
+                func.jsonb_path_exists(lgc.hospitals_top2, cast(path, JSONPATH)),
+            )
+
+        if filt.kind == "transit_stop":
+            path = _jsonpath_like_distance_filter(name=filt.name, max_m=max_m, name_key="name")
+            return stmt.where(
+                lgc.transit_top3.is_not(None),
+                func.jsonb_path_exists(lgc.transit_top3, cast(path, JSONPATH)),
+            )
+
+        if filt.kind == "playground":
+            return stmt.where(
+                lgc.playground.is_not(None),
+                lgc.playground["name"].as_string().ilike(_escape_for_substring(filt.name)),
+                lgc.playground["distance_m"].as_integer() <= max_m,
+            )
+
+        if filt.kind == "water":
+            return stmt.where(
+                lgc.water.is_not(None),
+                lgc.water["name"].as_string().ilike(_escape_for_substring(filt.name)),
+                lgc.water["distance_m"].as_integer() <= max_m,
+            )
+
+        raise ValueError(f"unsupported named_geo kind: {filt.kind!r}")
 
     def _apply_transit_filter(
         self, stmt: Select, f: TransitFilter
@@ -407,7 +618,7 @@ def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
     The row is the tuple shape `_build_statement` selects:
         (Listing, nearest_transit_lines, nearest_transit_m,
          nearest_transit_name, nearest_park_name, nearest_park_m,
-         noise_total_lden, persons_per_hectare, mss_status, mss_dynamics,
+         noise_total_lden, persons_per_hectare,
          [similarity_score])
     """
     listing: Listing = row[0]
@@ -477,7 +688,5 @@ def _row_to_uiapartment(row, *, with_score: bool) -> UiApartment:
         nearest_park_m=mapping.get("nearest_park_m"),
         noise_label=bucket_noise(noise_lden),
         density_label=bucket_density(pph),
-        mss_status_label=mapping.get("mss_status"),
-        mss_dynamics_label=mapping.get("mss_dynamics"),
         similarity_score=sim_score,
     )

@@ -1,7 +1,7 @@
 # geo_context — Berlin geospatial context ETL
 
 Ships Berlin geo-reference data (schools, parks, noise, population
-density, hospitals, social monitoring, water bodies, public transit)
+density, hospitals, Kitas, water bodies, public transit)
 into PostGIS so the chat agent can answer "what kind of neighborhood is
 this?" questions about a listing.
 
@@ -33,10 +33,10 @@ this?" questions about a listing.
                               │ silver-tier PostGIS tables          │
                               │  schools, school_catchments,        │
                               │  population_density_2025,           │
-                              │  street_noise_2022, green_volume…,  │
+                              │  noise_levels, green_volume…,       │
                               │  parks, playgrounds, hospitals,     │
                               │  disabled_parking,                  │
-                              │  social_monitoring_2025,            │
+                              │  kitas,                             │
                               │  water_bodies,                      │
                               │  transit_stops, transit_routes,     │
                               │  transit_route_shapes               │
@@ -105,12 +105,12 @@ Suggested cadence:
 |---|---|---|---|
 | `schools` + `school_catchments` | gdi.berlin.de/services/wfs/schulen | dl-de/by-2-0 | yearly |
 | `population_density_2025` | gdi.berlin.de/services/wfs/ua_einwohnerdichte_2025 | dl-de/by-2-0 | yearly |
-| `street_noise_2022` | gdi.berlin.de/services/wfs/ua_stratlaerm_2022 | dl-de/by-2-0 | every 5y (EU) |
+| `noise_levels` | gdi.berlin.de/services/wfs/ua_stratlaerm_2022 | dl-de/by-2-0 | every 5y (EU) |
 | `green_volume_2020` | gdi.berlin.de/services/wfs/ua_gruenvolumen_2020 | dl-de/by-2-0 | every ~5y |
 | `parks` + `playgrounds` | gdi.berlin.de/services/wfs/gruenanlagen | dl-de/by-2-0 | quarterly |
 | `hospitals` (plan + other) | gdi.berlin.de/services/wfs/krankenhaeuser | dl-de/by-2-0 | rarely |
 | `disabled_parking` | gdi.berlin.de/services/wfs/behindertenparkplaetze | dl-de/by-2-0 | monthly |
-| `social_monitoring_2025` | gdi.berlin.de/services/wfs/mss_2025 | dl-de/by-2-0 | yearly |
+| `kitas` | gdi.berlin.de/services/wfs/kita | dl-de/by-2-0 | monthly |
 | `water_bodies` | gdi.berlin.de/services/wfs/gewaesserkarte | dl-de/by-2-0 | rarely |
 | `transit_stops` + `transit_routes` + `transit_route_shapes` | vbb.de/vbbgtfs | CC BY 4.0 | weekly |
 
@@ -154,10 +154,10 @@ add a YAML entry.
   is consistent with the `listings.location` column. PostGIS spatial
   joins should always go through `::geography` for meter-accurate results.
 
-- **MSS / Gewässer status `wip`:** column-name guesses based on
+- **Kita / Gewässer status `wip`:** column-name guesses based on
   GetCapabilities + DescribeFeatureType but never verified on real
   output. If aliases turn out wrong they'll be silently dropped — check
-  `SELECT COUNT(*) FROM social_monitoring_2025` after first run.
+  `SELECT COUNT(*) FROM kitas` after first run.
 
 - **VBB uses GTFS Extended Route Types**, not the basic 0–3 codes. The
   values you'll see in `transit_stops.modes_served` / `transit_routes.route_type`:

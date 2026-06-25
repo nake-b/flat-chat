@@ -247,11 +247,39 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
 
     parts.extend(
         _format_list_section(
+            detail.nearest_kitas,
+            "Nearby kindergartens (Kitas):",
+            lambda k: (
+                f"{k.name or 'unnamed'}"
+                + (f" ({k.operator})" if k.operator else "")
+                + f" — {k.distance_m}m"
+            ),
+        )
+    )
+    if detail.kitas_within_500_count > 0:
+        parts.append(f"Kitas within 500m: {detail.kitas_within_500_count}")
+
+    parts.extend(
+        _format_list_section(
             detail.nearest_parks,
             "Nearby parks:",
             lambda p: f"{p.name or 'unnamed'} — {p.distance_m}m",
         )
     )
+
+    parts.extend(
+        _format_list_section(
+            detail.nearest_toilets,
+            "Nearby public toilets:",
+            lambda t: (
+                f"{t.operator or 'public toilet'} — {t.distance_m}m"
+                + (f" (wheelchair)" if t.wheelchair_accessible else "")
+            ),
+        )
+    )
+
+    if detail.trees_within_100_count > 0:
+        parts.append(f"Trees within 100m: {detail.trees_within_100_count}")
 
     if detail.nearest_playground is not None:
         pg = detail.nearest_playground
@@ -266,6 +294,10 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
             lambda h: f"{h.name or 'unnamed'} ({h.tier}) — {h.distance_m}m",
         )
     )
+    if detail.nearest_hospital_name and detail.nearest_hospital_m is not None:
+        parts.append(
+            f"Nearest hospital: {detail.nearest_hospital_name} — {detail.nearest_hospital_m}m"
+        )
 
     if detail.nearest_water is not None:
         w = detail.nearest_water
@@ -280,11 +312,6 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
         character_bits.append(f"greenery: {detail.greenery.label}")
     if detail.density and detail.density.label:
         character_bits.append(f"density: {detail.density.label}")
-    if detail.mss and detail.mss.status:
-        mss_bits = [detail.mss.status]
-        if detail.mss.dynamics:
-            mss_bits.append(detail.mss.dynamics)
-        character_bits.append(f"Sozialmonitoring: {' · '.join(mss_bits)}")
     if character_bits:
         parts.append("Neighbourhood character: " + ", ".join(character_bits))
 
@@ -394,8 +421,6 @@ def _format_card_prose(apt: UiApartment, idx: int) -> str:
         parts.append(f"{apt.nearest_transit_line} {apt.walk_min_to_transit}min")
     if apt.noise_label:
         parts.append(apt.noise_label)
-    if apt.mss_status_label:
-        parts.append(apt.mss_status_label)
     return f"  {idx}. " + " | ".join(parts)
 
 

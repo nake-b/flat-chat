@@ -28,13 +28,15 @@ from .context import (
     DensityProfile,
     GreeneryProfile,
     ListingDetail,
-    MssProfile,
     NearestHospital,
+    NearestKita,
     NearestPark,
     NearestPlayground,
     NearestSchool,
     NearestTransitStop,
     NearestWater,
+    NearestToilet,
+    NearestLandmark,
     NoiseProfile,
     SchoolCatchmentInfo,
 )
@@ -144,6 +146,10 @@ class ListingService:
         detail.nearest_schools = (
             [NearestSchool(**s) for s in (lgc.schools_top3 or [])]
         )
+        detail.nearest_kitas = (
+            [NearestKita(**k) for k in (lgc.kitas_top3 or [])]
+        )
+        detail.kitas_within_500_count = lgc.kitas_within_500_count or 0
         detail.nearest_parks = (
             [NearestPark(**p) for p in (lgc.parks_top2 or [])]
         )
@@ -153,14 +159,23 @@ class ListingService:
         detail.nearest_hospitals = (
             [NearestHospital(**h) for h in (lgc.hospitals_top2 or [])]
         )
+        detail.nearest_hospital_name = lgc.nearest_hospital_name
+        detail.nearest_hospital_m = lgc.nearest_hospital_m
         detail.nearest_water = (
             NearestWater(**lgc.water) if lgc.water else None
         )
         detail.noise = _build_noise_profile(lgc.noise_profile)
         detail.greenery = _build_greenery_profile(lgc.greenery_profile)
         detail.density = _build_density_profile(lgc.density_profile)
-        detail.mss = MssProfile(**lgc.mss_profile) if lgc.mss_profile else None
         detail.disabled_parking_count = lgc.disabled_parking_count or 0
+        # Toilets
+        detail.nearest_toilets = [NearestToilet(**t) for t in (lgc.toilets_top3 or [])]
+        detail.trees_within_100_count = lgc.trees_within_100_count or 0
+        detail.nearest_landmarks = [
+            NearestLandmark(**l) for l in (lgc.landmarks_top3 or [])
+        ]
+        detail.listing_bezirk = lgc.listing_bezirk
+        detail.listing_ortsteil = lgc.listing_ortsteil
         return detail
 
 
@@ -218,6 +233,7 @@ def _build_noise_profile(blob: dict | None) -> NoiseProfile | None:
     return NoiseProfile(
         label=bucket_noise(total),
         total_lden=total,
+        total_lnight=blob.get("total_lnight"),
         street_lden=blob.get("street_lden"),
         rail_lden=blob.get("rail_lden"),
         distance_m=blob.get("distance_m"),

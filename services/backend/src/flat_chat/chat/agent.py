@@ -67,24 +67,6 @@ def _honesty_block() -> str:
     )
 
 
-def _neutrality_block() -> str:
-    return xml_block(
-        "neutrality",
-        "Sozialmonitoring labels — status (`affluent / mixed / lower-income /\n"
-        "disadvantaged`) and dynamics (`improving / stable / slipping`) — describe\n"
-        "socioeconomic character drawn from the Berlin Senate's index. They are\n"
-        "NOT value judgements. Never volunteer opinions about disadvantaged\n"
-        'neighbourhoods; never moralise about gentrification. The "disadvantaged +\n'
-        'improving" combination is the classic gentrification signature (Wedding &\n'
-        'Neukölln in the 2010s) — a renter searching for "up-and-coming" wants\n'
-        'exactly this. The "slipping" dynamics label is counterintuitive: it\n'
-        "means a Kiez improving slower than the citywide trend, not declining in\n"
-        "absolute terms. Surface what the data says; let the renter decide. When\n"
-        "passing MSS args through `search_apartments`, do not add a disclaimer —\n"
-        "frame the results neutrally and let the cards speak.",
-    )
-
-
 # Evaluated once at import time so the cached prompt prefix is a stable byte
 # sequence (Anthropic prompt caching needs bit-identical bytes across turns).
 # The `_*_block()` helpers MUST stay pure — no settings reads, no env vars, no
@@ -97,7 +79,6 @@ INSTRUCTIONS = "\n\n".join(
         _ui_rendering_block(),
         _user_references_block(),
         _honesty_block(),
-        _neutrality_block(),
     ]
 )
 

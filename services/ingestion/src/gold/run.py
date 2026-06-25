@@ -27,6 +27,7 @@ import traceback
 
 from db import engine
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from . import enrich_listings as gold
 
@@ -41,11 +42,15 @@ REQUIRED_TABLES: list[str] = [
     "parks",
     "schools",
     "school_catchments",
+    "kitas",
     "hospitals",
     "water_bodies",
-    "street_noise_2022",
+    "noise_levels",
+    "public_toilets",
+    "trees",
+    "bezirke",
+    "ortsteile",
     "population_density_2025",
-    "social_monitoring_2025",
     "playgrounds",
     "disabled_parking",
 ]
@@ -56,7 +61,16 @@ def _check_prerequisites() -> tuple[bool, list[str]]:
     empty: list[str] = []
     with engine.connect() as conn:
         for table in REQUIRED_TABLES:
-            count = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
+            try:
+                count = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
+            except ProgrammingError:
+                conn.rollback()
+                empty.append(table)
+                logger.warning(
+                    "Prerequisite check: %s is missing — gold output will be incomplete",
+                    table,
+                )
+                continue
             if count == 0:
                 empty.append(table)
                 logger.warning(

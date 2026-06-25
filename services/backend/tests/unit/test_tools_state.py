@@ -274,7 +274,7 @@ def test_search_apartments_translates_geo_kwargs_into_params():
     """Sanity-check that the geo-context kwargs make it into the params
     object that SearchService sees. Catches bit-rot in the kwargs->params
     plumbing (e.g. a field renamed in SearchParams but not in tools.py)."""
-    from flat_chat.search.geo_filters import MssFilter, TransitFilter
+    from flat_chat.search.geo_filters import TransitFilter
 
     search = _MockSearchService([], total=0)
     state = SessionState()
@@ -283,7 +283,6 @@ def test_search_apartments_translates_geo_kwargs_into_params():
         search_apartments(
             _ctx(state, search=search),
             transit=TransitFilter(modes=["u_bahn"], distance="near"),
-            mss=MssFilter(status_min="affluent"),
             max_noise="quiet",
             density="sparse",
         )
@@ -293,8 +292,6 @@ def test_search_apartments_translates_geo_kwargs_into_params():
     assert params is not None
     assert params.transit is not None
     assert params.transit.modes == ["u_bahn"]
-    assert params.mss is not None
-    assert params.mss.status_min == "affluent"
     assert params.max_noise == "quiet"
     assert params.density == "sparse"
 

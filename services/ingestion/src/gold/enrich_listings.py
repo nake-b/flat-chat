@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import Connection, text
+from .enrich_buildings import enrich_buildings
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,68 @@ def enrich_schools(conn: Connection) -> int:
 
 
 # -------------------------------------------------------------------------
+# Kitas  ← silver.kitas
+# -------------------------------------------------------------------------
+
+
+def enrich_kitas(conn: Connection) -> int:
+    """Nearest Kita chip + count within 500m + top 3 nearest Kitas."""
+    result = conn.execute(
+        text(
+            """
+            UPDATE listings_geo_context lgc
+            SET nearest_kita_m = nearest.distance_m,
+                kitas_within_500_count = COALESCE(cnt.cnt, 0),
+                kitas_top3     = top3.blob,
+                enriched_at    = now()
+            FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT ST_Distance(k.geom::geography,
+                                   l.location::geography)::int AS distance_m
+                FROM kitas k
+                WHERE l.location IS NOT NULL
+                ORDER BY k.geom <-> l.location
+                LIMIT 1
+            ) nearest ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS cnt
+                FROM kitas k
+                WHERE l.location IS NOT NULL
+                  AND ST_DWithin(
+                        k.geom::geography,
+                        l.location::geography,
+                        500
+                  )
+            ) cnt ON true
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'name',      t.name,
+                        'operator',  t.operator,
+                        'address',   t.address,
+                        'district',  t.district,
+                        'distance_m', t.distance_m
+                    )
+                    ORDER BY t.distance_m
+                ) AS blob
+                FROM (
+                    SELECT k.name, k.operator, k.address, k.district,
+                           ST_Distance(k.geom::geography,
+                                       l.location::geography)::int AS distance_m
+                    FROM kitas k
+                    WHERE l.location IS NOT NULL
+                    ORDER BY k.geom <-> l.location
+                    LIMIT 3
+                ) t
+            ) top3 ON true
+            WHERE lgc.listing_id = l.id
+            """
+        )
+    )
+    return result.rowcount or 0
+
+
+# -------------------------------------------------------------------------
 # Hospitals  ← silver.hospitals  (tier: plan_hospital | other)
 # -------------------------------------------------------------------------
 
@@ -285,9 +348,20 @@ def enrich_hospitals(conn: Connection) -> int:
         text(
             """
             UPDATE listings_geo_context lgc
-            SET hospitals_top2 = top2.blob,
+            SET nearest_hospital_name = nearest.name,
+                nearest_hospital_m    = nearest.distance_m,
+                hospitals_top2        = top2.blob,
                 enriched_at    = now()
             FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT h.name,
+                       ST_Distance(h.geom::geography,
+                                   l.location::geography)::int AS distance_m
+                FROM hospitals h
+                WHERE l.location IS NOT NULL
+                ORDER BY h.geom <-> l.location
+                LIMIT 1
+            ) nearest ON true
             LEFT JOIN LATERAL (
                 SELECT jsonb_agg(
                     jsonb_build_object(
@@ -348,7 +422,7 @@ def enrich_water(conn: Connection) -> int:
 
 
 # -------------------------------------------------------------------------
-# Noise  ← silver.street_noise_2022
+# Noise  ← silver.noise_levels
 # -------------------------------------------------------------------------
 
 
@@ -359,19 +433,22 @@ def enrich_noise(conn: Connection) -> int:
             """
             UPDATE listings_geo_context lgc
             SET noise_total_lden = nearest.total_lden,
+                noise_total_lnight = nearest.total_lnight,
                 noise_profile    = nearest.blob,
                 enriched_at      = now()
             FROM listings l
             LEFT JOIN LATERAL (
                 SELECT n.noise_total_lden AS total_lden,
+                       n.noise_total_lnight AS total_lnight,
                        jsonb_build_object(
                            'total_lden',  n.noise_total_lden,
+                           'total_lnight', n.noise_total_lnight,
                            'street_lden', n.noise_street_lden,
                            'rail_lden',   n.noise_rail_lden,
                            'distance_m',  ST_Distance(n.geom::geography,
                                                       l.location::geography)::int
                        ) AS blob
-                FROM street_noise_2022 n
+                FROM noise_levels n
                 WHERE l.location IS NOT NULL
                 ORDER BY n.geom <-> l.location
                 LIMIT 1
@@ -477,39 +554,6 @@ def enrich_density(conn: Connection) -> int:
 
 
 # -------------------------------------------------------------------------
-# MSS  ← silver.social_monitoring_2025  (ST_Contains on planning-area polygon)
-# Silver stores English labels (translated in geo_context.transform.wfs).
-# -------------------------------------------------------------------------
-
-
-def enrich_mss(conn: Connection) -> int:
-    """Sozialmonitoring status/dynamics chips + full profile."""
-    result = conn.execute(
-        text(
-            """
-            UPDATE listings_geo_context lgc
-            SET mss_status   = m.status_index_label,
-                mss_dynamics = m.dynamics_index_label,
-                mss_profile = jsonb_build_object(
-                    'status',                 m.status_index_label,
-                    'dynamics',               m.dynamics_index_label,
-                    'social_inequality',      m.social_inequality_label,
-                    'planning_area_name',     m.planning_area_name,
-                    'residents',              m.residents,
-                    'year',                   m.year
-                ),
-                enriched_at = now()
-            FROM listings l, social_monitoring_2025 m
-            WHERE lgc.listing_id = l.id
-              AND l.location IS NOT NULL
-              AND ST_Contains(m.geom, l.location)
-            """
-        )
-    )
-    return result.rowcount or 0
-
-
-# -------------------------------------------------------------------------
 # Disabled parking  ← silver.disabled_parking
 # -------------------------------------------------------------------------
 
@@ -540,6 +584,125 @@ def enrich_disabled_parking(conn: Connection) -> int:
 
 
 # -------------------------------------------------------------------------
+# Public toilets  ← silver.public_toilets
+# -------------------------------------------------------------------------
+
+
+def enrich_toilets(conn: Connection) -> int:
+    """Nearest public toilet (chip) + top 3 detail blob."""
+    result = conn.execute(
+        text(
+            """
+            UPDATE listings_geo_context lgc
+            SET nearest_toilet_m = nearest.distance_m,
+                toilets_top3       = top3.blob,
+                enriched_at        = now()
+            FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT pt.fid,
+                       pt.location,
+                       ST_Distance(pt.geom::geography,
+                                   l.location::geography)::int AS distance_m
+                FROM public_toilets pt
+                WHERE l.location IS NOT NULL
+                ORDER BY pt.geom <-> l.location
+                LIMIT 1
+            ) nearest ON true
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'fid', t.fid,
+                        'location', t.location,
+                        'operator', t.operator,
+                        'model_type', t.model_type,
+                        'opening_hours', t.opening_hours,
+                        'usage_fee', t.usage_fee,
+                        'wheelchair_accessible', t.wheelchair_accessible,
+                        'distance_m', t.distance_m
+                    )
+                    ORDER BY t.distance_m
+                ) AS blob
+                FROM (
+                    SELECT pt.fid, pt.location, pt.operator, pt.model_type,
+                           pt.opening_hours, pt.usage_fee,
+                           pt.wheelchair_accessible,
+                           ST_Distance(pt.geom::geography,
+                                       l.location::geography)::int AS distance_m
+                    FROM public_toilets pt
+                    WHERE l.location IS NOT NULL
+                    ORDER BY pt.geom <-> l.location
+                    LIMIT 3
+                ) t
+            ) top3 ON true
+            WHERE lgc.listing_id = l.id
+            """
+        )
+    )
+    return result.rowcount or 0
+
+
+# -------------------------------------------------------------------------
+# Trees  ← silver.trees
+# -------------------------------------------------------------------------
+
+
+def enrich_trees(conn: Connection) -> int:
+    """Tree count within 100m."""
+    result = conn.execute(
+        text(
+            """
+            UPDATE listings_geo_context lgc
+            SET trees_within_100_count = COALESCE(cnt.cnt, 0),
+                enriched_at      = now()
+            FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS cnt
+                FROM trees t2
+                WHERE l.location IS NOT NULL
+                  AND ST_DWithin(t2.geom::geography, l.location::geography, :radius_100)
+            ) cnt ON true
+            WHERE lgc.listing_id = l.id
+            """,
+        ),
+        {"radius_100": 100},
+    )
+    return result.rowcount or 0
+
+
+def enrich_admin_areas(conn: Connection) -> int:
+    """Assign listing Bezirk / Ortsteil from ALKIS boundary polygons."""
+    result = conn.execute(
+        text(
+            """
+            UPDATE listings_geo_context lgc
+            SET listing_bezirk   = bez.name,
+                listing_ortsteil = ort.name,
+                enriched_at      = now()
+            FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT b.name
+                FROM bezirke b
+                WHERE l.location IS NOT NULL
+                  AND ST_Covers(b.geom, l.location)
+                ORDER BY ST_Area(b.geom) ASC
+                LIMIT 1
+            ) bez ON true
+            LEFT JOIN LATERAL (
+                SELECT o.name
+                FROM ortsteile o
+                WHERE l.location IS NOT NULL
+                  AND ST_Covers(o.geom, l.location)
+                ORDER BY ST_Area(o.geom) ASC
+                LIMIT 1
+            ) ort ON true
+            WHERE lgc.listing_id = l.id
+            """
+        )
+    )
+    return result.rowcount or 0
+
+
+# -------------------------------------------------------------------------
 # Registry — used by `gold.run` to dispatch `--only` family filtering.
 # -------------------------------------------------------------------------
 
@@ -549,11 +712,15 @@ CHIP_FAMILIES = {
     "parks": enrich_parks,
     "playground": enrich_playground,
     "schools": enrich_schools,
+    "kitas": enrich_kitas,
     "hospitals": enrich_hospitals,
     "water": enrich_water,
     "noise": enrich_noise,
     "greenery": enrich_greenery,
     "density": enrich_density,
-    "mss": enrich_mss,
     "disabled_parking": enrich_disabled_parking,
+    "toilets": enrich_toilets,
+    "trees": enrich_trees,
+    "admin_areas": enrich_admin_areas,
+    "buildings": enrich_buildings,
 }

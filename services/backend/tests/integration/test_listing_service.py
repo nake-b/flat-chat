@@ -69,7 +69,6 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
             "persons_per_hectare": 200.0,
             "population": 12000,
         },
-        mss_profile={"status": "mixed", "dynamics": "improving"},
         disabled_parking_count=3,
     )
 
@@ -119,9 +118,6 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
     # 200 ppH is "dense" (>= 150).
     assert detail.density is not None
     assert detail.density.label == "dense"
-    assert detail.mss is not None
-    assert detail.mss.status == "mixed"
-    assert detail.mss.dynamics == "improving"
     assert detail.disabled_parking_count == 3
 
 
@@ -153,7 +149,6 @@ def test_get_returns_tier2_only_when_no_gold_row(async_db_url):
     assert detail.noise is None
     assert detail.greenery is None
     assert detail.density is None
-    assert detail.mss is None
     assert detail.disabled_parking_count == 0
 
 

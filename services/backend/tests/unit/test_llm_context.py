@@ -23,8 +23,8 @@ from flat_chat.listings.context import (
     DensityProfile,
     GreeneryProfile,
     ListingDetail,
-    MssProfile,
     NearestHospital,
+    NearestKita,
     NearestPark,
     NearestPlayground,
     NearestSchool,
@@ -302,6 +302,7 @@ def _detail_full() -> ListingDetail:
         nearest_schools=[
             NearestSchool(name="GS Lenau", school_type="Grundschule", distance_m=300),
         ],
+        nearest_kitas=[NearestKita(name="Kita Kreuzberg", operator="Eigenbetrieb", distance_m=280)],
         nearest_parks=[NearestPark(name="Görlitzer Park", distance_m=400)],
         nearest_playground=NearestPlayground(name="Mariannenplatz", distance_m=250),
         nearest_hospitals=[
@@ -311,7 +312,6 @@ def _detail_full() -> ListingDetail:
         noise=NoiseProfile(label="lively", total_lden=60.0),
         greenery=GreeneryProfile(label="leafy", green_m2_within_300m=6000.0),
         density=DensityProfile(label="dense", persons_per_hectare=200.0),
-        mss=MssProfile(status="mixed", dynamics="improving"),
         disabled_parking_count=3,
     )
 
@@ -330,6 +330,8 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "Primary school catchment: GS Lenau" in out
     assert "Nearby schools:" in out
     assert "  - GS Lenau (Grundschule) — 300m" in out
+    assert "Nearby kindergartens (Kitas):" in out
+    assert "  - Kita Kreuzberg (Eigenbetrieb) — 280m" in out
     # Parks / playground.
     assert "Nearby parks:" in out
     assert "  - Görlitzer Park — 400m" in out
@@ -341,8 +343,7 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "Nearest water: Landwehrkanal — 500m" in out
     # Character.
     assert (
-        "Neighbourhood character: street noise: lively, greenery: leafy, "
-        "density: dense, Sozialmonitoring: mixed · improving"
+        "Neighbourhood character: street noise: lively, greenery: leafy, density: dense"
     ) in out
     # Disabled parking.
     assert "Disabled parking nearby: 3 spots within 300m" in out

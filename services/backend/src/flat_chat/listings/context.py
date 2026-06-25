@@ -25,8 +25,6 @@ from .types import (
     DensityLabel,
     GreeneryLabel,
     GtfsMode,
-    MssDynamics,
-    MssStatus,
     NoiseLabel,
 )
 
@@ -48,6 +46,14 @@ class NearestTransitStop(BaseModel):
 class NearestSchool(BaseModel):
     name: str | None = None
     school_type: str | None = None
+    distance_m: int
+
+
+class NearestKita(BaseModel):
+    name: str | None = None
+    operator: str | None = None
+    address: str | None = None
+    district: str | None = None
     distance_m: int
 
 
@@ -81,6 +87,23 @@ class NearestWater(BaseModel):
     distance_m: int
 
 
+class NearestToilet(BaseModel):
+    fid: str | None = None
+    location: str | None = None
+    operator: str | None = None
+    model_type: str | None = None
+    opening_hours: str | None = None
+    usage_fee: str | None = None
+    wheelchair_accessible: str | None = None
+    distance_m: int
+
+
+class NearestLandmark(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    distance_m: int
+
+
 # ---------------------------------------------------------------------------
 # Profile composites — raw values + bucket label co-located.
 # ---------------------------------------------------------------------------
@@ -89,6 +112,7 @@ class NearestWater(BaseModel):
 class NoiseProfile(BaseModel):
     label: NoiseLabel | None = None
     total_lden: float | None = None
+    total_lnight: float | None = None
     street_lden: float | None = None
     rail_lden: float | None = None
     distance_m: int | None = None
@@ -113,17 +137,6 @@ class DensityProfile(BaseModel):
     age_70_to_75: int | None = None
     age_75_to_80: int | None = None
     age_80_plus: int | None = None
-
-
-class MssProfile(BaseModel):
-    """Sozialmonitoring profile. Labels are neutral re-codings (doc §8)."""
-
-    status: MssStatus | None = None
-    dynamics: MssDynamics | None = None
-    social_inequality: str | None = None
-    planning_area_name: str | None = None
-    residents: int | None = None
-    year: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +206,6 @@ class UiApartment(BaseModel):
     nearest_park_m: int | None = None
     noise_label: NoiseLabel | None = None
     density_label: DensityLabel | None = None
-    mss_status_label: MssStatus | None = None
-    mss_dynamics_label: MssDynamics | None = None
 
     # Semantic-search score (cosine similarity, when query was set)
     similarity_score: float | None = None
@@ -262,12 +273,20 @@ class ListingDetail(BaseModel):
     nearest_transit_stops: list[NearestTransitStop] = Field(default_factory=list)
     school_catchment: SchoolCatchmentInfo | None = None
     nearest_schools: list[NearestSchool] = Field(default_factory=list)
+    nearest_kitas: list[NearestKita] = Field(default_factory=list)
+    kitas_within_500_count: int = 0
     nearest_parks: list[NearestPark] = Field(default_factory=list)
     nearest_playground: NearestPlayground | None = None
     nearest_hospitals: list[NearestHospital] = Field(default_factory=list)
+    nearest_hospital_name: str | None = None
+    nearest_hospital_m: int | None = None
     nearest_water: NearestWater | None = None
     noise: NoiseProfile | None = None
     greenery: GreeneryProfile | None = None
     density: DensityProfile | None = None
-    mss: MssProfile | None = None
     disabled_parking_count: int = 0
+    nearest_toilets: list[NearestToilet] = Field(default_factory=list)
+    trees_within_100_count: int = 0
+    nearest_landmarks: list[NearestLandmark] = Field(default_factory=list)
+    listing_bezirk: str | None = None
+    listing_ortsteil: str | None = None

@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from flat_chat.listings.types import GtfsMode, MssDynamics, MssStatus, NearSpec
+from flat_chat.listings.types import GtfsMode, NearSpec
 
 
 class TransitFilter(BaseModel):
@@ -71,28 +71,42 @@ class HospitalFilter(BaseModel):
     tier: Literal["plan_hospital", "any"] = "plan_hospital"
 
 
-class MssFilter(BaseModel):
-    """Filter listings by neighbourhood socioeconomic character (Sozialmonitoring).
+class LandmarkFilter(BaseModel):
+    """Filter listings by proximity to a named landmark.
 
-    `status_min` is a *minimum* status floor — `"mixed"` matches mixed
-    AND affluent areas. `dynamics` is exact — `"improving"` only matches
-    areas trending up faster than Berlin overall.
-
-    These are neighbourhood-character labels, NOT a desirability score.
-    A renter seeking "up-and-coming" wants `status_min="disadvantaged"`
-    + `dynamics="improving"` (the classic gentrification signature).
+    `name` is a substring match against ALKIS building names (`buildings.name`).
+    The filter matches listings whose `listings.location` is within `distance`
+    meters of any matching ALKIS building footprint (`buildings.geom`).
     """
 
-    status_min: MssStatus = "lower-income"
-    dynamics: MssDynamics | None = None
+    name: str
+    distance: NearSpec = "near"
 
 
-# Used by `SearchService` to translate `mss.status_min` into a SQL
-# threshold — higher value = more affluent. Co-located here because it's
-# inherent to the MSS status enum (not a tweakable threshold).
-MSS_STATUS_RANK: dict[MssStatus, int] = {
-    "disadvantaged": 0,
-    "lower-income": 1,
-    "mixed": 2,
-    "affluent": 3,
-}
+class NamedGeoContextFilter(BaseModel):
+    """Generic "near X by name" filter against gold's JSONB nearest lists.
+
+    Use this when the user names a specific place and you want apartments
+    within a distance band of that named feature.
+
+    Notes:
+      - For most kinds this is NOT a spatial join at query time. It matches
+        against the precomputed Top-K nearest blobs in `listings_geo_context`.
+      - `kind="landmark"` is special: it performs a true radius search against
+        ALKIS building footprints (`buildings`) via ST_DWithin.
+      - `name` is a case-insensitive substring match.
+      - `distance` uses the same NearSpec ladder as the other geo filters.
+    """
+
+    kind: Literal[
+        "landmark",  # ALKIS named buildings
+        "school",
+        "kita",
+        "park",  # Grünflächen
+        "playground",
+        "water",
+        "hospital",
+        "transit_stop",
+    ]
+    name: str
+    distance: NearSpec = "near"

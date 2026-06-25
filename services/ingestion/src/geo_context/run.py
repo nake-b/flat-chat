@@ -22,6 +22,7 @@ import sys
 import traceback
 
 from db import engine
+from sqlalchemy import text
 
 from .config import Catalog, WfsDataset, load_catalog
 from .extract.gtfs import VbbGtfsClient
@@ -31,6 +32,66 @@ from .transform.gtfs import transform_gtfs
 from .transform.wfs import transform_wfs_layer
 
 logger = logging.getLogger(__name__)
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    """Return True if target table exists in current schema."""
+    return bool(
+        conn.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = current_schema()
+                      AND table_name = :table_name
+                )
+                """
+            ),
+            {"table_name": table_name},
+        ).scalar()
+    )
+
+
+def _ensure_brandenburger_tor(conn) -> bool:
+    """Insert synthetic Brandenburger Tor into buildings exactly once."""
+    exists = bool(
+        conn.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM buildings
+                    WHERE lower(trim(name)) = 'brandenburger tor'
+                )
+                """
+            )
+        ).scalar()
+    )
+    if exists:
+        return False
+
+    conn.execute(
+        text(
+            """
+            INSERT INTO buildings (
+                name,
+                description,
+                geom
+            ) VALUES (
+                'Brandenburger Tor',
+                'synthetic_fallback',
+                ST_Multi(
+                    ST_GeomFromText(
+                        'POLYGON((13.37746 52.51616,13.37795 52.51616,13.37795 52.51640,13.37746 52.51640,13.37746 52.51616))',
+                        4326
+                    )
+                )
+            )
+            """
+        )
+    )
+    return True
 
 
 def _run_wfs(
@@ -60,6 +121,16 @@ def _run_wfs(
         family_fail_keys: list[str] = []
         try:
             with engine.begin() as conn:
+                if not _table_exists(conn, table):
+                    fail += len(entries)
+                    family_fail_keys = [ds.key for ds in entries]
+                    logger.error(
+                        "SKIP table=%s (layers=%s): target table missing. "
+                        "Run migrations before geo_context reload.",
+                        table,
+                        ",".join(family_fail_keys),
+                    )
+                    continue
                 # Streaming write: first page of the first layer TRUNCATEs;
                 # everything else appends in the same transaction. Memory
                 # stays bounded to one page (10k rows) regardless of how big
@@ -97,6 +168,12 @@ def _run_wfs(
                                 geom_type=ds.geom_type,
                             )
                         layer_rows += len(transformed)
+                    if ds.key == "alkis_buildings" and _ensure_brandenburger_tor(conn):
+                        layer_rows += 1
+                        logger.info(
+                            "%s: injected synthetic fallback feature 'Brandenburger Tor'",
+                            ds.key,
+                        )
                     if layer_rows == 0:
                         logger.warning(
                             "%s/%s: empty, skipping", ds.dataset, ds.layer
@@ -205,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Chain gold re-enrichment if any silver geo-context family succeeded.
-    # When geo-context refreshes (e.g. updated noise raster, new MSS year),
+    # When geo-context refreshes (e.g. updated noise raster / new Kitas),
     # every listing's gold row needs to be re-computed against the new data
     # — chaining here ensures the agent's search results reflect the
     # refreshed truth without manual intervention. Skipped if everything

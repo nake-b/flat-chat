@@ -13,6 +13,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import Point
 
+from geo_context.config import load_catalog
 from geo_context.transform.aliases import ALIASES
 from geo_context.transform.wfs import transform_wfs_layer
 
@@ -61,3 +62,13 @@ def test_unknown_dataset_raises() -> None:
     )
     with pytest.raises(KeyError):
         transform_wfs_layer(gdf, "nope", "nope")
+
+
+def test_enabled_wfs_catalog_entries_have_aliases() -> None:
+    catalog = load_catalog()
+    missing = [
+        (ds.dataset, ds.layer)
+        for ds in catalog.wfs
+        if ds.enabled and (ds.dataset, ds.layer) not in ALIASES
+    ]
+    assert missing == []

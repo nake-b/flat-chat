@@ -4,6 +4,8 @@ WORKDIR /app
 COPY . .
 RUN uv sync --no-dev
 ENV PYTHONPATH=/app/src
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH=/app/.venv/bin:$PATH
 # Default to running silver. Each tier can be invoked individually via:
 #   docker compose run --rm ingestion python -m iron.loader <path>
 #   docker compose run --rm ingestion python -m bronze.loader <path>

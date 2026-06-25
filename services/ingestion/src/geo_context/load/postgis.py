@@ -40,6 +40,7 @@ def _safe_ident(name: str) -> str:
         raise ValueError(f"unsafe SQL identifier: {name!r}")
     return name
 
+
 _GEOM_KIND_BY_TYPE: dict[str, str] = {
     "Point": "POINT",
     "MultiPoint": "MULTIPOINT",
@@ -67,33 +68,108 @@ def _write_gdf(
     chunksize: int = 5000,
     extra_dtype: dict[str, Any] | None = None,
 ) -> None:
+
     pg_type = _GEOM_KIND_BY_TYPE.get(geom_type)
     if pg_type is None:
         raise ValueError(f"unsupported geom_type: {geom_type!r}")
-    dtype: dict[str, Any] = {"geom": Geometry(pg_type, srid=SILVER_SRID)}
+
+    dtype_map: dict[str, Any] = {
+        "geom": Geometry(pg_type, srid=SILVER_SRID)
+    }
+
     if extra_dtype:
-        dtype.update(extra_dtype)
+        dtype_map.update(extra_dtype)
+
+    # 1) DROPPING PHASE: Drop any rows containing corrupted out-of-bounds numbers
+    PG_INT_MIN = -2147483648
+    PG_INT_MAX = 2147483647
+
+    for col in gdf.columns:
+        is_integer_field = (
+            col in ["planting_year", "age_years"] or 
+            (extra_dtype and col in extra_dtype and isinstance(extra_dtype[col], sa.Integer))
+        )
+        
+        if is_integer_field:
+            v_numeric = pd.to_numeric(gdf[col], errors='coerce')
+            corrupted_rows = (v_numeric < PG_INT_MIN) | (v_numeric > PG_INT_MAX)
+            
+            if corrupted_rows.any():
+                logger.warning(
+                    f"Table '{table_name}': Dropped {corrupted_rows.sum()} rows "
+                    f"due to corrupted out-of-range values in column '{col}'"
+                )
+                gdf = gdf[~corrupted_rows].copy()
+
+    def safe_int(s: pd.Series) -> pd.Series:
+        # Explicit list comprehension guarantees absolute execution control over item types.
+        # This keeps integers as pure python ints and converts missing keys to native Nones.
+        numeric = pd.to_numeric(s, errors="coerce")
+        return pd.Series(
+            [int(round(x)) if pd.notna(x) else None for x in numeric],
+            index=s.index,
+            dtype=object
+        )
+
+    def is_int_like(series: pd.Series) -> bool:
+        """
+        Detects columns like: 28.0, 15.0, NaN, "28"
+        but NOT true floats like 28.5
+        """
+        numeric = pd.to_numeric(series, errors="coerce")
+        return (numeric.dropna() % 1 == 0).all()
+
+    # 2) FIX: Handle planting years safely
+    if 'planting_year' in gdf.columns:
+        years = pd.to_numeric(gdf['planting_year'], errors='coerce')
+        gdf['planting_year'] = pd.Series(
+            [int(round(x)) if (pd.notna(x) and 1000 <= x <= 2100) else None for x in years],
+            index=gdf.index,
+            dtype=object
+        )
+
+    if extra_dtype:
+        # Explicit schema-based cast
+        for col, col_dtype in extra_dtype.items():
+            if col not in gdf.columns:
+                continue
+            if isinstance(col_dtype, sa.Integer):
+                gdf[col] = safe_int(gdf[col])
+
+    # 3) HARD SAFETY PASS: catch missed float-integers and nullable Int64 types
+    for col in gdf.columns:
+        if col == 'planting_year':
+            continue  # Already safely processed above
+            
+        if col in dtype_map and isinstance(dtype_map[col], sa.Integer):
+            gdf[col] = safe_int(gdf[col])
+        elif gdf[col].dtype == "float64" and is_int_like(gdf[col]):
+            gdf[col] = safe_int(gdf[col])
+        elif str(gdf[col].dtype) == "Int64":
+            gdf[col] = safe_int(gdf[col])
+
+    # 4) Debug inspection assert
+    if "age_years" in gdf.columns:
+        print("\n========== BEFORE TO_POSTGIS ==========")
+        print("dtype:", gdf["age_years"].dtype)
+        non_nulls = gdf["age_years"].dropna()
+        print("python type:", type(non_nulls.iloc[0]) if not non_nulls.empty else "All None/Empty")
+        print(gdf["age_years"].head(20).tolist())
+        print("=======================================\n")
+
+    # 5) Push clean data safely to database
     gdf.to_postgis(
         table_name,
         conn,
         if_exists="append",
         index=False,
         chunksize=chunksize,
-        dtype=dtype,
+        dtype=dtype_map,
     )
 
 
 def to_pg_array(values: Any, *, kind: str) -> str | None:
-    """Serialize a Python list into a Postgres array literal string.
-
-    Geopandas's to_postgis writes via COPY, which can't translate Python
-    lists into Postgres array literals. Pre-serializing the column to a
-    text-formatted array literal (\"{1,2}\" / \"{a,b}\") lets COPY write
-    the text verbatim, and Postgres' input coercion parses it into a
-    real array on insert.
-
-    `kind`: \"int\" for numeric arrays, \"text\" for string arrays.
-    """
+    """Serialize a Python list into a Postgres array literal string."""
     if values is None:
         return None
     if isinstance(values, float) and pd.isna(values):
@@ -103,7 +179,6 @@ def to_pg_array(values: Any, *, kind: str) -> str | None:
     if kind == "int":
         return "{" + ",".join(str(int(v)) for v in values) + "}"
     if kind == "text":
-        # Quote and escape backslashes + double-quotes per Postgres array rules.
         escaped = [
             '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
             for v in values

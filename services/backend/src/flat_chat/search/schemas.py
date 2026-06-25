@@ -3,8 +3,7 @@
 `SearchParams` is the tool-arg surface for `search_apartments`. Wide and
 flat by design — LLMs handle ~30 flat optional fields better than deep
 nesting. Geo-context filters that have internal combinatorial structure
-(transit modes ∧ lines ∧ stop name, MSS status floor + dynamics) are
-allowed one level of nesting.
+(transit modes ∧ lines ∧ stop name) are allowed one level of nesting.
 
 Bucket labels (NoiseLabel, GreeneryLabel, DensityLabel) live in
 `listings.types` — single source of truth across the project.
@@ -24,7 +23,8 @@ from flat_chat.listings.types import (
 
 from .geo_filters import (
     HospitalFilter,
-    MssFilter,
+    NamedGeoContextFilter,
+    LandmarkFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -41,7 +41,7 @@ class SearchParams(BaseModel):
     SearchService translates `True/False` into the corresponding WHERE
     clause; `None` is a no-op.
 
-    Geo-context fields (transit / school / hospital / mss / near_* / max_noise
+    Geo-context fields (transit / school / hospital / near_* / max_noise
     / min_greenery / density) are bundled or flat depending on whether they
     take multiple inputs. See `agent-compound-docs/decisions/
     geo-context-thresholds.md` for the threshold spec.
@@ -87,7 +87,8 @@ class SearchParams(BaseModel):
     transit: TransitFilter | None = None
     school: SchoolFilter | None = None
     hospital: HospitalFilter | None = None
-    mss: MssFilter | None = None
+    landmark: LandmarkFilter | None = None
+    named_geo: list[NamedGeoContextFilter] | None = None
     # Flat (single concept each):
     near_park: NearSpec | None = None
     near_playground: NearSpec | None = None
@@ -95,6 +96,9 @@ class SearchParams(BaseModel):
     max_noise: NoiseLabel | None = None
     min_greenery: GreeneryLabel | None = None
     density: DensityLabel | None = None
+    # New geo-context filters: toilets (must have a public toilet within default cap) and trees
+    has_nearby_toilet: bool | None = None
+    has_tree_within_100m: bool | None = None
 
     sort_by: SortBy = "relevance"
     # Cap raised post-refactor: gold makes 500-result searches cheap

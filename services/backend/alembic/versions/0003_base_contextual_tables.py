@@ -115,7 +115,7 @@ def upgrade() -> None:
     )
 
     # =====================================================================
-    # street_noise_2022  ← ua_stratlaerm_2022 / aa_fp_gesamt2022  (Point)
+    # noise_levels  ← ua_stratlaerm_2022 / aa_fp_gesamt2022  (Point)
     # Source publishes raw x/y in EPSG:25833 alongside geom; we drop them
     # because they're redundant with the projected Point geometry.
     # The *_den fields are EU Lden values (day-evening-night, dB);
@@ -125,7 +125,7 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE TABLE street_noise_2022 (
+        CREATE TABLE noise_levels (
             id                      BIGSERIAL PRIMARY KEY,
             import_id               TEXT,
             noise_street_lden       DOUBLE PRECISION,
@@ -141,8 +141,8 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX street_noise_2022_geom_gix "
-        "ON street_noise_2022 USING GIST (geom)"
+        "CREATE INDEX noise_levels_geom_gix "
+        "ON noise_levels USING GIST (geom)"
     )
 
     # =====================================================================
@@ -303,39 +303,74 @@ def upgrade() -> None:
     )
 
     # =====================================================================
-    # social_monitoring_2025  ← mss_2025 / mss2025_indizes_542  (MultiPolygon)
-    # Berlin's Monitoring Soziale Stadtentwicklung — composite indices per
-    # planning area: Status Index (current state), Dynamics Index (recent
-    # trajectory), Social Inequality Index (overall composite).
+    # public_toilets  ← toiletten / toiletten  (Point)
     # =====================================================================
 
     op.execute(
         """
-        CREATE TABLE social_monitoring_2025 (
-            id                         BIGSERIAL PRIMARY KEY,
-            planning_area_id           TEXT,
-            planning_area_name         TEXT,
-            district_id                TEXT,
-            residents                  INTEGER,
-            dynamics_index_score       INTEGER,
-            dynamics_index_label       TEXT,
-            social_inequality_category TEXT,
-            social_inequality_score    INTEGER,
-            social_inequality_label    TEXT,
-            status_index_score         INTEGER,
-            status_index_label         TEXT,
-            year                       INTEGER,
-            notes                      TEXT,
-            geom                       geometry(MultiPolygon, 4326)
+        CREATE TABLE public_toilets (
+            id                     BIGSERIAL PRIMARY KEY,
+            fid                    TEXT,
+            district               TEXT,
+            location               TEXT,
+            contract               TEXT,
+            operator               TEXT,
+            model_type             TEXT,
+            symbol                 TEXT,
+            opening_hours          TEXT,
+            usage_fee              TEXT,
+            payment_type           TEXT,
+            wheelchair_accessible  TEXT,
+            low_barrier            TEXT,
+            changing_table         TEXT,
+            geom                   geometry(Point, 4326)
         )
         """
     )
     op.execute(
-        "CREATE INDEX social_monitoring_2025_geom_gix "
-        "ON social_monitoring_2025 USING GIST (geom)"
+        "CREATE INDEX public_toilets_geom_gix "
+        "ON public_toilets USING GIST (geom)"
     )
 
     # =====================================================================
+    # trees  ← baumbestand / anlagenbaeume + strassenbaeume  (Point)
+    # `tree_type` discriminates park/facility trees from street trees.
+    # =====================================================================
+
+    op.execute(
+        """
+        CREATE TABLE trees (
+            id                       BIGSERIAL PRIMARY KEY,
+            tree_type                TEXT NOT NULL,
+            gis_id                   TEXT,
+            pit_id                   TEXT,
+            tree_number              TEXT,
+            object_number            TEXT,
+            object_name              TEXT,
+            species_de               TEXT,
+            species_botanical        TEXT,
+            genus_de                 TEXT,
+            genus                    TEXT,
+            species_group            TEXT,
+            street_number            TEXT,
+            street_name              TEXT,
+            house_number             TEXT,
+            house_number_suffix      TEXT,
+            planting_year            INTEGER,
+            age_years                INTEGER,
+            crown_diameter_m         DOUBLE PRECISION,
+            trunk_circumference_cm   DOUBLE PRECISION,
+            height_m                 DOUBLE PRECISION,
+            owner                    TEXT,
+            district                 TEXT,
+            geom                     geometry(Point, 4326),
+            CONSTRAINT trees_tree_type_check
+                CHECK (tree_type IN ('park', 'street'))
+        )
+        """
+    )
+    op.execute("CREATE INDEX trees_geom_gix ON trees USING GIST (geom)")
+
     # water_bodies  ← gewaesserkarte / e_gew_gewaesser_fl  (mixed geometry)
     # Surface representations for every Berlin water body: lakes (Wannsee,
     # Müggelsee), the Spree, Havel, canals. The source mixes Polygon,
@@ -451,13 +486,14 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS transit_routes")
     op.execute("DROP TABLE IF EXISTS transit_stops")
     op.execute("DROP TABLE IF EXISTS water_bodies")
-    op.execute("DROP TABLE IF EXISTS social_monitoring_2025")
+    op.execute("DROP TABLE IF EXISTS trees")
+    op.execute("DROP TABLE IF EXISTS public_toilets")
     op.execute("DROP TABLE IF EXISTS disabled_parking")
     op.execute("DROP TABLE IF EXISTS hospitals")
     op.execute("DROP TABLE IF EXISTS playgrounds")
     op.execute("DROP TABLE IF EXISTS parks")
     op.execute("DROP TABLE IF EXISTS green_volume_2020")
-    op.execute("DROP TABLE IF EXISTS street_noise_2022")
+    op.execute("DROP TABLE IF EXISTS noise_levels")
     op.execute("DROP TABLE IF EXISTS population_density_2025")
     op.execute("DROP TABLE IF EXISTS school_catchments")
     op.execute("DROP TABLE IF EXISTS schools")
