@@ -8,8 +8,11 @@ export {
   AGENT_NAME,
   EMPTY_SESSION_STATE,
   EMPTY_UI_STATE,
+  decodeMarkers,
 } from "./SessionState";
 export type {
+  MarkerPoint,
+  ResultMarkers,
   DensityLabel,
   DensityProfile,
   GreeneryLabel,

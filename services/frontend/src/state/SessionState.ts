@@ -2,6 +2,11 @@
 // (services/backend/src/flat_chat/chat/session_state.py).
 // Keep these two files in sync — fields and optionality must match exactly.
 //
+// `result_markers` mirrors the SERIALIZED columnar wire shape that crosses
+// AG-UI (parallel arrays), NOT the backend's in-memory `list[Marker]` —
+// CopilotKit stores whatever the backend dumps verbatim, and the backend
+// dumps the columnar form. Use `decodeMarkers()` to zip it back into objects.
+//
 // Per-listing context shapes mirror services/backend/src/flat_chat/listings/context.py.
 // Label literal vocab traces to agent-compound-docs/decisions/geo-context-thresholds.md.
 //
@@ -235,15 +240,68 @@ export interface ListingCard {
 export type SearchParams = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
+// ResultMarkers — the COLUMNAR wire shape for the full result set (≤5000
+// matches). Parallel, index-aligned arrays: the i-th match is
+// { id: ids[i], lat: lats[i], lng: lngs[i], price_warm_eur: prices[i] }.
+// This is what CopilotKit stores verbatim — it's both the map source and
+// the ordered result set. Decode into objects with `decodeMarkers()`.
+// ---------------------------------------------------------------------------
+
+export interface ResultMarkers {
+  ids: string[];
+  lats: number[];
+  lngs: number[];
+  prices: (number | null)[];
+}
+
+// A single decoded marker — one row zipped out of the parallel arrays.
+export interface MarkerPoint {
+  id: string;
+  lat: number;
+  lng: number;
+  price_warm_eur: number | null;
+}
+
+// Zip the parallel arrays into objects. Guards null/undefined → []. Length
+// is driven by `ids`; positional fields fall back to null when arrays are
+// ragged (defensive against partial state deltas).
+export function decodeMarkers(
+  m: ResultMarkers | null | undefined,
+): MarkerPoint[] {
+  if (!m || !m.ids) return [];
+  const out: MarkerPoint[] = [];
+  for (let i = 0; i < m.ids.length; i++) {
+    const lat = m.lats?.[i];
+    const lng = m.lngs?.[i];
+    // Skip ragged rows missing coordinates — a marker without lat/lng is
+    // meaningless to both the map and the card list.
+    if (lat == null || lng == null) continue;
+    out.push({
+      id: m.ids[i],
+      lat,
+      lng,
+      price_warm_eur: m.prices?.[i] ?? null,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // SessionState — the canonical in-memory representation mirrored from
 // backend over the AG-UI stream. The frontend renders markers + cards from
 // this; the LLM reads the same fields via build_dynamic_state_prompt.
+//
+// Tiered result set: `result_markers` carries EVERY match (≤5000) as the
+// columnar map source + ordered list; `preview_cards` carries the top-10
+// full cards hot for instant first paint. The rest of the cards are
+// hydrated lazily via GET /api/listings?ids=…&view=card as the user scrolls.
 // ---------------------------------------------------------------------------
 
 export interface SessionState {
   search_params: SearchParams | null;
   total_results: number;
-  results: ListingCard[];
+  result_markers: ResultMarkers;
+  preview_cards: ListingCard[];
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
 }
@@ -251,7 +309,8 @@ export interface SessionState {
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   search_params: null,
   total_results: 0,
-  results: [],
+  result_markers: { ids: [], lats: [], lngs: [], prices: [] },
+  preview_cards: [],
   active_id: null,
   active_listing_detail: null,
 }) as SessionState;

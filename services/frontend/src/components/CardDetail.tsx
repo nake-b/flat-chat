@@ -6,13 +6,83 @@ import {
   type ListingCard,
 } from "../state/SessionState";
 
+// The subset of fields the detail body reads — present on BOTH ListingCard
+// and ListingDetail. We render from `active_listing_detail ?? apt` so the
+// panel works even when no tier-2 card is cached (agent opened it before
+// hydration). `image_url` is ListingCard-only (ListingDetail carries the
+// full `images[]` array instead), so it's handled separately by ImageGallery.
+interface DetailView {
+  id: string;
+  title: string | null;
+  district: string | null;
+  address: string | null;
+  price_warm_eur: number | null;
+  price_cold_eur: number | null;
+  nebenkosten_eur: number | null;
+  kaution_eur: number | null;
+  rooms: number | null;
+  bedrooms: number | null;
+  area_sqm: number | null;
+  floor: number | null;
+  listing_type: string | null;
+  available_from: string | null;
+  source_url: string | null;
+  wbs_required: boolean | null;
+  is_furnished: boolean | null;
+  has_balcony: boolean | null;
+  has_kitchen: boolean | null;
+  has_elevator: boolean | null;
+  has_garden: boolean | null;
+  heating: string | null;
+  lister_type: string | null;
+}
+
+// Project a tier-3 ListingDetail OR tier-2 ListingCard down to the shared
+// DetailView the body renders. Both carry every field by the same name, so
+// this is a structural narrowing — TypeScript verifies the overlap.
+function toDetailView(src: ListingDetail | ListingCard): DetailView {
+  return {
+    id: src.id,
+    title: src.title,
+    district: src.district,
+    address: src.address,
+    price_warm_eur: src.price_warm_eur,
+    price_cold_eur: src.price_cold_eur,
+    nebenkosten_eur: src.nebenkosten_eur,
+    kaution_eur: src.kaution_eur,
+    rooms: src.rooms,
+    bedrooms: src.bedrooms,
+    area_sqm: src.area_sqm,
+    floor: src.floor,
+    listing_type: src.listing_type,
+    available_from: src.available_from,
+    source_url: src.source_url,
+    wbs_required: src.wbs_required,
+    is_furnished: src.is_furnished,
+    has_balcony: src.has_balcony,
+    has_kitchen: src.has_kitchen,
+    has_elevator: src.has_elevator,
+    has_garden: src.has_garden,
+    heating: src.heating,
+    lister_type: src.lister_type,
+  };
+}
+
 // Detail panel: a card-sized white pane sitting at the top of the cards
 // slot, with the paper background of `CardsPane` showing beneath. The
 // pane sizes to its content — no stretching, no Option-X expansion, no
 // filler band. Matches the strip's "card-on-paper" visual density.
-export function CardDetail({ apt }: { apt: ListingCard }) {
+//
+// `apt` (tier-2 card) is OPTIONAL: the agent's `open_listing` tool can set
+// `active_id` before any card is hydrated. In that case we fall back to the
+// tier-3 `active_listing_detail` (a superset of the card fields) for the
+// header and stat body. Gating reads on `state.active_id` keeps stale detail
+// from leaking across selections.
+export function CardDetail({ apt }: { apt?: ListingCard }) {
   const { state, activate } = useSessionState();
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const activeId = state?.active_id ?? null;
 
   // Tier-3 detail blob — fetched by `activate(id)` via GET /api/listings/{id}
   // when the user clicks a card (the primary path) OR pushed by the agent's
@@ -20,10 +90,18 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
   // as `active_listing_detail`. We only render it for the *currently active*
   // listing so stale data can't leak across selections.
   const detail: ListingDetail | null =
-    state?.active_id === apt.id ? state?.active_listing_detail ?? null : null;
+    activeId != null && (apt == null || activeId === apt.id)
+      ? state?.active_listing_detail ?? null
+      : null;
   // Back-compat alias for the existing rendering code below — `ctx` was the
   // old name; ListingDetail is a superset of what ListingContext exposed.
   const ctx = detail;
+
+  // Unified view for the header + stat body: prefer tier-3 detail (richer,
+  // authoritative) and fall back to the tier-2 card. At least one is present
+  // whenever active_id is set, but guard defensively just in case.
+  const source: ListingDetail | ListingCard | null = detail ?? apt ?? null;
+  const view: DetailView | null = source ? toDetailView(source) : null;
 
   const close = () => {
     void activate(null);
@@ -33,10 +111,44 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
     backButtonRef.current?.focus();
   }, []);
 
+  // Defensive: active_id set but neither tier-2 card nor tier-3 detail has
+  // arrived yet (e.g. agent set active_id, HTTP fetch in flight). Render a
+  // minimal loading shell rather than crashing on undefined field reads.
+  if (!view) {
+    return (
+      <div
+        role="region"
+        aria-label="Loading detail"
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            close();
+          }
+        }}
+        className="flex h-full flex-col bg-white focus:outline-none"
+      >
+        <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+            Loading…
+          </div>
+          <button
+            ref={backButtonRef}
+            type="button"
+            className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
+            onClick={close}
+          >
+            ← back
+          </button>
+        </header>
+      </div>
+    );
+  }
+
   return (
     <div
       role="region"
-      aria-label={`Detail for ${apt.title ?? "apartment"}`}
+      aria-label={`Detail for ${view.title ?? "apartment"}`}
       tabIndex={-1}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -49,13 +161,13 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
       <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
         <div className="min-w-0">
           <div className="font-mono text-[10px] uppercase tracking-widest text-red">
-            Detail · {apt.district ?? "Berlin"}
+            Detail · {view.district ?? "Berlin"}
           </div>
           <h2 className="mt-1 line-clamp-2 font-display text-lg font-medium leading-tight tracking-tightest text-ink">
-            {apt.title ?? "(untitled)"}
+            {view.title ?? "(untitled)"}
           </h2>
           <div className="mt-0.5 line-clamp-1 text-[13px] text-ink-soft">
-            {apt.address ?? apt.district ?? "—"}
+            {view.address ?? view.district ?? "—"}
           </div>
         </div>
         <button
@@ -73,46 +185,46 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
           rarely has kaution, klein rarely has bedrooms). flex-1 basis-0
           shares row width equally among present cells. */}
       <div className="flex flex-wrap">
-        {apt.price_warm_eur != null && (
-          <Stat label="Warm rent" value={formatEuro(apt.price_warm_eur)} accent />
+        {view.price_warm_eur != null && (
+          <Stat label="Warm rent" value={formatEuro(view.price_warm_eur)} accent />
         )}
-        {apt.price_cold_eur != null && (
-          <Stat label="Cold rent" value={formatEuro(apt.price_cold_eur)} />
+        {view.price_cold_eur != null && (
+          <Stat label="Cold rent" value={formatEuro(view.price_cold_eur)} />
         )}
-        {apt.nebenkosten_eur != null && (
-          <Stat label="Nebenkosten" value={formatEuro(apt.nebenkosten_eur)} />
+        {view.nebenkosten_eur != null && (
+          <Stat label="Nebenkosten" value={formatEuro(view.nebenkosten_eur)} />
         )}
-        {apt.kaution_eur != null && (
-          <Stat label="Kaution" value={formatEuro(apt.kaution_eur)} />
+        {view.kaution_eur != null && (
+          <Stat label="Kaution" value={formatEuro(view.kaution_eur)} />
         )}
-        {apt.rooms != null && (
-          <Stat label="Rooms" value={apt.rooms.toString().replace(/\.0$/, "")} />
+        {view.rooms != null && (
+          <Stat label="Rooms" value={view.rooms.toString().replace(/\.0$/, "")} />
         )}
-        {apt.bedrooms != null && (
-          <Stat label="Bedrooms" value={apt.bedrooms.toString()} />
+        {view.bedrooms != null && (
+          <Stat label="Bedrooms" value={view.bedrooms.toString()} />
         )}
-        {apt.area_sqm != null && (
-          <Stat label="Area" value={`${Math.round(apt.area_sqm)} m²`} />
+        {view.area_sqm != null && (
+          <Stat label="Area" value={`${Math.round(view.area_sqm)} m²`} />
         )}
-        {apt.price_warm_eur != null && apt.area_sqm != null && apt.area_sqm > 0 && (
+        {view.price_warm_eur != null && view.area_sqm != null && view.area_sqm > 0 && (
           <Stat
             label="€/m²"
-            value={`€${Math.round(apt.price_warm_eur / apt.area_sqm)}`}
+            value={`€${Math.round(view.price_warm_eur / view.area_sqm)}`}
           />
         )}
-        {apt.floor != null && <Stat label="Floor" value={formatFloor(apt.floor)} />}
-        {apt.listing_type != null && (
-          <Stat label="Type" value={apt.listing_type} />
+        {view.floor != null && <Stat label="Floor" value={formatFloor(view.floor)} />}
+        {view.listing_type != null && (
+          <Stat label="Type" value={view.listing_type} />
         )}
-        {apt.available_from != null && (
-          <Stat label="Available" value={formatDate(apt.available_from)} />
+        {view.available_from != null && (
+          <Stat label="Available" value={formatDate(view.available_from)} />
         )}
-        {apt.source_url && (
+        {view.source_url && (
           <Stat
             label="Source"
             value={
               <a
-                href={apt.source_url}
+                href={view.source_url}
                 target="_blank"
                 rel="noreferrer"
                 className="text-red underline-offset-2 hover:underline"
@@ -124,11 +236,11 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
         )}
       </div>
 
-      <AmenityChips apt={apt} />
+      <AmenityChips view={view} />
 
-      <ImageGallery detail={detail} apt={apt} />
+      <ImageGallery detail={detail} apt={apt} title={view.title} />
 
-      <EnergyBlock apt={apt} />
+      <EnergyBlock view={view} />
 
       {ctx && <GeoContextBlock ctx={ctx} />}
 
@@ -142,7 +254,7 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
           Notes
         </div>
         <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
-          {summarize(apt)}
+          {summarize(view)}
         </p>
       </div>
 
@@ -154,35 +266,35 @@ export function CardDetail({ apt }: { apt: ListingCard }) {
 // only mention what we know; nothing is invented. Falls back gracefully
 // when fields are null. Avoids both lorem ipsum and pretending we have
 // data we don't.
-function summarize(apt: ListingCard): string {
+function summarize(view: DetailView): string {
   const parts: string[] = [];
-  const here = apt.district ?? "Berlin";
-  parts.push(`Located in ${here}${apt.address ? ` (${apt.address})` : ""}.`);
+  const here = view.district ?? "Berlin";
+  parts.push(`Located in ${here}${view.address ? ` (${view.address})` : ""}.`);
 
-  const room = apt.rooms
-    ? `${apt.rooms.toString().replace(/\.0$/, "")}-room`
+  const room = view.rooms
+    ? `${view.rooms.toString().replace(/\.0$/, "")}-room`
     : null;
-  const area = apt.area_sqm ? `${Math.round(apt.area_sqm)} m²` : null;
+  const area = view.area_sqm ? `${Math.round(view.area_sqm)} m²` : null;
   if (room || area) {
     parts.push(
       [room, area].filter(Boolean).join(" · ") + " of living space.",
     );
   }
 
-  if (apt.price_warm_eur != null) {
-    const warm = `€${Math.round(apt.price_warm_eur).toLocaleString("en-US")}`;
+  if (view.price_warm_eur != null) {
+    const warm = `€${Math.round(view.price_warm_eur).toLocaleString("en-US")}`;
     const perSqm =
-      apt.area_sqm != null && apt.area_sqm > 0
-        ? ` (~€${Math.round(apt.price_warm_eur / apt.area_sqm)}/m²)`
+      view.area_sqm != null && view.area_sqm > 0
+        ? ` (~€${Math.round(view.price_warm_eur / view.area_sqm)}/m²)`
         : "";
     parts.push(`Warm rent ${warm}${perSqm}.`);
   }
 
-  if (apt.wbs_required === true) {
+  if (view.wbs_required === true) {
     parts.push("WBS (Wohnberechtigungsschein) required.");
   }
-  if (apt.lister_type) {
-    parts.push(`Listed by ${apt.lister_type}.`);
+  if (view.lister_type) {
+    parts.push(`Listed by ${view.lister_type}.`);
   }
 
   return parts.join(" ");
@@ -196,14 +308,16 @@ function summarize(apt: ListingCard): string {
 function ImageGallery({
   detail,
   apt,
+  title,
 }: {
   detail: ListingDetail | null;
-  apt: ListingCard;
+  apt?: ListingCard;
+  title: string | null;
 }) {
   const images: string[] =
     detail && detail.images.length > 0
       ? detail.images
-      : apt.image_url
+      : apt?.image_url
       ? [apt.image_url]
       : [];
   if (images.length === 0) return null;
@@ -218,7 +332,7 @@ function ImageGallery({
           <img
             key={`${src}-${i}`}
             src={src}
-            alt={apt.title ? `${apt.title} — photo ${i + 1}` : `Listing photo ${i + 1}`}
+            alt={title ? `${title} — photo ${i + 1}` : `Listing photo ${i + 1}`}
             loading="lazy"
             decoding="async"
             className="h-32 w-auto flex-shrink-0 border border-paper-rule object-cover"
@@ -238,14 +352,14 @@ function ImageGallery({
 // `null` both stay hidden so the row reflects confirmed features, not
 // absence of data. WBS gets the leading slot because it's a hard
 // requirement signal in Berlin.
-function AmenityChips({ apt }: { apt: ListingCard }) {
+function AmenityChips({ view }: { view: DetailView }) {
   const chips: { label: string; tone: "wbs" | "amenity" }[] = [];
-  if (apt.wbs_required === true) chips.push({ label: "WBS", tone: "wbs" });
-  if (apt.is_furnished === true) chips.push({ label: "Furnished", tone: "amenity" });
-  if (apt.has_balcony === true) chips.push({ label: "Balkon", tone: "amenity" });
-  if (apt.has_kitchen === true) chips.push({ label: "Einbauküche", tone: "amenity" });
-  if (apt.has_elevator === true) chips.push({ label: "Aufzug", tone: "amenity" });
-  if (apt.has_garden === true) chips.push({ label: "Garten", tone: "amenity" });
+  if (view.wbs_required === true) chips.push({ label: "WBS", tone: "wbs" });
+  if (view.is_furnished === true) chips.push({ label: "Furnished", tone: "amenity" });
+  if (view.has_balcony === true) chips.push({ label: "Balkon", tone: "amenity" });
+  if (view.has_kitchen === true) chips.push({ label: "Einbauküche", tone: "amenity" });
+  if (view.has_elevator === true) chips.push({ label: "Aufzug", tone: "amenity" });
+  if (view.has_garden === true) chips.push({ label: "Garten", tone: "amenity" });
 
   if (chips.length === 0) return null;
 
@@ -489,14 +603,14 @@ function formatNoiseBreakdown(noise: ListingDetail["noise"]): string | undefined
 // it from either source's amenity strings — see the data-quality audit.
 // Heating itself only fills ~11% of wg-gesucht and 0% of kleinanzeigen,
 // so the block self-hides when empty.
-function EnergyBlock({ apt }: { apt: ListingCard }) {
-  if (!apt.heating) return null;
+function EnergyBlock({ view }: { view: DetailView }) {
+  if (!view.heating) return null;
   return (
     <div className="border-t border-paper-rule px-7 py-2.5">
       <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
         Heating
       </div>
-      <div className="mt-1 text-[12.5px] text-ink-soft">{apt.heating}</div>
+      <div className="mt-1 text-[12.5px] text-ink-soft">{view.heating}</div>
     </div>
   );
 }

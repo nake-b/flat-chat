@@ -54,8 +54,8 @@ export function useSessionState() {
         if (!response.ok) {
           // Detail fetch failed — leave active_id set so the card stays
           // selected, but log so we can spot listing-not-found races.
-          // The detail panel falls back to whatever tier-2 data is in
-          // SessionState.results[idx].
+          // The detail panel falls back to whatever tier-2 card is in the
+          // client card cache (or preview_cards).
           console.warn("listing detail fetch failed", response.status, id);
           return;
         }
