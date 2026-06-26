@@ -189,7 +189,7 @@ const PIN_HALO_LAYER: SymbolLayerSpecification = {
     "icon-anchor": "bottom",
     "icon-allow-overlap": true,
     "icon-ignore-placement": true,
-    "icon-size": 0.78,
+    "icon-size": 1.55,
   },
   paint: {
     "icon-color": RED,
@@ -218,7 +218,7 @@ const PIN_LAYER: SymbolLayerSpecification = {
     "icon-anchor": "bottom",
     "icon-allow-overlap": true,
     "icon-ignore-placement": true,
-    "icon-size": 0.5,
+    "icon-size": 1.0,
   },
   paint: {
     "icon-color": [
