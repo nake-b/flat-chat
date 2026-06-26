@@ -7,8 +7,8 @@ Guards three properties that are easy to break in a refactor:
   - Lock identity is stable across calls for the same session_id, and
     the lock correctly serialises concurrent users.
 
-No DB, no asyncio plumbing beyond `asyncio.run` (matches the rest of the
-suite's convention).
+`create`/`get`/`save` are async (the Protocol is DB-backed in prod); we drive
+them with `asyncio.run`, matching the rest of the suite's convention.
 """
 
 from __future__ import annotations
@@ -20,19 +20,22 @@ import pytest
 
 from flat_chat.chat.sessions import InMemorySessionStore, SessionNotFoundError
 
+USER = "00000000-0000-0000-0000-000000000001"
+
 
 def test_create_returns_retrievable_session_with_uuid_id():
     store = InMemorySessionStore()
-    session = store.create()
+    session = asyncio.run(store.create(USER))
     # UUIDs are 36 chars including dashes.
     assert len(session.id) == 36
-    assert store.get(session.id) is session
+    assert session.user_id == USER
+    assert asyncio.run(store.get(session.id)) is session
 
 
 def test_get_unknown_id_raises_session_not_found():
     store = InMemorySessionStore()
     with pytest.raises(SessionNotFoundError):
-        store.get("does-not-exist")
+        asyncio.run(store.get("does-not-exist"))
 
 
 def test_lru_eviction_drops_oldest_when_over_max():
@@ -44,7 +47,7 @@ def test_lru_eviction_drops_oldest_when_over_max():
     base = datetime(2025, 1, 1, tzinfo=UTC)
     created_ids: list[str] = []
     for i in range(InMemorySessionStore._MAX_SESSIONS):
-        s = store.create()
+        s = asyncio.run(store.create(USER))
         s.created_at = base + timedelta(seconds=i)
         created_ids.append(s.id)
 
@@ -54,7 +57,7 @@ def test_lru_eviction_drops_oldest_when_over_max():
     assert oldest_id in store._locks
 
     # One more push it over the edge.
-    overflow = store.create()
+    overflow = asyncio.run(store.create(USER))
     overflow.created_at = base + timedelta(seconds=InMemorySessionStore._MAX_SESSIONS)
 
     assert overflow.id in store._sessions
@@ -74,7 +77,7 @@ def test_lock_for_unknown_id_raises_session_not_found():
 
 def test_lock_identity_stable_across_calls():
     store = InMemorySessionStore()
-    session = store.create()
+    session = asyncio.run(store.create(USER))
     lock_a = store.lock(session.id)
     lock_b = store.lock(session.id)
     assert lock_a is lock_b
@@ -84,7 +87,7 @@ def test_lock_serialises_concurrent_users():
     """Two coroutines both try to acquire the same session lock. The
     second must wait until the first releases."""
     store = InMemorySessionStore()
-    session = store.create()
+    session = asyncio.run(store.create(USER))
     order: list[str] = []
 
     async def hold(label: str, hold_for: float) -> None:
@@ -109,9 +112,9 @@ def test_lock_serialises_concurrent_users():
 
 def test_save_replaces_session_in_store():
     store = InMemorySessionStore()
-    session = store.create()
+    session = asyncio.run(store.create(USER))
     # The contract is "mutations through get() are visible without save()",
     # but the save() hook still installs the passed object — DB-backed
     # impls will rely on this path.
-    store.save(session)
-    assert store.get(session.id) is session
+    asyncio.run(store.save(session))
+    assert asyncio.run(store.get(session.id)) is session

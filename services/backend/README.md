@@ -44,8 +44,9 @@ green `just check` means green CI.
 | Endpoint                                  | Method | Description                                                                                                |
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
-| `/api/conversations`                      | POST   | Create a conversation; returned id doubles as the AG-UI `thread_id`                                        |
-| `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only)                                        |
+| `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`                |
+| `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only, ownership-checked)                     |
+| `/api/conversations/{id}/state`           | GET    | Latest `SessionState` snapshot — the reload-recovery primitive (map/cards/active listing), ownership-checked |
 | `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas      |
 
 The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx. Sending a new user message goes through `/api/agent` (AG-UI streaming). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed when the agent path landed.
@@ -62,15 +63,17 @@ src/flat_chat/
 │   ├── dependencies.py  # FastAPI Depends wiring (session store, services)
 │   └── observability.py # Logs (dictConfig) + traces (OpenTelemetry → Phoenix)
 ├── api/
-│   ├── chat.py          # Conversation lifecycle: POST create + GET history reload (no message-send)
+│   ├── chat.py          # Conversation lifecycle: POST create + GET messages + GET state (no message-send)
 │   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
+├── users/
+│   └── models.py        # User ORM (app schema) + DUMMY_USER_ID (the get_user_id seam)
 ├── chat/
 │   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + dynamic-instruction injection
 │   ├── tools.py         # FunctionToolset[ChatDeps]: search / page / details; mirrors into UiState
-│   ├── state.py         # ChatSession (history + ResultSet + ui_state), ChatDeps (StateHandler-compatible)
-│   ├── ui_state.py      # Frontend mirror: UiState + UiApartment Pydantic models
-│   ├── sessions.py      # SessionStore Protocol + InMemorySessionStore (per-session asyncio.Lock)
-│   ├── service.py       # ChatService — dispatches AG-UI runs and persists state/history
+│   ├── state.py         # ChatSession (history + SessionState + user_id), ChatDeps (StateHandler-compatible)
+│   ├── models.py        # app-schema ORMs: Conversation, Message, SessionStateRow
+│   ├── sessions.py      # SessionStore Protocol + InMemory + DbSessionStore (Postgres, per-session asyncio.Lock)
+│   ├── service.py       # ChatService — dispatches AG-UI runs, history-authoritative, persists state/history
 │   ├── schemas.py       # API response models
 │   └── providers/       # Chat-model dispatch — single provider seam
 │       ├── __init__.py  # build_chat_model() — @lru_cache; picks provider from settings

@@ -8,11 +8,13 @@ the React SPA.
 
 ```
 src/
-  main.tsx                → Bootstraps session, mounts <CopilotKit> with HttpAgent → /api/agent
+  main.tsx                → Resolves the conversation (resume from URL/localStorage or create),
+                            mounts <CopilotKit key={id}> with HttpAgent → /api/agent; "New conversation"
   App.tsx                 → Chat-host layout: chat left ~40%, map+cards right (Option-X resize)
   state/
     SessionState.ts       → CANONICAL TypeScript mirror of backend Pydantic SessionState
     UiState.ts            → Compat re-export of SessionState (existing imports keep working)
+    conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
     toolStatus.ts         → Tool-name → status-pill label registry
     cardCache.ts          → zustand store of lazily-hydrated tier-2 ListingCards (by id)
   hooks/
@@ -20,10 +22,27 @@ src/
     useUiState.ts         → Compat re-export of useSessionState
     useHover.ts           → zustand store for client-local hover state
   api/
-    session.ts            → POST /api/conversations to allocate a thread_id
+    session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
+    ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
     ChatPane.tsx, MapPane.tsx, CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
 ```
+
+## Reload recovery + New conversation
+
+The conversation id (== AG-UI thread_id) is persisted to the URL `/c/{id}`
+(nginx SPA-fallback serves index.html) and localStorage. On mount `main.tsx`
+reuses a stored id — after verifying it still exists (`GET /…/state` ≠ 404; a
+stale id falls back to a fresh conversation so `/api/agent` never 404s on an
+unknown thread). `ConversationRecovery` (inside CopilotKit) then hydrates a
+resumed thread over HTTP, no agent turn: `useCoAgent().setState` from `GET
+/…/state` (map/cards/active listing) and `setMessages` from `GET /…/messages`
+(transcript). `setMessages` comes from `useCopilotChatInternal()` — exported,
+typed, and works WITHOUT a publicApiKey (the public `useCopilotChat` omits it).
+"New conversation" creates a thread and changes `key={id}` on `<CopilotKit>` for
+a clean remount (fresh state + empty chat). The backend is history-authoritative,
+so the agent keeps context on resume even if the transcript restore is skipped.
+See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 
 ## The data-flow split (frontend perspective)
 

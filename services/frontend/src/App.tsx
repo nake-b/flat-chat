@@ -13,11 +13,11 @@ import { CardsPane } from "./components/CardsPane";
 // users focus on the detail; in practice it just exposed wasted space.
 const TOP_PCT = 70;
 
-function App() {
+function App({ onNewConversation }: { onNewConversation: () => void }) {
   return (
     <div className="grid h-screen w-screen grid-cols-[2fr_3fr] overflow-hidden bg-paper">
       <aside className="overflow-hidden border-r border-paper-rule">
-        <ChatPane />
+        <ChatPane onNewConversation={onNewConversation} />
       </aside>
       <main className="relative h-full overflow-hidden bg-paper">
         <section

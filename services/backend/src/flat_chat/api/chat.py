@@ -1,24 +1,50 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic_ai.messages import TextPart, UserPromptPart
 
-from flat_chat.chat.schemas import ConversationResponse, MessageResponse
+from flat_chat.chat.schemas import (
+    ConversationResponse,
+    MessageResponse,
+    SessionStateResponse,
+)
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatSession
-from flat_chat.core.dependencies import get_session_store
+from flat_chat.core.dependencies import get_session_store, get_user_id
 
 router = APIRouter()
 
 
 @router.post("", response_model=ConversationResponse)
-def create_conversation(store: SessionStore = Depends(get_session_store)):
-    """Allocate a new session. The returned id is used as the AG-UI `thread_id`."""
-    session = store.create()
+async def create_conversation(
+    user_id: str = Depends(get_user_id),
+    store: SessionStore = Depends(get_session_store),
+):
+    """Allocate a new conversation. The returned id is used as the AG-UI `thread_id`."""
+    session = await store.create(user_id)
     return ConversationResponse(id=session.id, created_at=session.created_at)
 
 
+async def _load_owned(
+    conversation_id: str, user_id: str, store: SessionStore
+) -> ChatSession:
+    """Load a conversation, 404ing if it's missing OR owned by someone else.
+
+    Returns 404 (not 403) for a foreign conversation so existence doesn't leak.
+    """
+    try:
+        session = await store.get(conversation_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    if session.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return session
+
+
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
-def get_messages(
+async def get_messages(
     conversation_id: str,
+    user_id: str = Depends(get_user_id),
     store: SessionStore = Depends(get_session_store),
 ):
     """History reload — used by the frontend after a page refresh.
@@ -26,11 +52,29 @@ def get_messages(
     Sending new messages goes through the AG-UI streaming route at /api/agent;
     this endpoint is read-only and only surfaces user + assistant turns.
     """
-    try:
-        session = store.get(conversation_id)
-    except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    session = await _load_owned(conversation_id, user_id, store)
     return _serialize_history(session)
+
+
+@router.get("/{conversation_id}/state", response_model=SessionStateResponse)
+async def get_state(
+    conversation_id: str,
+    user_id: str = Depends(get_user_id),
+    store: SessionStore = Depends(get_session_store),
+) -> dict[str, Any]:
+    """Latest SessionState snapshot — the cross-reload recovery primitive.
+
+    Returns the same shape the AG-UI `STATE_SNAPSHOT` event emits (markers in
+    columnar form, preview cards, active listing), so the frontend mirror can
+    apply it directly via `useCoAgent().setState`. A conversation with no turns
+    yet returns the default/empty SessionState.
+
+    The body is `SessionState.model_dump(mode="json")` (already columnar via the
+    field serializer); `response_model=SessionStateResponse` types that exact
+    wire shape so the OpenAPI schema is accurate rather than `object`.
+    """
+    session = await _load_owned(conversation_id, user_id, store)
+    return session.state.model_dump(mode="json")
 
 
 def _serialize_history(session: ChatSession) -> list[MessageResponse]:

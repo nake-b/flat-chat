@@ -10,19 +10,32 @@ from fastapi import Depends
 from pydantic_ai import Embedder
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.chat.sessions import InMemorySessionStore, SessionStore
-from flat_chat.core.database import get_async_db
+from flat_chat.chat.sessions import DbSessionStore, SessionStore
+from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
 from flat_chat.listings.service import ListingService
 from flat_chat.search.service import SearchService
+from flat_chat.users.models import DUMMY_USER_ID
 
 # Process-lifetime singleton — survives across requests, dies with the worker.
-# Swap for a Postgres-backed store when persistence lands.
-_session_store: SessionStore = InMemorySessionStore()
+# Owns its own DB sessions (via AsyncSessionLocal), independent of the request
+# scope, because it persists from `on_complete` at the END of the SSE stream.
+_session_store: SessionStore = DbSessionStore(AsyncSessionLocal)
 
 
 def get_session_store() -> SessionStore:
     return _session_store
+
+
+def get_user_id() -> str:
+    """Stage-1 identity seam — returns a fixed dummy user id (no auth yet).
+
+    The dummy user row is upserted on demand in `DbSessionStore.create`. Stage 2
+    (anonymous per-browser cookie) and stage 3 (real auth → JWT `sub`) replace ONLY
+    this function — every route depends on `Depends(get_user_id)`, so call sites
+    never change. See session-persistence.md.
+    """
+    return DUMMY_USER_ID
 
 
 def get_listing_service(

@@ -158,8 +158,15 @@ class ChatService:
         run_id_var.set(adapter.run_input.run_id or "")
         logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
 
+        # TODO(auth): ownership check. The REST routes (GET /messages, /state)
+        # 404 a foreign conversation via `_load_owned`, but this mutation path
+        # resolves the session purely from the envelope's thread_id with no
+        # `user_id` comparison — so once `get_user_id()` returns a real user
+        # (stage 2/3), any caller could continue someone else's thread. Moot
+        # today (single dummy user). When auth lands, gate `get()` here on the
+        # request user the same way `_load_owned` does. See AUTH.md.
         try:
-            session = self.store.get(session_id)
+            session = await self.store.get(session_id)
         except SessionNotFoundError:
             logger.warning("Agent request for unknown session")
             raise
@@ -206,7 +213,7 @@ class ChatService:
             # the session before persisting.
             session.message_history = list(result.all_messages())
             session.state = deps.state
-            self.store.save(session)
+            await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
 
         try:
@@ -214,9 +221,22 @@ class ChatService:
         except RuntimeError as exc:
             raise LlmProviderUnavailableError("No LLM provider configured") from exc
 
+        # History-authoritative recovery. `run_stream` prepends any supplied
+        # `message_history` to the envelope's messages. In normal live turns the
+        # frontend already carries the full thread, so we pass nothing (passing
+        # stored history too would duplicate it). After a reload where the chat
+        # transcript wasn't restored, the frontend sends ONLY the new prompt — we
+        # detect that (≤1 envelope message) and inject the stored history so the
+        # agent keeps full context. The ≤1 test is robust to tool-message count
+        # inflation that would break a length comparison. See R3.
+        message_history = None
+        if session.message_history and len(adapter.messages) <= 1:
+            message_history = session.message_history
+
         stream = adapter.run_stream(
             deps=deps,
             model=model,
+            message_history=message_history,
             on_complete=on_complete,
         )
         return adapter.streaming_response(
