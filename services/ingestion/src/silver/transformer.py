@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -73,3 +73,48 @@ def transform(session: Session) -> int:
             logger.warning("skipped %d rows from unknown source: %r", n, src)
 
     return count
+
+
+# One window-function DELETE collapses duplicate flats — same title + address,
+# any source — down to a single survivor. Companies repost the same apartment
+# with a fresh `external_id` (often just a new price), so the UPSERT key
+# `(source_name, external_id)` lets each repost in as its own row; this is the
+# second pass that removes them. Run AFTER `transform` and BEFORE gold so deleted
+# rows never get enriched. It must run every silver.run, not just once: bronze
+# `raw_listings` rows survive a silver delete (FK is ON DELETE SET NULL), and
+# `transform` reprocesses all of bronze, so a one-off cleanup would be re-undone
+# on the next run.
+#
+# Survivor = the row that still carries coordinates (so it stays on the map / in
+# search), then newest `scraped_at`; `ingested_at`/`id` only break ties for
+# determinism. Only rows with a non-blank title AND address participate — NULL or
+# empty values must never collapse together.
+_DEDUP_SQL = text(
+    """
+    DELETE FROM listings
+    WHERE id IN (
+        SELECT id FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY btrim(title), btrim(address)
+                       ORDER BY (location IS NOT NULL) DESC,
+                                scraped_at DESC, ingested_at DESC, id DESC
+                   ) AS rn
+            FROM listings
+            WHERE title IS NOT NULL AND btrim(title) <> ''
+              AND address IS NOT NULL AND btrim(address) <> ''
+        ) ranked
+        WHERE rn > 1
+    )
+    """
+)
+
+
+def deduplicate(session: Session) -> int:
+    """Delete duplicate listings (same title + address, any source), keeping one.
+
+    Returns the number of rows deleted. Idempotent — a second call deletes 0.
+    """
+    result = session.execute(_DEDUP_SQL)
+    session.commit()
+    return result.rowcount

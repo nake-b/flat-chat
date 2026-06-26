@@ -19,7 +19,8 @@ src/
                           client hints. See "Scraper anti-bot" below.
   silver/               → Bronze → typed Listing rows
     run.py              → `python -m silver.run` — chains gold + platinum at end
-    transformer.py      → Dispatcher by source; UPSERT logic
+    transformer.py      → Dispatcher by source; UPSERT logic + `deduplicate`
+                          (collapses reposted same-title+address flats)
     sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
                           housinganywhere, wohninberlin)
   geo_context/          → Berlin GDI WFS + VBB GTFS → silver geo tables
@@ -94,9 +95,17 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
 
 ## Chain triggers
 
-- `silver.run` → calls `gold.run.main([])` at the end. Then attempts
-  `platinum.run.main([])` best-effort (skipped silently if `JINA_API_KEY`
-  isn't set — semantic search degrades to recency, no fatal failure).
+- `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then
+  attempts `platinum.run.main([])` best-effort (skipped silently if
+  `JINA_API_KEY` isn't set — semantic search degrades to recency, no fatal
+  failure). `deduplicate` (in `transformer.py`) runs a single window-function
+  DELETE that collapses listings sharing a `(title, address)` — any source —
+  down to one survivor (geocoded-first, then newest `scraped_at`). It runs
+  **before** gold so deleted rows are never enriched, and runs on **every**
+  silver run rather than once: bronze `raw_listings` rows survive a silver
+  delete (FK is `ON DELETE SET NULL`) and `transform` reprocesses all of bronze,
+  so a one-off cleanup would be re-undone next run. See
+  [`silver-deduplication.md`](../../agent-compound-docs/decisions/silver-deduplication.md).
 - `geo_context.run` → if any WFS/GTFS family succeeded, calls
   `gold.run.main([])`. Geo-context refreshes invalidate every listing's
   gold row, so the chain ensures fresh enrichment without manual
