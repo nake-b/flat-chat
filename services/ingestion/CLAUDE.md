@@ -20,7 +20,9 @@ src/
   silver/               → Bronze → typed Listing rows
     run.py              → `python -m silver.run` — chains gold + platinum at end
     transformer.py      → Dispatcher by source; UPSERT logic + `deduplicate`
-                          (collapses reposted same-title+address flats)
+                          (collapses reposted same-title+address flats) +
+                          geocoding pass that backfills NULL coordinates via
+                          Nominatim (tail of `transform()`)
     sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
                           housinganywhere, wohninberlin)
   geo_context/          → Berlin GDI WFS + VBB GTFS → silver geo tables
@@ -98,7 +100,15 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
 - `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then
   attempts `platinum.run.main([])` best-effort (skipped silently if
   `JINA_API_KEY` isn't set — semantic search degrades to recency, no fatal
-  failure). `deduplicate` (in `transformer.py`) runs a single window-function
+  failure). **`transform` itself** ends with a best-effort geocoding pass
+  (`_geocode_missing`) that fills NULL coordinates by geocoding the listing's
+  address (Nominatim by default) — so coordinate-less sources (e.g.
+  wohninberlin) become visible to search + gold. Only `location IS NULL` rows
+  are touched (idempotent), and `upsert.py` preserves the backfilled point
+  across re-transforms; a geocoder outage warns but never fails silver.
+  Configure via `NOMINATIM_BASE_URL` / `GEOCODER_USER_AGENT` /
+  `GEOCODER_RATE_LIMIT_S`. `deduplicate` (in `transformer.py`) runs a single
+  window-function
   DELETE that collapses listings sharing a `(title, address)` — any source —
   down to one survivor (geocoded-first, then newest `scraped_at`). It runs
   **before** gold so deleted rows are never enriched, and runs on **every**
