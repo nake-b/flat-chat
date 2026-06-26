@@ -121,16 +121,33 @@ The plan flagged this as the risky piece. Findings against the installed
 
 - **`get()` runs outside the per-session lock** (`dispatch_agent_request` resolves
   the session before the lock, which is held for the SSE stream's lifetime). Two
-  concurrent turns on one thread could race; the `(conversation_id, seq)` unique
-  constraint makes that a loud `IntegrityError` (losing turn doesn't persist; state
-  stays at the prior turn) rather than silent duplication. Proper fix (move `get()`
-  inside the lock) is a streaming-wiring change — deferred.
+  concurrent turns on one thread (double-send, two tabs, a client retry) could race:
+  the second turn's `get()` can read the history *before* the first turn persists,
+  so the agent answers it on a stale snapshot, and its append then collides at the
+  same `seq`. The `(conversation_id, seq)` unique constraint backstops this — the
+  losing turn's save aborts with a loud `IntegrityError` (no silent duplication, no
+  interleaving; state stays consistent at the prior turn). **Correctness is
+  guaranteed by the constraint; the lock only optimizes the happy path.** The proper
+  fix (read under the lock) is *not* a quick refactor — it collides with the SSE
+  contract: the handler must `get()` *before* streaming starts so an unknown/foreign
+  thread returns an HTTP **404 before any bytes flow**. Moving `get()` inside the
+  lock pushes resolution into the streaming generator, where a miss can no longer be
+  a 404 — it becomes a mid-stream `RUN_ERROR` event. That's a behavioral change to
+  the error contract, not a wiring tweak, so it's deliberately deferred.
 - **No mid-stream-crash resume.** Persistence is atomic at `on_complete`; a turn
   that dies before it is lost entirely (history + state stay consistent at turn N-1).
 - **In-process `asyncio.Lock`** — correct for single-process only. Multi-process
   needs a Postgres advisory lock held for the stream (a deliberate later redesign).
 - **Full-history load** per dispatch / `GET /messages` (no cursor pagination yet) —
-  fine at MVP conversation sizes.
+  fine at MVP conversation sizes. Note that cursor pagination is the *wrong* lever
+  for the hot path anyway: the agent turn needs the **entire** history every time
+  (that is how the LLM keeps context — you cannot paginate what you must send in
+  full), so DB-side paging wouldn't shrink the agent path at all. The real lever for
+  long conversations is **LLM-side summarization / truncation** — a Pydantic AI
+  history processor that compacts old turns, shrinking *both* what we load and what
+  we send to the model. Pagination would only ever help **`GET /messages`** when
+  *rendering* a very long transcript in the frontend (hundreds of messages), which
+  is a display concern, not a context one. Neither is needed at MVP sizes.
 
 ## Tests
 

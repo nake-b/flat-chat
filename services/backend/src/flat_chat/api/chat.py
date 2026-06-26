@@ -3,7 +3,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic_ai.messages import TextPart, UserPromptPart
 
-from flat_chat.chat.schemas import ConversationResponse, MessageResponse
+from flat_chat.chat.schemas import (
+    ConversationResponse,
+    MessageResponse,
+    SessionStateResponse,
+)
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatSession
 from flat_chat.core.dependencies import get_session_store, get_user_id
@@ -52,7 +56,7 @@ async def get_messages(
     return _serialize_history(session)
 
 
-@router.get("/{conversation_id}/state")
+@router.get("/{conversation_id}/state", response_model=SessionStateResponse)
 async def get_state(
     conversation_id: str,
     user_id: str = Depends(get_user_id),
@@ -64,6 +68,10 @@ async def get_state(
     columnar form, preview cards, active listing), so the frontend mirror can
     apply it directly via `useCoAgent().setState`. A conversation with no turns
     yet returns the default/empty SessionState.
+
+    The body is `SessionState.model_dump(mode="json")` (already columnar via the
+    field serializer); `response_model=SessionStateResponse` types that exact
+    wire shape so the OpenAPI schema is accurate rather than `object`.
     """
     session = await _load_owned(conversation_id, user_id, store)
     return session.state.model_dump(mode="json")
