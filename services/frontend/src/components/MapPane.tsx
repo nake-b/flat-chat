@@ -371,7 +371,7 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     lastPannedId.current = activeId;
     const opts: { center: [number, number]; duration: number; zoom?: number } = {
       center,
-      duration: 500,
+      duration: 850,
     };
     if (m.getZoom() < 12.5) opts.zoom = 14; // gentle zoom-in only when zoomed far out
     m.easeTo(opts);
