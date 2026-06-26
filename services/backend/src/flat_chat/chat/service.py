@@ -132,10 +132,11 @@ class ChatService:
         # subsequently runs the agent, streams events back, and reads
         # `deps.state` to emit JSON-Patch deltas to the frontend.
         try:
-            # Subscript the adapter with our deps type — `AgentDepsT` defaults
-            # to `None`, so the bare-class classmethod would otherwise type the
-            # adapter (and `run_stream(deps=)`) as `None`-deps.
-            adapter = await _FlatChatAGUIAdapter[ChatDeps, str].from_request(
+            # `_FlatChatAGUIAdapter` already binds `AGUIAdapter[ChatDeps, str]`,
+            # so deps are typed as ChatDeps (not the `AgentDepsT=None` default)
+            # without subscripting — the subclass is concrete, so subscripting it
+            # would raise `TypeError: not subscriptable`.
+            adapter = await _FlatChatAGUIAdapter.from_request(
                 request, agent=agent
             )
         except ValidationError as exc:
