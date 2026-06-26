@@ -49,30 +49,27 @@ const GREY = "#5A5A5A"; // default (unselected) pin colour
 // the filled mask into a signed-distance field — far cleaner than hand-rolled
 // analytic SDF math.
 const PIN_IMAGE_ID = "apt-pin";
-const PIN_W = 48;
-const PIN_H = 60;
-const SDF_RANGE = 6; // px over which the signed distance spans the alpha ramp
+const PIN_SCALE = 2; // canvas px per SVG unit (24-unit viewBox → 48px texture)
+const PIN_W = 24 * PIN_SCALE;
+const PIN_H = 24 * PIN_SCALE;
+const SDF_RANGE = 5; // px over which the signed distance spans the alpha ramp
 
-// Draw a smooth classic map-pin teardrop (round head, pointed tip at bottom)
-// filled white on a transparent canvas, and return its alpha mask.
+// The Material Design "place" marker — the de-facto standard map pin (round
+// head with a hole, pointed tip at the bottom), 24×24 SVG viewBox. We render
+// the official path with Canvas 2D (even-odd fill keeps the centre hole) and
+// turn the mask into an SDF so it stays recolourable via `icon-color`.
+const PLACE_PATH =
+  "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 " +
+  "9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z";
+
 function drawTeardropMask(): Uint8ClampedArray {
   const canvas = document.createElement("canvas");
   canvas.width = PIN_W;
   canvas.height = PIN_H;
   const ctx = canvas.getContext("2d")!;
-  const cx = PIN_W / 2;
-  const r = PIN_W * 0.34; // head radius
-  const cy = r + PIN_W * 0.08; // head centre near the top
-  const tipY = PIN_H - 2; // tip near the bottom → icon-anchor "bottom" lands on it
+  ctx.scale(PIN_SCALE, PIN_SCALE);
   ctx.fillStyle = "#fff";
-  ctx.beginPath();
-  ctx.moveTo(cx, tipY);
-  // left flank: tip → left of head → top
-  ctx.bezierCurveTo(cx - r * 1.15, cy + r * 0.55, cx - r, cy - r * 0.55, cx, cy - r);
-  // right flank: top → right of head → tip
-  ctx.bezierCurveTo(cx + r, cy - r * 0.55, cx + r * 1.15, cy + r * 0.55, cx, tipY);
-  ctx.closePath();
-  ctx.fill();
+  ctx.fill(new Path2D(PLACE_PATH), "evenodd");
   return ctx.getImageData(0, 0, PIN_W, PIN_H).data;
 }
 
@@ -192,7 +189,7 @@ const PIN_LAYER: SymbolLayerSpecification = {
     "icon-anchor": "bottom",
     "icon-allow-overlap": true,
     "icon-ignore-placement": true,
-    "icon-size": 0.85,
+    "icon-size": 1.2,
   },
   paint: {
     "icon-color": [
