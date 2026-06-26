@@ -38,77 +38,78 @@ const MAP_STYLE_URL =
 const RED = "#E4003C";
 const RED_DEEP = "#B00030";
 const RED_TINT = "#F47A95";
-const INK = "#0A0A0A";
 const GREY = "#5A5A5A"; // default (unselected) pin colour
 
 // ── Teardrop pin (SDF) ────────────────────────────────────────────────────
-// Unclustered listings render as teardrop pins via a MapLibre symbol layer
-// fed a runtime-generated SDF icon. SDF (vs a plain raster) is what lets
-// `icon-color` recolour the same image to ARBITRARY colours at render time —
-// the seam for future price/prompt-driven colouring. We generate the SDF in
-// JS (no committed binary asset): the teardrop is an analytic shape (head
-// circle ∪ tip triangle), so its signed-distance field is exact and cheap.
+// Unclustered listings render as a clean teardrop pin via a MapLibre symbol
+// layer fed a runtime-generated SDF icon. SDF (vs a plain raster) is what lets
+// `icon-color` recolour the same image at render time (the seam for future
+// price/prompt-driven colouring) and gives a crisp white `icon-halo` outline.
+// We draw the teardrop with Canvas 2D (smooth bezier silhouette) and convert
+// the filled mask into a signed-distance field — far cleaner than hand-rolled
+// analytic SDF math.
 const PIN_IMAGE_ID = "apt-pin";
 const PIN_W = 48;
-const PIN_H = 64;
-const SDF_RANGE = 8; // px over which the signed distance spans the alpha ramp
+const PIN_H = 60;
+const SDF_RANGE = 6; // px over which the signed distance spans the alpha ramp
 
-function dist(ax: number, ay: number, bx: number, by: number): number {
-  return Math.hypot(ax - bx, ay - by);
+// Draw a smooth classic map-pin teardrop (round head, pointed tip at bottom)
+// filled white on a transparent canvas, and return its alpha mask.
+function drawTeardropMask(): Uint8ClampedArray {
+  const canvas = document.createElement("canvas");
+  canvas.width = PIN_W;
+  canvas.height = PIN_H;
+  const ctx = canvas.getContext("2d")!;
+  const cx = PIN_W / 2;
+  const r = PIN_W * 0.34; // head radius
+  const cy = r + PIN_W * 0.08; // head centre near the top
+  const tipY = PIN_H - 2; // tip near the bottom → icon-anchor "bottom" lands on it
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.moveTo(cx, tipY);
+  // left flank: tip → left of head → top
+  ctx.bezierCurveTo(cx - r * 1.15, cy + r * 0.55, cx - r, cy - r * 0.55, cx, cy - r);
+  // right flank: top → right of head → tip
+  ctx.bezierCurveTo(cx + r, cy - r * 0.55, cx + r * 1.15, cy + r * 0.55, cx, tipY);
+  ctx.closePath();
+  ctx.fill();
+  return ctx.getImageData(0, 0, PIN_W, PIN_H).data;
 }
 
-// Signed distance to a triangle — Inigo Quilez's 2D primitive, ported to JS.
-// Negative inside, positive outside. Used unioned (min) with the head circle.
-function sdTriangle(
-  px: number, py: number,
-  ax: number, ay: number,
-  bx: number, by: number,
-  cx: number, cy: number,
-): number {
-  const e0x = bx - ax, e0y = by - ay;
-  const e1x = cx - bx, e1y = cy - by;
-  const e2x = ax - cx, e2y = ay - cy;
-  const v0x = px - ax, v0y = py - ay;
-  const v1x = px - bx, v1y = py - by;
-  const v2x = px - cx, v2y = py - cy;
-  const cl = (n: number) => Math.max(0, Math.min(1, n));
-  const t0 = cl((v0x * e0x + v0y * e0y) / (e0x * e0x + e0y * e0y));
-  const t1 = cl((v1x * e1x + v1y * e1y) / (e1x * e1x + e1y * e1y));
-  const t2 = cl((v2x * e2x + v2y * e2y) / (e2x * e2x + e2y * e2y));
-  const p0x = v0x - e0x * t0, p0y = v0y - e0y * t0;
-  const p1x = v1x - e1x * t1, p1y = v1y - e1y * t1;
-  const p2x = v2x - e2x * t2, p2y = v2y - e2y * t2;
-  const s = Math.sign(e0x * e2y - e0y * e2x);
-  // vec2 min by .x (squared distance), carrying .y (signed cross product).
-  let dx = p0x * p0x + p0y * p0y;
-  let dy = s * (v0x * e0y - v0y * e0x);
-  const d1x = p1x * p1x + p1y * p1y;
-  const d1y = s * (v1x * e1y - v1y * e1x);
-  if (d1x < dx) { dx = d1x; dy = d1y; }
-  const d2x = p2x * p2x + p2y * p2y;
-  const d2y = s * (v2x * e2y - v2y * e2x);
-  if (d2x < dx) { dx = d2x; dy = d2y; }
-  return -Math.sqrt(dx) * Math.sign(dy);
-}
-
+// Convert the filled mask into an SDF: per pixel, the signed Euclidean distance
+// to the shape boundary (negative inside), encoded into alpha around 0.5.
 function makeTeardropSDF(): { width: number; height: number; data: Uint8ClampedArray } {
   const w = PIN_W, h = PIN_H;
-  const data = new Uint8ClampedArray(w * h * 4);
-  const cx = w / 2;
-  const r = w / 2 - 6; // head radius
-  const cy = r + 3; // head centre near the top
-  const tipX = w / 2;
-  const tipY = h - 2; // tip near the bottom → icon-anchor "bottom" lands on the point
-  const a = 0.9; // splay of the triangle's top verts on the circle
-  const lx = cx - r * Math.sin(a), ly = cy + r * Math.cos(a);
-  const rx = cx + r * Math.sin(a), ry = cy + r * Math.cos(a);
+  const mask = drawTeardropMask();
+  const inside = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) inside[i] = mask[i * 4 + 3] > 127 ? 1 : 0;
+
+  // Boundary = inside pixels touching an outside 4-neighbour (the zero level).
+  const bx: number[] = [];
+  const by: number[] = [];
+  const at = (x: number, y: number) =>
+    x < 0 || y < 0 || x >= w || y >= h ? 0 : inside[y * w + x];
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const px = x + 0.5, py = y + 0.5;
-      const dCircle = dist(px, py, cx, cy) - r;
-      const dTri = sdTriangle(px, py, lx, ly, rx, ry, tipX, tipY);
-      const d = Math.min(dCircle, dTri); // union of head + tip
-      const alpha = Math.max(0, Math.min(1, 0.5 - d / (2 * SDF_RANGE)));
+      if (!inside[y * w + x]) continue;
+      if (!at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)) {
+        bx.push(x);
+        by.push(y);
+      }
+    }
+  }
+
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let min2 = Infinity;
+      for (let k = 0; k < bx.length; k++) {
+        const dx = x - bx[k], dy = y - by[k];
+        const d2 = dx * dx + dy * dy;
+        if (d2 < min2) min2 = d2;
+      }
+      const signed = (inside[y * w + x] ? -1 : 1) * Math.sqrt(min2);
+      const alpha = Math.max(0, Math.min(1, 0.5 - signed / (2 * SDF_RANGE)));
       const i = (y * w + x) * 4;
       data[i] = 255;
       data[i + 1] = 255;
@@ -175,39 +176,12 @@ const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
   },
 };
 
-// Soft red glow behind a selected pin — same SDF teardrop, larger, drawn
-// first so the pin sits on top. Fades in only when feature-state.active.
-// NOTE: feature-state works in PAINT props only (not layout), so the size is
-// fixed and we toggle visibility via `icon-opacity` (paint), not icon-size.
-const PIN_HALO_LAYER: SymbolLayerSpecification = {
-  id: "unclustered-point-halo",
-  type: "symbol",
-  source: "apartments",
-  filter: ["!", ["has", "point_count"]],
-  layout: {
-    "icon-image": PIN_IMAGE_ID,
-    "icon-anchor": "bottom",
-    "icon-allow-overlap": true,
-    "icon-ignore-placement": true,
-    "icon-size": 1.55,
-  },
-  paint: {
-    "icon-color": RED,
-    "icon-opacity": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      0.28,
-      0,
-    ],
-    "icon-opacity-transition": { duration: 220, delay: 0 },
-  },
-};
-
-// The apartment pin. Same layer id ("unclustered-point") as the old circle so
-// click/hover wiring + interactiveLayerIds need no change. Active = ink,
-// hover = red, default = grey, recoloured via `icon-color` (paint → can read
-// feature-state). icon-size is fixed (layout can't read feature-state); the
-// emphasis comes from colour + a thicker white halo + the glow layer above.
+// The apartment pin — a single clean teardrop, recoloured by state. No glow
+// layer (it read as a muddy blob); selection is conveyed by colour: default
+// grey, hover red, selected the brand red. A crisp white halo outlines every
+// pin for legibility against the map, thicker on the selected one. Same layer
+// id ("unclustered-point") as the old circle so click/hover wiring +
+// interactiveLayerIds need no change.
 const PIN_LAYER: SymbolLayerSpecification = {
   id: "unclustered-point",
   type: "symbol",
@@ -218,13 +192,13 @@ const PIN_LAYER: SymbolLayerSpecification = {
     "icon-anchor": "bottom",
     "icon-allow-overlap": true,
     "icon-ignore-placement": true,
-    "icon-size": 1.0,
+    "icon-size": 0.85,
   },
   paint: {
     "icon-color": [
       "case",
       ["boolean", ["feature-state", "active"], false],
-      INK,
+      RED,
       ["boolean", ["feature-state", "hover"], false],
       RED,
       GREY,
@@ -233,9 +207,7 @@ const PIN_LAYER: SymbolLayerSpecification = {
     "icon-halo-width": [
       "case",
       ["boolean", ["feature-state", "active"], false],
-      2,
-      ["boolean", ["feature-state", "hover"], false],
-      1.8,
+      2.5,
       1.2,
     ],
     "icon-color-transition": { duration: 140, delay: 0 },
@@ -442,7 +414,6 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     >
       <Layer {...CLUSTER_LAYER} />
       <Layer {...CLUSTER_COUNT_LAYER} />
-      <Layer {...PIN_HALO_LAYER} />
       <Layer {...PIN_LAYER} />
     </Source>
   );
