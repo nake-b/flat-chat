@@ -24,7 +24,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.11",
-    "ty>=0.0.1a7",
+    # ty<0.0.54 flaked on the GtfsMode dict-comprehension inference (passed
+    # locally, failed in CI on the same 0.0.34 build). Floor at the version
+    # that infers it deterministically.
+    "ty>=0.0.54",
     "pytest>=8.0",
     "greenlet>=3.5.0",
 ]
