@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.messages import ModelMessage
 
 from flat_chat.chat.session_state import SessionState
+from flat_chat.users.models import DUMMY_USER_ID
 
 if TYPE_CHECKING:
     from flat_chat.listings.service import ListingService
@@ -41,6 +42,7 @@ class ChatSession:
     """
 
     id: str
+    user_id: str = DUMMY_USER_ID
     message_history: list[ModelMessage] = field(default_factory=list)
     state: SessionState = field(default_factory=SessionState)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
