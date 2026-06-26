@@ -58,7 +58,5 @@ NearSpec = DistanceBucket | int
 # stores in Postgres. See doc §7.
 # ---------------------------------------------------------------------------
 
-GtfsMode = Literal[
-    "mainline", "regional", "s_bahn", "u_bahn", "bus", "tram", "ferry"
-]
+GtfsMode = Literal["mainline", "regional", "s_bahn", "u_bahn", "bus", "tram", "ferry"]
 """Transit service-type enum used by the agent's `transit` filter."""

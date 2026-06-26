@@ -25,6 +25,7 @@ before.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
@@ -126,8 +127,8 @@ class Listing(Base):
     floor: Mapped[int | None] = mapped_column(Integer)
     floors_total: Mapped[int | None] = mapped_column(Integer)
     construction_year: Mapped[int | None] = mapped_column(Integer)
-    available_from: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
-    available_until: Mapped[str | None] = mapped_column(TIMESTAMP(timezone=True))
+    available_from: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    available_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     min_stay_months: Mapped[int | None] = mapped_column(Integer)
     max_stay_months: Mapped[int | None] = mapped_column(Integer)
 

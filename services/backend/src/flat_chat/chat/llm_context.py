@@ -129,9 +129,7 @@ class LlmResultSetView:
         chunks: list[str] = []
         for idx, card in items:
             if card is None:
-                chunks.append(
-                    f"#{idx}: out of range (results are 1–{self.total})."
-                )
+                chunks.append(f"#{idx}: out of range (results are 1–{self.total}).")
                 continue
             chunks.append(_format_card_detail(card, idx))
         return "\n\n".join(chunks)
@@ -254,9 +252,7 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
 
     if detail.nearest_playground is not None:
         pg = detail.nearest_playground
-        parts.append(
-            f"Nearest playground: {pg.name or 'unnamed'} — {pg.distance_m}m"
-        )
+        parts.append(f"Nearest playground: {pg.name or 'unnamed'} — {pg.distance_m}m")
 
     parts.extend(
         _format_list_section(
@@ -280,7 +276,7 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
     if detail.density and detail.density.label:
         character_bits.append(f"density: {detail.density.label}")
     if detail.mss and detail.mss.status:
-        mss_bits = [detail.mss.status]
+        mss_bits: list[str] = [detail.mss.status]
         if detail.mss.dynamics:
             mss_bits.append(detail.mss.dynamics)
         character_bits.append(f"Sozialmonitoring: {' · '.join(mss_bits)}")

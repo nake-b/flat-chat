@@ -3,23 +3,30 @@ set dotenv-load
 default:
     @just --list
 
+# Lint/format scope matches CI (.github/workflows/ci.yml): src AND tests.
 lint:
-    uv run ruff check src/
+    uv run ruff check src tests
 
 format:
-    uv run ruff format src/
+    uv run ruff format src tests
+
+# CI runs `ruff format --check` — this recipe fails on unformatted files
+# (the bare `format` recipe rewrites in place and never fails).
+format-check:
+    uv run ruff format --check src tests
 
 typecheck:
-    uv run ty check src/
+    uv run ty check src
 
 test *args:
     uv run pytest {{ args }}
 
 fix:
-    uv run ruff check --fix src/
-    uv run ruff format src/
+    uv run ruff check --fix src tests
+    uv run ruff format src tests
 
-check: lint typecheck test
+# Mirrors CI exactly: ruff check → ruff format --check → ty → pytest.
+check: lint format-check typecheck test
 
 dev:
     uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload

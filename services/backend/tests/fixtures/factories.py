@@ -21,8 +21,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
-from typing import TypeVar
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -39,11 +38,9 @@ from flat_chat.listings.models import (
 )
 from flat_chat.search.service import SearchService
 
-T = TypeVar("T")
-
 
 def _now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def listing_row(**overrides) -> dict:
@@ -198,7 +195,7 @@ JUNCTION_MODELS = {
 }
 
 
-async def _seed_and_run(
+async def _seed_and_run[T](
     async_url: str,
     seeds: list[tuple[dict, dict | None]],
     body: Callable[[AsyncSession], Awaitable[T]],
@@ -234,7 +231,7 @@ async def _seed_and_run(
         await engine.dispose()
 
 
-def drive_search(
+def drive_search[T](
     async_url: str,
     seeds: list[tuple[dict, dict | None]],
     body: Callable[[SearchService], Awaitable[T]],
@@ -252,7 +249,7 @@ def drive_search(
     return asyncio.run(_seed_and_run(async_url, seeds, _wrapped, junctions))
 
 
-def with_session(
+def with_session[T](
     async_url: str,
     seeds: list[tuple[dict, dict | None]],
     body: Callable[[AsyncSession], Awaitable[T]],

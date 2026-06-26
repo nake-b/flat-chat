@@ -159,9 +159,7 @@ def test_summary_caps_at_top_n_and_shows_remaining_in_footer():
 def test_page_renders_csv_with_header_and_absolute_indices():
     state = _state(n_markers=3)
     view = LlmResultSetView(state)
-    out = view.page(
-        state.preview_cards, start=0, page=1, total_pages=1, page_size=10
-    )
+    out = view.page(state.preview_cards, start=0, page=1, total_pages=1, page_size=10)
     assert "Page 1/1 — listings 1–3 of 3" in out
     assert "```csv" in out
     assert "#,title,warm €,rooms,m²,district" in out

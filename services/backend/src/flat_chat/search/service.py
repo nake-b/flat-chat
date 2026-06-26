@@ -234,15 +234,11 @@ class SearchService:
         stmt: Select = (
             select(func.count())
             .select_from(Listing)
-            .outerjoin(
-                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
-            )
+            .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
         )
         stmt = self._apply_listing_filters(stmt, params)
         stmt = self._apply_geo_context_filters(stmt, params)
-        return stmt.where(
-            Listing.latitude.is_not(None), Listing.longitude.is_not(None)
-        )
+        return stmt.where(Listing.latitude.is_not(None), Listing.longitude.is_not(None))
 
     def _apply_listing_filters(self, stmt: Select, params: SearchParams) -> Select:
         """Filters that read directly off the `listings` table."""
@@ -318,9 +314,7 @@ class SearchService:
 
         return stmt
 
-    def _apply_geo_context_filters(
-        self, stmt: Select, params: SearchParams
-    ) -> Select:
+    def _apply_geo_context_filters(self, stmt: Select, params: SearchParams) -> Select:
         """Geo-context filters.
 
         Two shapes:
@@ -510,4 +504,4 @@ class SearchService:
         if self.embedder is None:  # pragma: no cover - guarded by caller
             raise RuntimeError("embedder required for semantic ranking")
         vectors = await self.embedder.embed([query], input_type="query")
-        return vectors[0]
+        return list(vectors[0])

@@ -34,9 +34,7 @@ from ..conftest import DB_REQUIRED
 # Gold ETL lives in the ingestion service, which the backend does NOT
 # depend on (intentional — see services/ingestion/CLAUDE.md). Add its
 # src dir to sys.path so the test can import the enrich functions.
-_INGESTION_SRC = (
-    Path(__file__).resolve().parents[4] / "services" / "ingestion" / "src"
-)
+_INGESTION_SRC = Path(__file__).resolve().parents[4] / "services" / "ingestion" / "src"
 if str(_INGESTION_SRC) not in sys.path:
     sys.path.insert(0, str(_INGESTION_SRC))
 
@@ -248,23 +246,24 @@ def test_enrich_nearby_transit_top_k_floor_when_periphery(sync_conn: Connection)
     enrich_nearby_transit(sync_conn)
 
     count = sync_conn.execute(
-        text(
-            "SELECT COUNT(*) FROM listings_nearby_transit "
-            "WHERE listing_id = :id"
-        ),
+        text("SELECT COUNT(*) FROM listings_nearby_transit WHERE listing_id = :id"),
         {"id": listing_id},
     ).scalar()
     assert count == ALWAYS_INCLUDE_K  # 5
 
     # The 5 included are the nearest ones (s0..s4); the 2 farthest are
     # dropped because they exceed both R and the K floor.
-    stop_ids = sync_conn.execute(
-        text(
-            "SELECT stop_id FROM listings_nearby_transit "
-            "WHERE listing_id = :id ORDER BY rank"
-        ),
-        {"id": listing_id},
-    ).scalars().all()
+    stop_ids = (
+        sync_conn.execute(
+            text(
+                "SELECT stop_id FROM listings_nearby_transit "
+                "WHERE listing_id = :id ORDER BY rank"
+            ),
+            {"id": listing_id},
+        )
+        .scalars()
+        .all()
+    )
     assert stop_ids == ["s0", "s1", "s2", "s3", "s4"]
 
 
@@ -284,10 +283,7 @@ def test_enrich_nearby_transit_includes_all_within_r(sync_conn: Connection):
     enrich_nearby_transit(sync_conn)
 
     count = sync_conn.execute(
-        text(
-            "SELECT COUNT(*) FROM listings_nearby_transit "
-            "WHERE listing_id = :id"
-        ),
+        text("SELECT COUNT(*) FROM listings_nearby_transit WHERE listing_id = :id"),
         {"id": listing_id},
     ).scalar()
     assert count == 7
@@ -435,10 +431,7 @@ def test_enrich_nearby_parks_excludes_cemeteries(sync_conn: Connection):
     enrich_nearby_parks(sync_conn)
 
     rows = sync_conn.execute(
-        text(
-            "SELECT object_type FROM listings_nearby_parks "
-            "WHERE listing_id = :id"
-        ),
+        text("SELECT object_type FROM listings_nearby_parks WHERE listing_id = :id"),
         {"id": listing_id},
     ).all()
     types = [r.object_type for r in rows]
@@ -506,8 +499,7 @@ def test_enrich_noise_outside_gate_leaves_null(sync_conn: Connection):
 
     row = sync_conn.execute(
         text(
-            "SELECT noise_total_lden FROM listings_geo_context "
-            "WHERE listing_id = :id"
+            "SELECT noise_total_lden FROM listings_geo_context WHERE listing_id = :id"
         ),
         {"id": listing_id},
     ).first()
@@ -576,8 +568,7 @@ def test_chip_scalars_no_junction_rows_leaves_chips_null(sync_conn: Connection):
 
     row = sync_conn.execute(
         text(
-            "SELECT nearest_transit_m FROM listings_geo_context "
-            "WHERE listing_id = :id"
+            "SELECT nearest_transit_m FROM listings_geo_context WHERE listing_id = :id"
         ),
         {"id": listing_id},
     ).first()

@@ -167,9 +167,7 @@ class ListingService:
         # `_project_listing` handles `lgc is None`.
         stmt = (
             select(Listing, ListingGeoContext)
-            .outerjoin(
-                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
-            )
+            .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
             .where(Listing.id == uid)
         )
         result = await self.db.execute(stmt)
@@ -185,9 +183,7 @@ class ListingService:
         # ONE round-trip: six `json_agg` scalar subqueries, each over an
         # ordered+limited inner select against its `(listing_id, rank)`
         # B-tree. One row back, six JSON-array columns (NULL when empty).
-        row = (
-            await self.db.execute(_NEIGHBOURS_SQL, {"listing_id": uid})
-        ).one()
+        row = (await self.db.execute(_NEIGHBOURS_SQL, {"listing_id": uid})).one()
 
         transit = _as_rows(row.transit)
         schools = _as_rows(row.schools)
@@ -216,8 +212,7 @@ class ListingService:
             for r in schools
         ]
         detail.nearest_parks = [
-            NearestPark(name=r["name"] or "", distance_m=r["distance_m"])
-            for r in parks
+            NearestPark(name=r["name"] or "", distance_m=r["distance_m"]) for r in parks
         ]
         detail.nearest_playground = (
             NearestPlayground(
@@ -275,9 +270,7 @@ class ListingService:
 
         stmt = (
             select(*CARD_COLUMNS)
-            .outerjoin(
-                ListingGeoContext, ListingGeoContext.listing_id == Listing.id
-            )
+            .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
             .where(Listing.id.in_(uids))
         )
         rows = (await self.db.execute(stmt)).all()
@@ -323,9 +316,7 @@ class ListingService:
             floors_total=listing.floors_total,
             construction_year=listing.construction_year,
             available_from=(
-                listing.available_from.isoformat()
-                if listing.available_from
-                else None
+                listing.available_from.isoformat() if listing.available_from else None
             ),
             listing_type=listing.apartment_type,
             heating=listing.heating,
