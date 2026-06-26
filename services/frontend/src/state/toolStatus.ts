@@ -61,23 +61,11 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
         trailing: pct != null ? ` · ${pct}%` : undefined,
       };
     },
-    // Friendly range — no "page" jargon (the backend result string says
-    // "Page N/M"; we deliberately don't echo it). e.g. "Apartments 11–20 of 241".
-    complete: (
-      a: { page?: number; page_size?: number },
-      _result: unknown,
-      state: { total_results?: number } | null,
-    ) => {
-      const page = a?.page ?? 1;
-      const pageSize = a?.page_size ?? DEFAULT_PAGE_SIZE;
-      const total = state?.total_results ?? 0;
-      const start = (page - 1) * pageSize + 1;
-      const end =
-        total > 0 ? Math.min(start + pageSize - 1, total) : start + pageSize - 1;
-      return total > 0
-        ? `Apartments ${start}–${end} of ${total}`
-        : `Apartments ${start}–${end}`;
-    },
+    // No completion pill for pagination — only the live "Checking apartments ·
+    // NN%" matters; once the page loads, the cards/map carry the result. (""
+    // → ToolPill renders nothing.) The backend result string ("Page N/M…") is
+    // deliberately never echoed.
+    complete: () => "",
   },
 
   open_listing: {
