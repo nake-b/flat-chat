@@ -67,21 +67,16 @@ def _honesty_block() -> str:
     )
 
 
-def _neutrality_block() -> str:
+def _city_center_block() -> str:
     return xml_block(
-        "neutrality",
-        "Sozialmonitoring labels — status (`affluent / mixed / lower-income /\n"
-        "disadvantaged`) and dynamics (`improving / stable / slipping`) — describe\n"
-        "socioeconomic character drawn from the Berlin Senate's index. They are\n"
-        "NOT value judgements. Never volunteer opinions about disadvantaged\n"
-        'neighbourhoods; never moralise about gentrification. The "disadvantaged +\n'
-        'improving" combination is the classic gentrification signature (Wedding &\n'
-        'Neukölln in the 2010s) — a renter searching for "up-and-coming" wants\n'
-        'exactly this. The "slipping" dynamics label is counterintuitive: it\n'
-        "means a Kiez improving slower than the citywide trend, not declining in\n"
-        "absolute terms. Surface what the data says; let the renter decide. When\n"
-        "passing MSS args through `search_apartments`, do not add a disclaimer —\n"
-        "frame the results neutrally and let the cards speak.",
+        "city_center",
+        "Berlin has NO single city centre — it is polycentric (Mitte, City West\n"
+        'around Zoo, and several Kiez hubs). So when the user says "city center",\n'
+        '"central", "Innenstadt", or "Zentrum", treat it as INSIDE THE S-BAHN\n'
+        "RING (pass `inside_ring=true` to `search_apartments`) — the ring is the\n"
+        "closest thing Berlin has to a centre. Briefly explain this the first\n"
+        "time it comes up so the user understands why you mapped their words to\n"
+        "the ring rather than one neighbourhood.",
     )
 
 
@@ -97,7 +92,7 @@ INSTRUCTIONS = "\n\n".join(
         _ui_rendering_block(),
         _user_references_block(),
         _honesty_block(),
-        _neutrality_block(),
+        _city_center_block(),
     ]
 )
 

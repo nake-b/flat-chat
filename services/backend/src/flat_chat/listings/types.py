@@ -25,20 +25,6 @@ GreeneryLabel = Literal["concrete", "leafy", "very_leafy"]
 
 
 # ---------------------------------------------------------------------------
-# MSS (Sozialmonitoring) labels. Stored canonically in English in silver
-# (`geo_context.transform.wfs` translates from German at ingest time). The
-# neutrality requirement (use "disadvantaged" not "poor") is enforced in
-# the agent INSTRUCTIONS. See doc §8.
-# ---------------------------------------------------------------------------
-
-MssStatus = Literal["disadvantaged", "lower-income", "mixed", "affluent"]
-"""Socioeconomic status of a Berlin planning area."""
-
-MssDynamics = Literal["slipping", "stable", "improving"]
-"""Recent trajectory of the area's status (last few years)."""
-
-
-# ---------------------------------------------------------------------------
 # Distance buckets — user-facing enum for "how close" in filter args. Maps
 # to integer meters via `listings.labels.resolve_near_spec()`. See doc §1.
 # ---------------------------------------------------------------------------

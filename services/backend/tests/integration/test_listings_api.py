@@ -100,7 +100,8 @@ def test_get_listing_200_returns_full_detail_with_cache_header(async_db_url):
         # ListingDetail.noise. Set both so search + detail agree.
         noise_total_lden=58.0,
         noise_profile={"total_lden": 58.0},
-        mss_profile={"status": "mixed", "dynamics": "improving"},
+        inside_ring=True,
+        listing_ortsteil="Kreuzberg",
     )
 
     async def body(client):
@@ -117,8 +118,8 @@ def test_get_listing_200_returns_full_detail_with_cache_header(async_db_url):
     # Geo-context labels applied at projection time.
     assert payload["noise"] is not None
     assert payload["noise"]["label"] == "lively"  # 55 ≤ 58 < 65
-    assert payload["mss"] is not None
-    assert payload["mss"]["status"] == "mixed"
+    assert payload["inside_ring"] is True
+    assert payload["listing_ortsteil"] == "Kreuzberg"
     # The frontend's 5-minute browser cache hinges on this exact header.
     assert response.headers["cache-control"] == "public, max-age=300"
 

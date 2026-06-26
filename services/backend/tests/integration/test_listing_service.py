@@ -19,6 +19,8 @@ import uuid
 
 from flat_chat.listings.models import (
     ListingNearbyHospital,
+    ListingNearbyKita,
+    ListingNearbyLandmark,
     ListingNearbyPark,
     ListingNearbyPlayground,
     ListingNearbySchool,
@@ -36,6 +38,8 @@ from ..fixtures.factories import (
 )
 from ..fixtures.factories import (
     nearby_hospital_row,
+    nearby_kita_row,
+    nearby_landmark_row,
     nearby_park_row,
     nearby_playground_row,
     nearby_school_row,
@@ -71,7 +75,10 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
             "persons_per_hectare": 200.0,
             "population": 12000,
         },
-        mss_profile={"status": "mixed", "dynamics": "improving"},
+        noise_total_lnight=52.0,
+        inside_ring=True,
+        listing_bezirk="Friedrichshain-Kreuzberg",
+        listing_ortsteil="Kreuzberg",
         disabled_parking_count=3,
     )
     junctions = [
@@ -113,6 +120,16 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
             ListingNearbyWater,
             nearby_water_row(
                 listing["id"], name="Landwehrkanal", water_kind="canal", distance_m=500
+            ),
+        ),
+        (
+            ListingNearbyKita,
+            nearby_kita_row(listing["id"], name="Kita Sonnenschein", distance_m=180),
+        ),
+        (
+            ListingNearbyLandmark,
+            nearby_landmark_row(
+                listing["id"], name="Oberbaumbrücke", category="bridge", distance_m=650
             ),
         ),
     ]
@@ -157,15 +174,22 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
     assert detail.noise is not None
     assert detail.noise.label == "lively"
     assert detail.noise.total_lden == 60.0
+    # Lnight is the scalar off the gold column (detail-only), not the blob.
+    assert detail.noise.total_lnight == 52.0
     # 6000 m² green is "leafy" (>= 5000, < 10000).
     assert detail.greenery is not None
     assert detail.greenery.label == "leafy"
     # 200 ppH is "dense" (>= 150).
     assert detail.density is not None
     assert detail.density.label == "dense"
-    assert detail.mss is not None
-    assert detail.mss.status == "mixed"
-    assert detail.mss.dynamics == "improving"
+    # Kitas + landmarks come from the new junction tables.
+    assert detail.nearest_kitas[0].name == "Kita Sonnenschein"
+    assert detail.nearest_landmarks[0].name == "Oberbaumbrücke"
+    assert detail.nearest_landmarks[0].category == "bridge"
+    # Admin-area scalars off the gold row.
+    assert detail.inside_ring is True
+    assert detail.listing_bezirk == "Friedrichshain-Kreuzberg"
+    assert detail.listing_ortsteil == "Kreuzberg"
     assert detail.disabled_parking_count == 3
 
 
@@ -231,10 +255,12 @@ def test_get_returns_tier2_only_when_no_gold_row(async_db_url):
     assert detail.nearest_playground is None
     assert detail.nearest_hospitals == []
     assert detail.nearest_water is None
+    assert detail.nearest_kitas == []
+    assert detail.nearest_landmarks == []
     assert detail.noise is None
     assert detail.greenery is None
     assert detail.density is None
-    assert detail.mss is None
+    assert detail.inside_ring is None
     assert detail.disabled_parking_count == 0
 
 

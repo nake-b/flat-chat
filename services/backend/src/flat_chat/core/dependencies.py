@@ -14,6 +14,7 @@ from flat_chat.chat.sessions import DbSessionStore, SessionStore
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
 from flat_chat.listings.service import ListingService
+from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.users.models import DUMMY_USER_ID
 
@@ -51,9 +52,16 @@ def get_search_service(
     return SearchService(db, embedder)
 
 
+def get_place_service(
+    db: AsyncSession = Depends(get_async_db),
+) -> PlaceService:
+    return PlaceService(db)
+
+
 def get_chat_service(
     search_service: SearchService = Depends(get_search_service),
     listing_service: ListingService = Depends(get_listing_service),
+    place_service: PlaceService = Depends(get_place_service),
     store: SessionStore = Depends(get_session_store),
 ):
     # Import here to break the import cycle: chat/service.py imports
@@ -63,5 +71,6 @@ def get_chat_service(
     return ChatService(
         search_service=search_service,
         listing_service=listing_service,
+        place_service=place_service,
         store=store,
     )

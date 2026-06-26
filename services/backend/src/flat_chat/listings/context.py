@@ -25,8 +25,6 @@ from .types import (
     DensityLabel,
     GreeneryLabel,
     GtfsMode,
-    MssDynamics,
-    MssStatus,
     NoiseLabel,
 )
 
@@ -80,6 +78,17 @@ class NearestWater(BaseModel):
     distance_m: int
 
 
+class NearestKita(BaseModel):
+    name: str | None = None
+    distance_m: int
+
+
+class NearestLandmark(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    distance_m: int
+
+
 # ---------------------------------------------------------------------------
 # Profile composites — raw values + bucket label co-located.
 # ---------------------------------------------------------------------------
@@ -88,6 +97,7 @@ class NearestWater(BaseModel):
 class NoiseProfile(BaseModel):
     label: NoiseLabel | None = None
     total_lden: float | None = None
+    total_lnight: float | None = None
     street_lden: float | None = None
     rail_lden: float | None = None
     distance_m: int | None = None
@@ -112,17 +122,6 @@ class DensityProfile(BaseModel):
     age_70_to_75: int | None = None
     age_75_to_80: int | None = None
     age_80_plus: int | None = None
-
-
-class MssProfile(BaseModel):
-    """Sozialmonitoring profile. Labels are neutral re-codings (doc §8)."""
-
-    status: MssStatus | None = None
-    dynamics: MssDynamics | None = None
-    social_inequality: str | None = None
-    planning_area_name: str | None = None
-    residents: int | None = None
-    year: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +213,11 @@ class ListingCard(BaseModel):
     nearest_park_m: int | None = None
     noise_label: NoiseLabel | None = None
     density_label: DensityLabel | None = None
-    mss_status_label: MssStatus | None = None
-    mss_dynamics_label: MssDynamics | None = None
+    # Admin-area context — cheap scalars off `listings_geo_context`, surfaced
+    # for the card's location chips ("inside the ring", Bezirk/Ortsteil).
+    inside_ring: bool | None = None
+    listing_bezirk: str | None = None
+    listing_ortsteil: str | None = None
 
     # Semantic-search score (cosine similarity, when query was set)
     similarity_score: float | None = None
@@ -239,6 +241,11 @@ class ListingDetail(BaseModel):
     postal_code: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+
+    # Admin-area context (ALKIS polygon assignment + Umweltzone ring flag)
+    inside_ring: bool | None = None
+    listing_bezirk: str | None = None
+    listing_ortsteil: str | None = None
 
     # Money
     price_warm_eur: float | None = None
@@ -287,8 +294,9 @@ class ListingDetail(BaseModel):
     nearest_playground: NearestPlayground | None = None
     nearest_hospitals: list[NearestHospital] = Field(default_factory=list)
     nearest_water: NearestWater | None = None
+    nearest_kitas: list[NearestKita] = Field(default_factory=list)
+    nearest_landmarks: list[NearestLandmark] = Field(default_factory=list)
     noise: NoiseProfile | None = None
     greenery: GreeneryProfile | None = None
     density: DensityProfile | None = None
-    mss: MssProfile | None = None
     disabled_parking_count: int = 0
