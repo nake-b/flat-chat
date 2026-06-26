@@ -28,6 +28,35 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-extras --dev
 
+      # Build the project's own Postgres image (PostGIS + pgvector) rather than
+      # a stock `postgres:16` service container — the integration tests' schema
+      # bootstrap does `CREATE EXTENSION postgis/vector`, which a bare image
+      # can't satisfy. Building from services/postgres/ keeps CI in parity with
+      # dev/prod. (GitHub Actions `services:` can't build an image, so we run it
+      # by hand.) `flat_chat_test` is a throwaway DB the entrypoint creates on
+      # first init; conftest builds the world/app schema into it idempotently.
+      - name: Start Postgres (PostGIS + pgvector)
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build -t flat-chat-postgres-ci services/postgres
+          docker run -d --name postgres-ci \
+            -e POSTGRES_USER=flat_chat \
+            -e POSTGRES_PASSWORD=flat_chat \
+            -e POSTGRES_DB=flat_chat_test \
+            -p 5432:5432 \
+            flat-chat-postgres-ci
+          echo "Waiting for Postgres to accept connections…"
+          for i in $(seq 1 30); do
+            if docker exec postgres-ci pg_isready -U flat_chat -d flat_chat_test; then
+              echo "Postgres ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres did not become ready in time:" >&2
+          docker logs postgres-ci >&2
+          exit 1
+
       - name: ruff check
         run: uv run ruff check src tests
 
@@ -37,5 +66,10 @@ jobs:
       - name: ty check
         run: uv run ty check src
 
+      # TEST_DATABASE_URL flips the integration tier on (skipped silently when
+      # unset — see services/backend/tests/conftest.py). The unit tier needs no
+      # DB and runs regardless.
       - name: pytest
         run: uv run pytest
+        env:
+          TEST_DATABASE_URL: postgresql://flat_chat:flat_chat@localhost:5432/flat_chat_test

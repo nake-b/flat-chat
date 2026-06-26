@@ -7,8 +7,10 @@ Two tiers, split into subdirectories so the gate is unmistakable:
   observability filter/SQL-comment, label bucketing, LLM-context prose,
   in-memory session store, agent-tool state mutations.
 - **`tests/integration/`** — execute SQL against a real Postgres. Gated
-  on the `TEST_DATABASE_URL` env var; **skip silently when unset** so CI
-  without postgres is still happy. Today: alembic round-trip, search SQL
+  on the `TEST_DATABASE_URL` env var; **skip silently when unset** so a
+  bare `pytest` (no postgres) is still happy. CI sets it: the workflow
+  builds the project's `services/postgres/` image (PostGIS + pgvector)
+  and runs this tier against it. Today: alembic round-trip, search SQL
   regression, search NULL-handling, ListingService, listings HTTP route.
 
 `tests/fixtures/factories.py` owns the seed helpers (`listing_row`,
