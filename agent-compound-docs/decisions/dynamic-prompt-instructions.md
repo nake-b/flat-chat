@@ -52,7 +52,7 @@ In `chat/llm_context.py:build_dynamic_state_prompt`:
   Do NOT call open_listing for index 3 — its full details are below.
 
   <active_listing>
-    [tier-3 prose: nearby transit, schools, parks, noise profile, MSS, ...]
+    [tier-3 prose: nearby transit, schools, kitas, parks, landmarks, noise profile, Bezirk/Ortsteil, ...]
   </active_listing>
 </user_focus>
 ```
@@ -71,7 +71,8 @@ by 1-based indices...
 
 <phrase_map>
   - "near U-Bahn" → transit: {modes: ["u_bahn"]}
-  - "up-and-coming" → mss: {status_min: "disadvantaged", dynamics: "improving"}
+  - "inside the ring" / "city center" → inside_ring: true
+  - "near the Tiergarten" → locate_place("Tiergarten") → near_place_ref
   ...
 </phrase_map>
 ```

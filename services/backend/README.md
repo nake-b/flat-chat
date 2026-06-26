@@ -82,7 +82,8 @@ src/flat_chat/
     ├── models.py              # Listing SQLAlchemy model (HNSW + functional GIST indexes)
     ├── geo_models.py          # SQLAlchemy mirrors of the 14 geo-context silver tables
     ├── schemas.py             # SearchParams (Literal sort_by, Field-bounded limit/radius_km)
-    ├── geo_filters.py         # Pydantic filter schemas (TransitFilter/SchoolFilter/HospitalFilter/MssFilter) + ListingContext shape
+    ├── geo_filters.py         # Pydantic filter schemas (TransitFilter/SchoolFilter/HospitalFilter/KitaFilter) + ListingContext shape
+    ├── places.py              # PlaceService — trigram resolution over the world.named_places gazetteer (locate_place)
     ├── distances.py           # Distance bucket constants + walk-minute helper + per-dataset caps
     ├── buckets.py             # Noise / density / greenery bucket classifiers (absolute WHO/EU thresholds)
     ├── transit.py             # GTFS Extended mode codes ↔ English enum mapping
@@ -114,10 +115,10 @@ Quick reference:
 | Cemeteries (Friedhöfe) | Counted in green amenity at **0.5 weight**; NEVER shown as the `nearest_park` chip | Senate policy + cultural usage; gloomy-perception caveat |
 | Density (persons/ha) | `sparse < 50`, `moderate 50–150`, `dense ≥ 150` | General urban planning |
 | Transit modes (tool-facing) | `u_bahn / s_bahn / tram / bus / ferry / regional / mainline` (English enum) | GTFS Extended Route Types (DB stores ints, tool surface uses strings) |
-| MSS status labels | German → English: `hoch → affluent`, `mittel → mixed`, `niedrig → lower-income`, `sehr niedrig → disadvantaged` | Berlin Senate Sozialmonitoring 2023 methodology |
-| MSS dynamics labels | `positiv → improving`, `stabil → stable`, `negativ → slipping` (counter-intuitive — measures relative-to-citywide trend) | Same |
+| Noise (Lnight, dB) | Detail-only night metric alongside Lden; filtering stays on Lden | WHO 2018 night-noise guideline |
+| "Inside the ring" | Umweltzone (low-emission zone) polygon ≈ S-Bahn ring "Hundekopf" → `inside_ring` | Berlin LEZ legal boundary; agent reads "city center"/"Zentrum" as the ring (polycentric city) |
 
-**Agent neutrality requirement**: MSS labels are *not* value judgements. `affluent` is not a recommendation; `disadvantaged` is not a warning. The agent's `INSTRUCTIONS` enforces neutral framing — never volunteer opinions about neighbourhood status.
+> **MSS / Sozialmonitoring was removed entirely in geo-context v2** (ethical grounds). The status/dynamics labels, the `mss_*` columns, `MssFilter`, and the agent neutrality block are gone. See [`named-place-search.md`](../../agent-compound-docs/decisions/named-place-search.md) and [`bezirk-ortsteil-resolution.md`](../../agent-compound-docs/decisions/bezirk-ortsteil-resolution.md).
 
 **Rule**: when adding a new constant, add a row to the threshold doc *first*, then write the code that references it. Constants without an entry there are technical debt.
 

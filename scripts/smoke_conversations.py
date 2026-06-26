@@ -156,10 +156,10 @@ CONVERSATIONS = [
         ],
     ),
     (
-        "3 — MSS gentrification phrase",
+        "3 — named-place + inside-the-ring flow",
         [
-            "find me something in an up-and-coming neighbourhood with good greenery",
-            "actually I prefer somewhere already affluent and stable",
+            "find me something near the Spree with good greenery",
+            "actually keep it inside the ring",
         ],
     ),
     (

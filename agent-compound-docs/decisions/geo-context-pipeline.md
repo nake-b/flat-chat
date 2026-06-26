@@ -4,6 +4,16 @@ Decided 2026-06-13 during PR #8 review. Captures the rationale for why
 `services/ingestion/src/geo_context/` looks the way it does so reviewers
 don't have to re-litigate them.
 
+> **Updated for geo-context v2 (June 2026):** the gold tier this doc lists as
+> "deferred" now exists (see [`gold-platinum-layers.md`](gold-platinum-layers.md)
+> + [`spatial-neighbor-tables.md`](spatial-neighbor-tables.md)). **MSS /
+> Sozialmonitoring was removed entirely** on ethical grounds — its alias map and
+> source table are gone. New named-place + admin layers (kitas, landmarks,
+> bezirke/ortsteile, inner_city_zone) and the `world.named_places` view are
+> documented in [`named-place-search.md`](named-place-search.md) and
+> [`bezirk-ortsteil-resolution.md`](bezirk-ortsteil-resolution.md). `street_noise_2022`
+> was renamed `strategic_noise_2022`.
+
 ## Why separate from `silver.run`
 
 The first iteration of geo-context ingestion lived inside `silver.run` —
@@ -121,11 +131,12 @@ could be wired in quickly if year-over-year trend ever becomes useful.
   prod. The minimal useful starter would be `listing_geo_features`
   with `nearest_transit_stop_id` + distance and `noise_at_location`,
   rebuilt nightly.
-- Verify **MSS** and **water_bodies** aliases against real source output
-  on first prod run. They were derived from `DescribeFeatureType` but
-  never sanity-checked against actual rows.
+- Verify the **`wip`-status aliases** (kitas, landmarks, bezirke, ortsteile,
+  umweltzone, water_bodies) against real source output on first prod run.
+  They were derived from `DescribeFeatureType` but never sanity-checked
+  against actual rows. (MSS was removed in geo-context v2.)
 - **GTFS frequency aggregation** as a follow-up if "is this stop served
   on weekends?" or "how many trains per hour during rush?" turns out to
   matter to users.
-- Replace the dead-stop noise dataset (`street_noise_2022`) with the
-  2027 update when published.
+- Replace the dead-stop noise dataset (`strategic_noise_2022`, renamed from
+  `street_noise_2022` in geo-context v2) with the 2027 update when published.

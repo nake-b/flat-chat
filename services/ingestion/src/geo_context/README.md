@@ -1,9 +1,11 @@
 # geo_context — Berlin geospatial context ETL
 
-Ships Berlin geo-reference data (schools, parks, noise, population
-density, hospitals, social monitoring, water bodies, public transit)
-into PostGIS so the chat agent can answer "what kind of neighborhood is
-this?" questions about a listing.
+Ships Berlin geo-reference data (schools, kitas, parks, playgrounds,
+strategic noise, population density, hospitals, water bodies, landmarks,
+bezirke/ortsteile admin polygons, the inner-city / Umweltzone ring, public
+transit) into PostGIS so the chat agent can answer "what kind of
+neighborhood is this?" questions about a listing. (MSS/Sozialmonitoring was
+removed in geo-context v2.)
 
 ```
 ┌──────────────────────┐    XML/JSON   ┌────────────────────┐

@@ -20,7 +20,7 @@ source of truth, with a hard cross-schema FK preserved for the future.
 
 | Schema | Holds | Owner | Migrated by |
 |--------|-------|-------|-------------|
-| `world` | iron_cards, raw_listings, listings, listings_geo_context, listings_embeddings, listings_nearby_* (×6), transit_*, schools, school_catchments, parks, playgrounds, hospitals, disabled_parking, street_noise_2022, green_volume_2020, population_density_2025, social_monitoring_2025, water_bodies (25 tables) | **ingestion** | `services/ingestion/alembic/` → `world.alembic_version` |
+| `world` | iron_cards, raw_listings, listings, listings_geo_context, listings_embeddings, listings_nearby_* (×8: transit/schools/hospitals/parks/playgrounds/water/kitas/landmarks), transit_*, schools, school_catchments, parks, playgrounds, hospitals, disabled_parking, kitas, landmarks, bezirke, ortsteile, inner_city_zone, strategic_noise_2022, green_volume_2020, population_density_2025, water_bodies, + the `named_places` VIEW | **ingestion** | `services/ingestion/alembic/` → `world.alembic_version` |
 | `app` | users, sessions, bookmarks (+ future) — **none built yet** | **backend** | `services/backend/alembic/` → `app.alembic_version` |
 
 - **Naming — `world` + `app`.** `world` = the observed reference data we ingest

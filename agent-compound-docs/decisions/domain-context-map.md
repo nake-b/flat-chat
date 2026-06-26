@@ -9,7 +9,7 @@ first relationship below. This is a framing doc — the mechanics live in
 ## Contexts
 
 **1. Apartment context** — the observed world: listings + their geo-context
-(transit, schools, parks, noise, MSS, …). Spans the ingestion medallion
+(transit, schools, kitas, parks, noise, landmarks, Bezirk/Ortsteil, …). Spans the ingestion medallion
 (iron→platinum) and the backend's read side (`listings/`, `search/`).
 
 **2. Assistant / Conversation context** — `chat/`. Its own ubiquitous language —
@@ -35,9 +35,9 @@ not apartments. Consumes the apartment context downstream.
 - **Anti-corruption layer** at the kernel's upstream edge: the **silver
   transformers** (`services/ingestion/src/silver/sources/`) normalize each
   portal's raw JSON into the canonical `Listing`, and the geo-context transforms
-  (`geo_context/transform/wfs.py`) translate German source labels into the
-  English domain vocabulary (e.g. MSS `"sehr niedrig"` → `"disadvantaged"`).
-  Raw portal/German data never escapes silver.
+  (`geo_context/transform/wfs.py` + `transform/aliases.py`) translate German
+  source column names into the English domain vocabulary (e.g. the bezirke
+  layer's `namgem` → `name`). Raw portal/German data never escapes silver.
 
 - **Assistant context** depends on the Apartment context (reads `Listing`,
   `ListingCard`, `ListingDetail`); the dependency is one-way (`chat/` →
