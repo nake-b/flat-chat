@@ -49,6 +49,13 @@ Sources:
 | water_bodies | 2000 | scenic amenity, generous cap |
 | transit_stops | 1500 | anything beyond is not "your stop" |
 
+**Gold-layer storage radii** (`R_NEARBY_*_M` in `services/ingestion/src/gold/enrich_listings.py`) — generous on purpose; search-time predicates do the actual cutoff. The two added for geo-context v2:
+
+| Constant | Value (m) | Rationale |
+|---|---|---|
+| `R_NEARBY_KITAS_M` | **3000** | Kitas are denser + more hyperlocal than schools (a family wants the *nearest* day-care, not one across town) → mirror playgrounds' 3 km, not schools' 5 km. |
+| `R_NEARBY_LANDMARKS_M` | **2000** | Notable landmarks (monuments, towers, bridges, stadiums, attractions) are sparse; "near a landmark" is a generous, low-frequency relationship — 2 km keeps the junction populated without flooding it. |
+
 ---
 
 ## 2. Pedestrian walking speed

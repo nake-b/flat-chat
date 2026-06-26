@@ -24,6 +24,7 @@ echo "→ Bootstrapping extensions + schemas on local postgres ($DB_NAME)"
 docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE SCHEMA IF NOT EXISTS world;
 CREATE SCHEMA IF NOT EXISTS app;
 SQL

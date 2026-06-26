@@ -25,7 +25,7 @@ from alembic import command
 from alembic.config import Config
 
 # Bump when a new world migration is added; the round-trip should land here.
-LATEST_REVISION = "0006_spatial_junction_tables"
+LATEST_REVISION = "0007_geo_context_v2"
 
 _TEST_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 
@@ -62,6 +62,9 @@ def _bootstrap(url: str) -> None:
         conn.execute(sa.text("CREATE SCHEMA public"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # pg_trgm backs the named_places trigram indexes the 0007 migration
+        # creates; the postgres bootstrap installs it on a fresh volume.
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         conn.execute(sa.text("CREATE SCHEMA world"))
         conn.execute(sa.text("CREATE SCHEMA app"))
     engine.dispose()

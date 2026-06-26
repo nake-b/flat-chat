@@ -5,9 +5,9 @@ Steps applied to every layer:
   2. Rename source columns to the English silver-column names via aliases
   3. Drop any unaliased columns (avoids accidental leakage of German names)
   4. Optionally inject extra fixed columns (e.g. `tier` for hospitals)
-  5. Apply value-level translations (e.g. MSS German→English labels) so
-     silver stores canonical English — the data layer is language-agnostic
-     and downstream consumers (gold, search, frontend) never see German.
+  5. Optionally drop rows with an empty `name` (named-only layers, e.g. the
+     ALKIS building footprints that seed `landmarks` — an unnamed footprint
+     is just a generic building, not a landmark).
 """
 
 from __future__ import annotations
@@ -27,69 +27,15 @@ SILVER_SRID = 4326
 
 
 # ---------------------------------------------------------------------------
-# Value-level translations: German source labels → canonical English silver
-# values. Threshold doc §8 owns the MSS label vocabulary; this table is the
-# *single point* where the publisher's German strings stop existing.
-#
-# Why this lives here (not in the backend): silver is the canonical clean
-# form. If the publisher renames a label, only this map changes and a
-# geo_context.run refresh propagates English everywhere downstream — gold,
-# search filters, agent prose, frontend chips. No code in
-# `services/backend/` ever sees German.
+# Named-only layers: drop rows whose `name` column is null/blank after the
+# rename. ALKIS publishes every building footprint, but only NAMED ones are
+# landmarks (Fernsehturm, Siegessäule, …); an unnamed footprint is generic
+# building noise we don't want in the `landmarks` table or the named_places
+# search view.
 # ---------------------------------------------------------------------------
 
-_MSS_STATUS_DE_TO_EN: dict[str, str | None] = {
-    "sehr niedrig": "disadvantaged",
-    "niedrig": "lower-income",
-    "mittel": "mixed",
-    "hoch": "affluent",
-    # Publisher's "no data" sentinel — planning areas without a
-    # social-monitoring classification. Map to None so it doesn't leak
-    # into gold / search as a pseudo-status string.
-    "Planungsraum ohne Zuordnung": None,
-}
-
-_MSS_DYNAMICS_DE_TO_EN: dict[str, str] = {
-    "positiv": "improving",
-    "stabil": "stable",
-    "negativ": "slipping",
-}
-
-# Social-inequality composite label translation. The source publishes a
-# pattern like "Status mittel , Dynamik stabil" — we machine-translate
-# the two known German tokens into English. The "Status / Dynamik" frame
-# stays as-is because it's structural, not idiomatic.
-def _translate_social_inequality(val: str) -> str:
-    if not isinstance(val, str):
-        return val
-    out = val
-    for de, en in (
-        ("sehr niedrig", "disadvantaged"),
-        ("niedrig", "lower-income"),
-        ("mittel", "mixed"),
-        ("hoch", "affluent"),
-        ("positiv", "improving"),
-        ("stabil", "stable"),
-        ("negativ", "slipping"),
-        ("Status", "Status"),
-        ("Dynamik", "Dynamics"),
-    ):
-        out = out.replace(de, en)
-    return out
-
-
-_MSS_SOCIAL_INEQUALITY_TRANSLATE = _translate_social_inequality
-
-
-# Per-dataset/layer translation specs. Keyed by (dataset, layer) — same
-# shape as ALIASES so the lookup is consistent. Values are either a dict
-# (lookup) or a callable (str → str transform).
-_VALUE_TRANSLATIONS: dict[tuple[str, str], dict] = {
-    ("mss_2025", "mss2025_indizes_542"): {
-        "status_index_label": _MSS_STATUS_DE_TO_EN,
-        "dynamics_index_label": _MSS_DYNAMICS_DE_TO_EN,
-        "social_inequality_label": _MSS_SOCIAL_INEQUALITY_TRANSLATE,
-    },
+_NAMED_ONLY_LAYERS: set[tuple[str, str]] = {
+    ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk"),
 }
 
 
@@ -151,36 +97,25 @@ def transform_wfs_layer(
     if geom_col != "geom":
         renamed = renamed.rename_geometry("geom")
 
-    # 4. Inject constants (e.g. discriminator tier for the hospitals union).
+    # 4. Inject constants (e.g. discriminator tier for the hospitals union,
+    # source/category for the landmarks union).
     if extra_columns:
         for col, value in extra_columns.items():
             renamed[col] = value
 
-    # 4b. Value-level translations (e.g. MSS German labels → English).
-    # Applied per dataset/layer; the spec is a no-op for everything except
-    # the MSS planning-area indices. Spec values are either a `dict`
-    # (lookup table — unmapped values fall through unchanged and are
-    # logged) or a `callable` (custom transform — applied to every
-    # non-null cell).
-    translation_spec = _VALUE_TRANSLATIONS.get(key)
-    if translation_spec:
-        for column, mapping in translation_spec.items():
-            if column not in renamed.columns:
-                continue
-            if callable(mapping):
-                renamed[column] = renamed[column].map(
-                    lambda v, fn=mapping: fn(v) if v is not None else v
-                )
-            else:
-                unmapped = set(renamed[column].dropna().unique()) - set(mapping.keys())
-                if unmapped:
-                    logger.warning(
-                        "%s/%s: column %s has unmapped values %s — kept as-is",
-                        dataset, layer, column, sorted(unmapped),
-                    )
-                renamed[column] = renamed[column].map(
-                    lambda v, m=mapping: m.get(v, v)
-                )
+    # 4b. Named-only filter: drop rows with a null/blank `name`. Only the
+    # landmark-seeding layers opt in (see _NAMED_ONLY_LAYERS) — an unnamed
+    # ALKIS building footprint is generic noise, not a landmark.
+    if key in _NAMED_ONLY_LAYERS and "name" in renamed.columns:
+        before = len(renamed)
+        name_str = renamed["name"].astype("string").str.strip()
+        renamed = renamed[name_str.notna() & (name_str != "")]
+        dropped_unnamed = before - len(renamed)
+        if dropped_unnamed:
+            logger.info(
+                "%s/%s: dropped %d unnamed rows (named-only layer)",
+                dataset, layer, dropped_unnamed,
+            )
 
     # 5. Coerce whole-number float columns to nullable Int64. pandas turns
     # any integer source column containing nulls into float64 (1, 2, NaN

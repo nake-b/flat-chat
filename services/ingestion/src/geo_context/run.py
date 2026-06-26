@@ -25,6 +25,7 @@ from db import engine
 
 from .config import Catalog, WfsDataset, load_catalog
 from .extract.gtfs import VbbGtfsClient
+from .extract.osm import OverpassClient
 from .extract.wfs import BerlinGdiWfsClient
 from .load.postgis import _write_append, _write_dataframe, _write_replace, to_pg_array
 from .transform.gtfs import transform_gtfs
@@ -121,6 +122,33 @@ def _run_wfs(
     return ok, fail
 
 
+def _run_osm(osm_client: OverpassClient) -> tuple[int, int]:
+    """APPEND OSM landmarks into the `landmarks` table. Returns (ok, fail).
+
+    Its own step (not a WFS layer) because the source is the Overpass API,
+    not the Berlin GDI WFS. Runs AFTER the WFS `alkis_buildings` family has
+    seeded `landmarks` (which TRUNCATEs), so OSM purely appends `source='osm'`
+    rows. If the ALKIS family didn't run this pass, the rows still append
+    cleanly — gold re-enrichment reads whatever is present.
+    """
+    try:
+        gdf = osm_client.fetch_landmarks()
+        if gdf.empty:
+            logger.warning("osm: zero landmarks returned, skipping")
+            return 0, 0
+        # Tag the source discriminator on the frame (WFS does the equivalent
+        # via the YAML `extra` block; the append loader takes no extras).
+        gdf = gdf.assign(source="osm")
+        with engine.begin() as conn:
+            # `landmarks` is mixed-geometry (geometry(Geometry, 4326)).
+            _write_append(conn, gdf, "landmarks", geom_type="Geometry")
+        logger.info("OK osm → landmarks (%d rows appended)", len(gdf))
+        return 1, 0
+    except Exception:
+        logger.error("FAIL osm (rolled back):\n%s", traceback.format_exc())
+        return 0, 1
+
+
 def _run_gtfs(catalog: Catalog) -> tuple[int, int]:
     if not catalog.gtfs.enabled:
         return 0, 0
@@ -174,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-wfs", action="store_true", help="skip every WFS dataset"
     )
+    parser.add_argument(
+        "--skip-osm", action="store_true", help="skip the OSM landmark extractor"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -188,24 +219,33 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_wfs:
         wfs_ok, wfs_fail = _run_wfs(catalog, only, BerlinGdiWfsClient())
 
+    # OSM landmarks APPEND into `landmarks` AFTER WFS seeds it, so it runs
+    # after the WFS pass (the ALKIS `alkis_buildings` family TRUNCATEs the
+    # table on its first page).
+    osm_ok, osm_fail = (0, 0)
+    if not args.skip_osm and (only is None or "osm" in only):
+        osm_ok, osm_fail = _run_osm(OverpassClient())
+
     gtfs_ok, gtfs_fail = (0, 0)
     if not args.skip_gtfs and (only is None or "gtfs" in only):
         gtfs_ok, gtfs_fail = _run_gtfs(catalog)
 
-    total_ok = wfs_ok + gtfs_ok
-    total_fail = wfs_fail + gtfs_fail
+    total_ok = wfs_ok + osm_ok + gtfs_ok
+    total_fail = wfs_fail + osm_fail + gtfs_fail
     logger.info(
-        "geo_context: %d ok, %d failed (wfs=%d/%d, gtfs=%d/%d)",
+        "geo_context: %d ok, %d failed (wfs=%d/%d, osm=%d/%d, gtfs=%d/%d)",
         total_ok,
         total_fail,
         wfs_ok,
         wfs_ok + wfs_fail,
+        osm_ok,
+        osm_ok + osm_fail,
         gtfs_ok,
         gtfs_ok + gtfs_fail,
     )
 
     # Chain gold re-enrichment if any silver geo-context family succeeded.
-    # When geo-context refreshes (e.g. updated noise raster, new MSS year),
+    # When geo-context refreshes (e.g. updated noise raster, new landmarks),
     # every listing's gold row needs to be re-computed against the new data
     # — chaining here ensures the agent's search results reflect the
     # refreshed truth without manual intervention. Skipped if everything

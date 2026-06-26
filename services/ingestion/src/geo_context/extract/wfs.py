@@ -82,7 +82,7 @@ class BerlinGdiWfsClient:
     PAGE_SIZE: int = 10_000
     # Refuse to keep paginating past this in a single layer fetch — a
     # runaway query should fail loudly, not eat memory. Sized for the
-    # strategic noise map (`street_noise_2022`), which is a 10m raster of
+    # strategic noise map (`strategic_noise_2022`), which is a 10m raster of
     # modelled receivers along every road/rail line in Berlin — empirically
     # ~3–6M points. Headroom over that. Smaller datasets (schools, hospitals)
     # never approach this; if one ever does, that's the bug we want to catch.

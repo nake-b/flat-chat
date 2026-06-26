@@ -54,7 +54,7 @@ Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/s
 | **Iron** | `iron_cards` | Daily | `iron/` (filled by `scraper/`) |
 | **Bronze** | `raw_listings` | Daily | `bronze/` (filled by `scraper/`) |
 | **Silver — listings** | `listings` | Daily | `silver/` (reads bronze) |
-| **Silver — geo-context** | `transit_stops`, `parks`, `schools`, `social_monitoring_2025`, ... | Monthly | `geo_context/` |
+| **Silver — geo-context** | `transit_stops`, `parks`, `schools`, `kitas`, `landmarks`, `bezirke`, `ortsteile`, `inner_city_zone`, ... | Monthly | `geo_context/` |
 | **Gold** | `listings_geo_context` | Chained after silver listings + chained after geo-context | `gold/` |
 | **Platinum** | `listings_embeddings` | Chained after silver listings (best-effort) | `platinum/` |
 
@@ -80,16 +80,15 @@ Local development uses existing bronze data — `silver.run` → `gold.run`
 (which chains gold + platinum); scraper is in a separate compose
 profile that must be invoked explicitly.
 
-## Silver MSS English translation
+## Landmarks: ALKIS (WFS) + OSM (Overpass)
 
-`geo_context/transform/wfs.py` translates German labels in the MSS
-(Sozialmonitoring) dataset to English at silver-transform time. The
-single source of truth for the German→English mapping is the
-`_VALUE_TRANSLATIONS` table at the top of that file.
-
-Why silver, not gold: silver is the canonical clean form. If the
-publisher renames a label, this file changes; nothing downstream sees
-German.
+`landmarks` is the one named-place class with no pre-existing table. It is
+seeded from ALKIS named building footprints (a WFS layer, `source='alkis'`,
+`category='building'`, named-only filter in `transform/wfs.py`) and then
+APPENDED to from OSM via a separate Overpass step (`extract/osm.py`,
+`source='osm'`, `category` from the matched tag). Geometry is mixed
+(`geometry(Geometry, 4326)`) and native — OSM nodes stay points, bridges
+stay lines, areas stay polygons. OSM is ODbL; ALKIS/GDI is `dl-de/zero-2-0`.
 
 Decision doc: [`geo-context-pipeline.md`](../../agent-compound-docs/decisions/geo-context-pipeline.md).
 
@@ -109,18 +108,22 @@ Family names (in `CHIP_FAMILIES` run order):
 **Junction-table fillers** — populate `listings_nearby_*` with top-K=5 ∪
 all-within-R per listing:
 - `nearby_transit` (R=5 km), `nearby_schools` (R=5 km),
-  `nearby_hospitals` (R=12 km), `nearby_parks` (R=5 km, cemeteries
-  excluded), `nearby_playgrounds` (R=3 km), `nearby_water` (R=6 km).
+  `nearby_kitas` (R=3 km), `nearby_hospitals` (R=12 km),
+  `nearby_parks` (R=5 km, cemeteries excluded),
+  `nearby_playgrounds` (R=3 km), `nearby_water` (R=6 km),
+  `nearby_landmarks` (R=2 km, notable categories only).
 
 **Derived chip scalars** — read from the junction tables:
 - `chip_scalars` (nearest_transit_* + nearest_park_* on
   `listings_geo_context`).
 
 **Scalar / field fillers** — properties of the listing's location:
-- `noise` (50 m coverage gate; out → NULL; search optimistic-includes),
-  `greenery` (300 m composite m²), `density` (LOR ppl/ha),
-  `mss` (Sozialmonitoring labels), `school_catchment` (polygon
-  membership), `disabled_parking` (count within 300 m).
+- `noise` (50 m coverage gate; out → NULL; search optimistic-includes;
+  writes Lden + Lnight), `greenery` (300 m composite m²),
+  `density` (LOR ppl/ha), `admin_areas` (smallest-containing Bezirk +
+  Ortsteil via `ST_Covers`), `inside_ring` (inside the Umweltzone polygon),
+  `school_catchment` (polygon membership),
+  `disabled_parking` (count within 300 m).
 
 Threshold constants (radii, gate distances) are duplicated inline at
 the top of `enrich_listings.py` — same values as

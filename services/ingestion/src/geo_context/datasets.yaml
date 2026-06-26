@@ -48,17 +48,17 @@ wfs:
     update_cadence: yearly
     description: "Residents per planning area (LOR) with age-band breakdown."
 
-  - key: street_noise_2022
+  - key: strategic_noise_2022
     dataset: ua_stratlaerm_2022
     layer: aa_fp_gesamt2022
-    table: street_noise_2022
+    table: strategic_noise_2022
     geom_type: Point
     enabled: true
     status: stable
     license: "dl-de/by-2-0"
     source_url: "https://gdi.berlin.de/services/wfs/ua_stratlaerm_2022"
     update_cadence: "every 5 years (EU directive)"
-    description: "Strategic noise map — Lden/Lnight per source (street/rail/air)."
+    description: "Strategic noise map (road + rail) — Lden/Lnight per source."
 
   - key: green_volume_2020
     dataset: ua_gruenvolumen_2020
@@ -136,18 +136,6 @@ wfs:
     update_cadence: monthly
     description: "Reserved disabled-parking spots with address and count."
 
-  - key: social_monitoring_2025
-    dataset: mss_2025
-    layer: mss2025_indizes_542
-    table: social_monitoring_2025
-    geom_type: MultiPolygon
-    enabled: true
-    status: wip
-    license: "dl-de/by-2-0"
-    source_url: "https://gdi.berlin.de/services/wfs/mss_2025"
-    update_cadence: yearly
-    description: "Monitoring Soziale Stadtentwicklung — Status/Dynamics/Social-Inequality indices per planning area."
-
   - key: water_bodies
     dataset: gewaesserkarte
     layer: e_gew_gewaesser_fl
@@ -159,6 +147,73 @@ wfs:
     source_url: "https://gdi.berlin.de/services/wfs/gewaesserkarte"
     update_cadence: rarely
     description: "All Berlin water body surfaces (lakes, Spree, Havel, canals)."
+
+  - key: kitas
+    dataset: kitas
+    layer: kitas
+    table: kitas
+    geom_type: Point
+    enabled: true
+    status: wip
+    license: "dl-de/zero-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/kitas"
+    update_cadence: monthly
+    description: "Day-care centres (Kindertagesstätten) — name, operator, address."
+
+  # ALKIS named building footprints become the seed of the `landmarks` table
+  # (source='alkis', category='building'). The OSM extractor appends free-
+  # standing Bauwerke (monuments, towers, bridges, …) into the same table on
+  # its own run.step — see geo_context/extract/osm.py.
+  - key: alkis_buildings
+    dataset: alkis_gebaeude
+    layer: alkis_gebaeude:gebaeudebauwerk
+    table: landmarks
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/zero-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_gebaeude"
+    update_cadence: yearly
+    description: "Named ALKIS building footprints (full polygon). Loads with source='alkis', category='building'."
+    extra:
+      source: alkis
+      category: building
+
+  - key: bezirke
+    dataset: alkis_bezirke
+    layer: alkis_bezirke:bezirksgrenzen
+    table: bezirke
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/zero-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_bezirke"
+    update_cadence: rarely
+    description: "Berlin's 12 borough (Bezirk) boundary polygons."
+
+  - key: ortsteile
+    dataset: alkis_ortsteile
+    layer: alkis_ortsteile
+    table: ortsteile
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/zero-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/alkis_ortsteile"
+    update_cadence: rarely
+    description: "Berlin's ~96 locality (Ortsteil) boundary polygons."
+
+  - key: umweltzone
+    dataset: umweltzone
+    layer: umweltzone:umweltzone
+    table: inner_city_zone
+    geom_type: MultiPolygon
+    enabled: true
+    status: wip
+    license: "dl-de/zero-2-0"
+    source_url: "https://gdi.berlin.de/services/wfs/umweltzone"
+    update_cadence: rarely
+    description: "Legal low-emission zone (≈ S-Bahn ring 'Hundekopf') — the 'inside the ring' boundary. Single feature."
 
 # GTFS — public transit feed published by VBB (Verkehrsverbund Berlin-Brandenburg).
 # Powers transit_stops, transit_routes, transit_route_shapes via a single transform pass.

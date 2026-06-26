@@ -188,22 +188,60 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     },
 
     # ---------------------------------------------------------------------
-    # mss_2025  (Monitoring Soziale Stadtentwicklung — composite indices)
+    # kitas  (Kindertagesstätten — day-care centres, points)
+    # NOTE: column names below mirror the published kita WFS schema; verify
+    # against GetCapabilities if a refresh drops fields (status: wip).
     # ---------------------------------------------------------------------
-    ("mss_2025", "mss2025_indizes_542"): {
-        "plr_id": "planning_area_id",
-        "plr_name": "planning_area_name",
-        "bez_id": "district_id",
-        "ew": "residents",
-        "di_n": "dynamics_index_score",
-        "di_v": "dynamics_index_label",
-        "sdi": "social_inequality_category",
-        "sdi_n": "social_inequality_score",
-        "sdi_v": "social_inequality_label",
-        "si_n": "status_index_score",
-        "si_v": "status_index_label",
-        "zeit": "year",
-        "kom": "notes",
+    ("kitas", "kitas"): {
+        "name": "name",
+        "traeger": "operator",
+        "traegertyp": "operator_type",
+        "strasse": "street",
+        "hausnr": "house_number",
+        "plz": "postal_code",
+        "bezirk": "district",
+        "ortsteil": "neighborhood",
+        "telefon": "phone",
+        "email": "email",
+        "internet": "website",
+        "plaetze": "capacity",
+    },
+
+    # ---------------------------------------------------------------------
+    # alkis_gebaeude  (named building footprints → landmarks; source='alkis',
+    # category='building' injected via YAML `extra`). Keep named-only: the
+    # transform drops rows with an empty `name` (see transform_wfs_layer).
+    # ---------------------------------------------------------------------
+    ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk"): {
+        "nam": "name",
+        "bezeich": "description",
+    },
+
+    # ---------------------------------------------------------------------
+    # alkis_bezirke  (borough boundary polygons)
+    # CRITICAL: features carry NO `nam`. `name` is a numeric borough ID and
+    # `namgem` is the human label ("Mitte") — so the human label lands in the
+    # `name` column and the numeric id in `bezirk_id`.
+    # ---------------------------------------------------------------------
+    ("alkis_bezirke", "alkis_bezirke:bezirksgrenzen"): {
+        "namgem": "name",
+        "name": "bezirk_id",
+    },
+
+    # ---------------------------------------------------------------------
+    # alkis_ortsteile  (locality boundary polygons) — `nam` is the label here.
+    # ---------------------------------------------------------------------
+    ("alkis_ortsteile", "alkis_ortsteile"): {
+        "nam": "name",
+    },
+
+    # ---------------------------------------------------------------------
+    # umweltzone  (low-emission zone ≈ S-Bahn ring → inner_city_zone)
+    # Single feature; only the geometry matters. `nam` aliased if present so
+    # the dropped-column log stays quiet.
+    # ---------------------------------------------------------------------
+    ("umweltzone", "umweltzone:umweltzone"): {
+        "nam": "name",
     },
 
     # ---------------------------------------------------------------------
