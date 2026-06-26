@@ -152,12 +152,16 @@ class DbSessionStore:
                 raise SessionNotFoundError(session_id)
 
             rows = (
-                await db.execute(
-                    select(Message.content)
-                    .where(Message.conversation_id == conv_uuid)
-                    .order_by(Message.seq)
+                (
+                    await db.execute(
+                        select(Message.content)
+                        .where(Message.conversation_id == conv_uuid)
+                        .order_by(Message.seq)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             history = ModelMessagesTypeAdapter.validate_python(list(rows))
 
             snap = await db.get(SessionStateRow, conv_uuid)
