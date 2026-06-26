@@ -17,6 +17,8 @@ Gold stores facts; this module (consumed at chat-presentation time) tells
 the user what they mean.
 """
 
+from typing import cast
+
 from .thresholds import (
     BUCKET_TO_METERS,
     DENSITY_MODERATE_MAX,
@@ -98,7 +100,12 @@ def encode_modes(modes: list[GtfsMode]) -> list[int]:
 
 def decode_modes(codes: list[int]) -> list[GtfsMode]:
     """Map GTFS integer codes back to English labels. Unknown codes dropped."""
-    return [GTFS_MODE_TO_LABEL[c] for c in codes if c in GTFS_MODE_TO_LABEL]
+    # `GTFS_MODE_TO_LABEL` values are GtfsMode literals, but typed `dict[int,
+    # str]`, so the comprehension is `list[str]` — cast back. (Annotating the
+    # dict as `dict[int, GtfsMode]` instead made ty's inference diverge by
+    # platform: macOS honoured it, Linux CI didn't.)
+    labels = [GTFS_MODE_TO_LABEL[c] for c in codes if c in GTFS_MODE_TO_LABEL]
+    return cast("list[GtfsMode]", labels)
 
 
 def display_modes(codes: list[int]) -> list[str]:
