@@ -479,6 +479,10 @@ function CardChips({ apt }: { apt: ListingCard }) {
   if (apt.noise_label === "quiet") {
     chips.push({ key: "noise", label: "🔇 quiet" });
   }
+  // Inside the S-Bahn ring — central-Berlin signal. Only shown when true.
+  if (apt.inside_ring === true) {
+    chips.push({ key: "ring", label: "⭕ inside ring" });
+  }
 
   // Amenities — fill remaining budget. Cap total chips at 4 for a 220px card.
   const MAX_CHIPS = 4;
@@ -491,9 +495,14 @@ function CardChips({ apt }: { apt: ListingCard }) {
 
   if (chips.length === 0) return null;
 
+  // Hard budget — priority order is preserved by insertion order above
+  // (WBS → transit → park → noise → ring → amenities), so a simple slice
+  // keeps the highest-signal chips on a tight 220px card.
+  const shown = chips.slice(0, MAX_CHIPS);
+
   return (
     <div className="flex flex-wrap gap-1">
-      {chips.map((c) => (
+      {shown.map((c) => (
         <span
           key={c.key}
           className={

@@ -390,7 +390,8 @@ function AmenityChips({ view }: { view: DetailView }) {
   );
 }
 
-// Geo-context block: nearby transit / schools / parks / noise / MSS / hospitals.
+// Geo-context block: nearby transit / schools / kitas / parks / landmarks /
+// noise / hospitals / admin area / inside-ring.
 // Only sections with data render; partial backend wiring produces partial UI,
 // not stale empty rows. Pulls from SessionState.active_listing_detail, which
 // is populated by the frontend's HTTP fetch on card click OR by the agent's
@@ -403,10 +404,14 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
     ctx.nearest_hospitals.length > 0 ||
     ctx.nearest_water != null ||
     ctx.nearest_playground != null ||
+    ctx.nearest_kitas.length > 0 ||
+    ctx.nearest_landmarks.length > 0 ||
     ctx.noise != null ||
     ctx.greenery != null ||
     ctx.density != null ||
-    ctx.mss != null ||
+    ctx.inside_ring != null ||
+    ctx.listing_bezirk != null ||
+    ctx.listing_ortsteil != null ||
     ctx.school_catchment != null ||
     ctx.disabled_parking_count > 0;
   if (!hasAny) return null;
@@ -463,6 +468,22 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
         </Section>
       )}
 
+      {ctx.nearest_kitas.length > 0 && (
+        <Section title="Kitas nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_kitas.map((k, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{k.name ?? "unnamed"}</span>
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {k.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {ctx.nearest_parks.length > 0 && (
         <Section title="Parks nearby">
           <ul className="space-y-0.5">
@@ -472,6 +493,25 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
                 <span className="font-mono text-[11px] text-ink-ghost">
                   {" "}
                   · {p.distance_m}m
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {ctx.nearest_landmarks.length > 0 && (
+        <Section title="Landmarks nearby">
+          <ul className="space-y-0.5">
+            {ctx.nearest_landmarks.map((l, i) => (
+              <li key={i} className="text-[12.5px] text-ink-soft">
+                <span className="text-ink">{l.name ?? "unnamed"}</span>
+                {l.category && (
+                  <span className="text-ink-ghost"> · {l.category}</span>
+                )}
+                <span className="font-mono text-[11px] text-ink-ghost">
+                  {" "}
+                  · {l.distance_m}m
                 </span>
               </li>
             ))}
@@ -520,6 +560,24 @@ function GeoContextBlock({ ctx }: { ctx: ListingDetail }) {
         </Section>
       )}
 
+      {(ctx.listing_bezirk != null || ctx.listing_ortsteil != null) && (
+        <Section title="Administrative area">
+          <div className="text-[12.5px] text-ink-soft">
+            {[ctx.listing_bezirk, ctx.listing_ortsteil]
+              .filter(Boolean)
+              .join(" · ") || "—"}
+          </div>
+        </Section>
+      )}
+
+      {ctx.inside_ring != null && (
+        <Section title="Inside the S-Bahn ring">
+          <div className="text-[12.5px] text-ink-soft">
+            {ctx.inside_ring ? "yes" : "no"}
+          </div>
+        </Section>
+      )}
+
       {/* Character labels — short row of label-value pairs. */}
       <CharacterRow ctx={ctx} />
 
@@ -547,9 +605,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 // Single-row strip of character labels with raw values underneath. Each
-// cell only renders when its label is non-null. Now surfaces the raw
-// numerics (Lden / m² / persons-per-hectare) and the MSS social-inequality
-// label so users see the data behind the bucket.
+// cell only renders when its label is non-null. Surfaces the raw numerics
+// (Lden / Lnight / m² / persons-per-hectare) so users see the data behind
+// the bucket.
 function CharacterRow({ ctx }: { ctx: ListingDetail }) {
   const cells: { label: string; value: string; sub?: string }[] = [];
   if (ctx.noise?.label) {
@@ -569,15 +627,6 @@ function CharacterRow({ ctx }: { ctx: ListingDetail }) {
         ? `${Math.round(ctx.density.persons_per_hectare)} ppl/ha`
         : undefined;
     cells.push({ label: "Density", value: ctx.density.label, sub });
-  }
-  if (ctx.mss?.status) {
-    const v = ctx.mss.dynamics
-      ? `${ctx.mss.status} · ${ctx.mss.dynamics}`
-      : ctx.mss.status;
-    const sub = ctx.mss.social_inequality
-      ? `inequality: ${ctx.mss.social_inequality}`
-      : undefined;
-    cells.push({ label: "Sozialmonitoring", value: v, sub });
   }
   if (cells.length === 0) return null;
 
@@ -602,6 +651,8 @@ function formatNoiseBreakdown(noise: ListingDetail["noise"]): string | undefined
   if (!noise) return undefined;
   const parts: string[] = [];
   if (noise.total_lden != null) parts.push(`Lden ${noise.total_lden.toFixed(0)} dB`);
+  if (noise.total_lnight != null)
+    parts.push(`Lnight ${noise.total_lnight.toFixed(0)} dB`);
   if (noise.street_lden != null) parts.push(`street ${noise.street_lden.toFixed(0)}`);
   if (noise.rail_lden != null) parts.push(`rail ${noise.rail_lden.toFixed(0)}`);
   return parts.length > 0 ? parts.join(" · ") : undefined;
