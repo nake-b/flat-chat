@@ -107,6 +107,13 @@ class ChatService:
         run_id_var.set(adapter.run_input.run_id or "")
         logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
 
+        # TODO(auth): ownership check. The REST routes (GET /messages, /state)
+        # 404 a foreign conversation via `_load_owned`, but this mutation path
+        # resolves the session purely from the envelope's thread_id with no
+        # `user_id` comparison — so once `get_user_id()` returns a real user
+        # (stage 2/3), any caller could continue someone else's thread. Moot
+        # today (single dummy user). When auth lands, gate `get()` here on the
+        # request user the same way `_load_owned` does. See AUTH.md.
         try:
             session = await self.store.get(session_id)
         except SessionNotFoundError:

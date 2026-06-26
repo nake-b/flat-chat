@@ -204,6 +204,16 @@ class DbSessionStore:
             # Guard: if the DB has more rows than the live history (or we
             # otherwise can't trust a clean tail), rewrite from scratch so
             # the DB stays == the live history. Common path just appends.
+            #
+            # NOTE: this only detects a *shrink*. An equal-length or longer
+            # history whose existing prefix was rewritten in place would slip
+            # through and append onto stale rows. That can't happen on our
+            # paths today (`all_messages()` only ever grows, and reload
+            # injection re-prepends history that came from these very rows, so
+            # the prefix is byte-identical) — but if a prefix-rewriting history
+            # processor is ever added, this guard must compare the boundary row
+            # too, not just the count.
+
             if existing > len(serialized):
                 logger.warning(
                     "History shrank (%d → %d); rewriting messages",
