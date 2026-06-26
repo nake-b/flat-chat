@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Map as MapLibreMap, Source, Layer, useMap } from "@vis.gl/react-maplibre";
+import { Map as MapLibreMap, Source, Layer } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
   GeoJSONSource,
@@ -252,6 +252,12 @@ export function MapPane() {
   const { activate } = useSessionState();
   const { setHover } = useHover();
 
+  // The real maplibre Map instance, captured on load. We pass it down to
+  // ApartmentLayer rather than relying on `useMap()`, which returns undefined
+  // for the keyed map here (no <MapProvider> in the tree) — that left every
+  // imperative effect (pin image, hover/active highlight, pan) bailing.
+  const [mapInstance, setMapInstance] = useState<MaplibreGl | null>(null);
+
   // Stable refs so the handler closures always see the LATEST activate /
   // setHover without needing to re-bind on every render. React's useState
   // setters are stable; CopilotKit-derived ones may not be.
@@ -324,37 +330,33 @@ export function MapPane() {
         const m = e.target;
         m.scrollZoom.setWheelZoomRate(1 / 90);
         m.scrollZoom.setZoomRate(1 / 100);
+        // Register the SDF pin eagerly, and lazily via `styleimagemissing` —
+        // the latter fires the moment a layer references `apt-pin` without it,
+        // so the pins render regardless of style-load / layer-mount ordering
+        // (and re-register after a style swap). This replaces a fragile
+        // styledata/isStyleLoaded gate that left the image unregistered.
+        ensurePinImage(m);
+        m.on("styleimagemissing", (ev: { id: string }) => {
+          if (ev.id === PIN_IMAGE_ID) ensurePinImage(m);
+        });
+        setMapInstance(m);
       }}
     >
-      <ApartmentLayer />
+      <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
   );
 }
 
-function ApartmentLayer() {
+function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
   const { state } = useSessionState();
-  const { hoverId } = useHover();
-  const { "apartments-map": map } = useMap();
+  const { hoverId, activeId: clientActiveId } = useHover();
   const lastFeatureStateIds = useRef<Set<string>>(new Set());
   const lastPannedId = useRef<string | null>(null);
 
-  // The SDF pin image must exist before the symbol layers reference it, or
-  // they render nothing (and don't auto-recover). Register it once the style
-  // is loaded, re-register on style reloads, and gate the pin layers on it.
-  const [pinReady, setPinReady] = useState(false);
-  useEffect(() => {
-    const m = map?.getMap();
-    if (!m) return undefined;
-    const register = () => {
-      ensurePinImage(m);
-      setPinReady(m.hasImage(PIN_IMAGE_ID));
-    };
-    register();
-    m.on("styledata", register);
-    return () => {
-      m.off("styledata", register);
-    };
-  }, [map]);
+  // Selected listing for the map. Prefer the client-click selection (hover
+  // store — reliably reaches this component), fall back to the agent-driven
+  // selection in SessionState (open_listing, delivered over SSE).
+  const activeId = clientActiveId ?? state?.active_id ?? null;
 
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
     const features = decodeMarkers(state?.result_markers).map((m) => ({
@@ -382,13 +384,12 @@ function ApartmentLayer() {
   // Pan (and gently zoom in only when far out) to the active listing whenever
   // the selection changes. Highlight is handled by the feature-state effect.
   useEffect(() => {
-    const activeId = state?.active_id ?? null;
     if (!activeId) {
       lastPannedId.current = null; // allow re-pan if the same id is re-selected
       return;
     }
     if (activeId === lastPannedId.current) return;
-    const m = map?.getMap();
+    const m = map;
     if (!m) return;
     let center = coordsById.get(activeId);
     if (!center) {
@@ -405,29 +406,29 @@ function ApartmentLayer() {
     };
     if (m.getZoom() < 12.5) opts.zoom = 14; // gentle zoom-in only when zoomed far out
     m.easeTo(opts);
-  }, [map, state?.active_id, state?.active_listing_detail, coordsById]);
+  }, [map, activeId, state?.active_listing_detail, coordsById]);
 
   // Drive hover + active visual state by setFeatureState. Track which ids
   // we touched last frame so we can clean them up — feature-state persists
   // until explicitly reset.
   useEffect(() => {
-    const m = map?.getMap();
+    const m = map;
     if (!m) return;
     const src = "apartments";
     const next = new Set<string>();
     if (hoverId) next.add(hoverId);
-    if (state?.active_id) next.add(state.active_id);
+    if (activeId) next.add(activeId);
     for (const id of lastFeatureStateIds.current) {
       if (!next.has(id)) {
         m.removeFeatureState({ source: src, id });
       }
     }
     if (hoverId) m.setFeatureState({ source: src, id: hoverId }, { hover: true });
-    if (state?.active_id) {
-      m.setFeatureState({ source: src, id: state.active_id }, { active: true });
+    if (activeId) {
+      m.setFeatureState({ source: src, id: activeId }, { active: true });
     }
     lastFeatureStateIds.current = next;
-  }, [map, hoverId, state?.active_id, state?.result_markers]);
+  }, [map, hoverId, activeId, state?.result_markers]);
 
   return (
     <Source
@@ -441,8 +442,8 @@ function ApartmentLayer() {
     >
       <Layer {...CLUSTER_LAYER} />
       <Layer {...CLUSTER_COUNT_LAYER} />
-      {pinReady && <Layer {...PIN_HALO_LAYER} />}
-      {pinReady && <Layer {...PIN_LAYER} />}
+      <Layer {...PIN_HALO_LAYER} />
+      <Layer {...PIN_LAYER} />
     </Source>
   );
 }
