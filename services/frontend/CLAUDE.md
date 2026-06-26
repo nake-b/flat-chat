@@ -96,8 +96,15 @@ Status-pill copy ("Searching Kreuzberg…", "Found 12 listings…") is NOT
 in `SessionState`. The frontend derives lifecycle labels directly from
 AG-UI tool-call events via the tool-name → label registry in
 `state/toolStatus.ts`, consumed by `useCopilotAction` per backend tool.
-The "Thinking" phase is rendered via `useCoAgentStateRender` and
-suppresses itself while any tool pill is executing.
+
+Which indicator shows at all is decided by one derived **phase**
+(`hooks/useAgentPhase.ts`): `idle` → nothing, `tool` → the per-tool pill,
+`streaming` → nothing (the answer is the indicator), `reasoning` → the
+"Thinking" pill. Exactly one phase is active at a time, so the Thinking
+pill never sits on top of a streaming answer or a running tool. The pill
+itself is a DOM portal pinned to the end of `.copilotKitMessagesContainer`
+(not `useCoAgentStateRender`, whose stale message-id claim mis-anchors it).
+See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/frontend-status-lifecycle.md).
 
 Adding a new backend tool: register a label in `toolStatus.ts` and a
 `useCopilotAction` handler. Zero backend churn — tools stay pure data

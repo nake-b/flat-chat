@@ -9,6 +9,15 @@
 // Adding a new backend tool: write the tool, then add one entry here AND
 // one matching `useToolPill("<name>")` call in `ChatPane.tsx`. Backend stays
 // pure data — no status strings live in tool bodies; UI copy lives here.
+//
+// One entry gives the tool full control of both lifecycle phases. e.g. a
+// future `locate_place` tool:
+//   locate_place: {
+//     executing: (a) => `Finding ${a?.query ?? "location"}`,  // during
+//     complete:  ()  => "",                                   // after (silent)
+//   }
+// The run-level Thinking/streaming/idle phases are owned separately by
+// `useAgentPhase` — see agent-compound-docs/decisions/frontend-status-lifecycle.md.
 
 // A running label that rotates through verbs (e.g. "Checking" → "Reviewing"),
 // with an optional fixed suffix and trailing string (e.g. a progress percent).

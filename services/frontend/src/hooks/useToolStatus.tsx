@@ -11,6 +11,7 @@ import {
   TOOL_STATUS,
   type ToolUiSpec,
 } from "../state/toolStatus";
+import { useAgentPhase } from "./useAgentPhase";
 import { useUiState } from "./useUiState";
 
 // Cross-component bridge so the "Thinking…" pill (registered separately via
@@ -21,7 +22,9 @@ interface ActiveToolStore {
   bump: (delta: 1 | -1) => void;
 }
 
-const useActiveToolCount = create<ActiveToolStore>((set) => ({
+// Exported so `useAgentPhase` can read the live tool-execution count when
+// deriving the run-level lifecycle phase (the Thinking/streaming/idle split).
+export const useActiveToolCount = create<ActiveToolStore>((set) => ({
   count: 0,
   bump: (delta) =>
     set((s) => ({ count: Math.max(0, s.count + delta) })),
@@ -118,9 +121,11 @@ function ToolPill({
 // Hook variant — call it inside ChatPane. The hook returns JSX (a portal),
 // so callers must include `{useThinkingPillInStream()}` in their tree.
 export function useThinkingPillInStream(): React.ReactNode {
-  const { running } = useUiState();
-  const activeCount = useActiveToolCount((s) => s.count);
-  const shouldShow = !!running && activeCount === 0;
+  // Show the Thinking pill ONLY in the genuine reasoning gap — not while a tool
+  // executes (its own pill owns the line) and not while the answer streams (the
+  // answer is the indicator). `useAgentPhase` collapses those signals into one
+  // mutually-exclusive phase. See frontend-status-lifecycle.md.
+  const shouldShow = useAgentPhase() === "reasoning";
 
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
