@@ -98,7 +98,7 @@ function ToolPill({
   }
   if (status === "complete") {
     const label = spec.complete
-      ? spec.complete(args, result)
+      ? spec.complete(args, result, state)
       : firstLine(result);
     // Empty completion (e.g. a suppressed tool-retry whose result content the
     // backend blanked) renders nothing — the failed attempt quietly vanishes.

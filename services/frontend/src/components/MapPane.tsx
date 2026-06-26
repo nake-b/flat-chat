@@ -55,12 +55,11 @@ const PIN_H = 24 * PIN_SCALE;
 const SDF_RANGE = 5; // px over which the signed distance spans the alpha ramp
 
 // The Material Design "place" marker — the de-facto standard map pin (round
-// head with a hole, pointed tip at the bottom), 24×24 SVG viewBox. We render
-// the official path with Canvas 2D (even-odd fill keeps the centre hole) and
-// turn the mask into an SDF so it stays recolourable via `icon-color`.
+// head, pointed tip at the bottom), 24×24 SVG viewBox. We use only the OUTER
+// teardrop subpath (dropping the icon's centre-hole circle) and fill it solid,
+// then turn the mask into an SDF so it stays recolourable via `icon-color`.
 const PLACE_PATH =
-  "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 " +
-  "9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z";
+  "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z";
 
 function drawTeardropMask(): Uint8ClampedArray {
   const canvas = document.createElement("canvas");
@@ -69,7 +68,7 @@ function drawTeardropMask(): Uint8ClampedArray {
   const ctx = canvas.getContext("2d")!;
   ctx.scale(PIN_SCALE, PIN_SCALE);
   ctx.fillStyle = "#fff";
-  ctx.fill(new Path2D(PLACE_PATH), "evenodd");
+  ctx.fill(new Path2D(PLACE_PATH));
   return ctx.getImageData(0, 0, PIN_W, PIN_H).data;
 }
 
