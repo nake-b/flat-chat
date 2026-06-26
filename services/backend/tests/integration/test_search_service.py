@@ -110,7 +110,9 @@ def test_transit_modes_filter_matches_u_bahn(async_db_url):
     junctions = [
         (
             ListingNearbyTransit,
-            nearby_transit_row(listing["id"], distance_m=200, modes=[400], lines=["U1"]),
+            nearby_transit_row(
+                listing["id"], distance_m=200, modes=[400], lines=["U1"]
+            ),
         ),
     ]
 
@@ -119,17 +121,22 @@ def test_transit_modes_filter_matches_u_bahn(async_db_url):
         results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
-    ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
+    ids = _drive(
+        async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions
+    )
     assert str(listing["id"]) in ids
 
 
 def test_transit_modes_filter_misses_when_only_bus(async_db_url):
-    """A listing with only bus (700) in its junction must NOT match ``modes=["u_bahn"]``."""
+    """A listing with only bus (700) in its junction must NOT match
+    ``modes=["u_bahn"]``."""
     listing = _listing_row()
     junctions = [
         (
             ListingNearbyTransit,
-            nearby_transit_row(listing["id"], distance_m=150, modes=[700], lines=["100"]),
+            nearby_transit_row(
+                listing["id"], distance_m=150, modes=[700], lines=["100"]
+            ),
         ),
     ]
 
@@ -138,7 +145,9 @@ def test_transit_modes_filter_misses_when_only_bus(async_db_url):
         results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
-    ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
+    ids = _drive(
+        async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions
+    )
     assert str(listing["id"]) not in ids
 
 
@@ -154,13 +163,23 @@ def test_transit_modes_matches_u_bahn_not_nearest_stop(async_db_url):
         (
             ListingNearbyTransit,
             nearby_transit_row(
-                listing["id"], stop_id="bus", distance_m=80, modes=[700], lines=["100"], rank=1
+                listing["id"],
+                stop_id="bus",
+                distance_m=80,
+                modes=[700],
+                lines=["100"],
+                rank=1,
             ),
         ),
         (
             ListingNearbyTransit,
             nearby_transit_row(
-                listing["id"], stop_id="ubahn", distance_m=400, modes=[400], lines=["U8"], rank=2
+                listing["id"],
+                stop_id="ubahn",
+                distance_m=400,
+                modes=[400],
+                lines=["U8"],
+                rank=2,
             ),
         ),
     ]
@@ -170,7 +189,9 @@ def test_transit_modes_matches_u_bahn_not_nearest_stop(async_db_url):
         results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
-    ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
+    ids = _drive(
+        async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions
+    )
     assert str(listing["id"]) in ids
 
 
@@ -194,20 +215,31 @@ def test_transit_distance_filter(async_db_url):
 
 
 def test_transit_lines_filter_matches_specific_line(async_db_url):
-    """``lines=["U8"]`` matches a listing whose junction has U8 (even if nearest is U1)."""
+    """``lines=["U8"]`` matches a listing whose junction has U8 (even if
+    nearest is U1)."""
     u1_only = _listing_row()
     u8_in_radius = _listing_row()
-    seeds = [(u1_only, _gold_row(u1_only["id"])), (u8_in_radius, _gold_row(u8_in_radius["id"]))]
+    seeds = [
+        (u1_only, _gold_row(u1_only["id"])),
+        (u8_in_radius, _gold_row(u8_in_radius["id"])),
+    ]
     junctions = [
-        (ListingNearbyTransit, nearby_transit_row(u1_only["id"], distance_m=200, lines=["U1"])),
+        (
+            ListingNearbyTransit,
+            nearby_transit_row(u1_only["id"], distance_m=200, lines=["U1"]),
+        ),
         # u8_in_radius has U1 nearest AND U8 within radius — old code missed this.
         (
             ListingNearbyTransit,
-            nearby_transit_row(u8_in_radius["id"], stop_id="a", distance_m=200, lines=["U1"], rank=1),
+            nearby_transit_row(
+                u8_in_radius["id"], stop_id="a", distance_m=200, lines=["U1"], rank=1
+            ),
         ),
         (
             ListingNearbyTransit,
-            nearby_transit_row(u8_in_radius["id"], stop_id="b", distance_m=550, lines=["U8"], rank=2),
+            nearby_transit_row(
+                u8_in_radius["id"], stop_id="b", distance_m=550, lines=["U8"], rank=2
+            ),
         ),
     ]
 
@@ -232,7 +264,9 @@ def test_transit_stop_name_filter_uses_ilike(async_db_url):
         results, _preview, _ = await service.search(params)
         return [r.id for r in results]
 
-    ids = _drive(async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions)
+    ids = _drive(
+        async_db_url, [(listing, _gold_row(listing["id"]))], body, junctions=junctions
+    )
     assert str(listing["id"]) in ids
 
 
@@ -245,7 +279,10 @@ def test_school_proximity_filter(async_db_url):
     """Default ``SchoolFilter()`` is proximity-based — needs junction rows."""
     near_school = _listing_row()
     no_school = _listing_row()
-    seeds = [(near_school, _gold_row(near_school["id"])), (no_school, _gold_row(no_school["id"]))]
+    seeds = [
+        (near_school, _gold_row(near_school["id"])),
+        (no_school, _gold_row(no_school["id"])),
+    ]
     junctions = [
         (ListingNearbySchool, nearby_school_row(near_school["id"], distance_m=400)),
     ]
@@ -270,7 +307,9 @@ def test_school_type_filter_matches_gymnasium(async_db_url):
     junctions = [
         (
             ListingNearbySchool,
-            nearby_school_row(has_gymnasium["id"], distance_m=300, school_type="Gymnasium"),
+            nearby_school_row(
+                has_gymnasium["id"], distance_m=300, school_type="Gymnasium"
+            ),
         ),
         (
             ListingNearbySchool,
@@ -295,12 +334,21 @@ def test_school_requires_catchment_combines_with_proximity(async_db_url):
     inside_with_school = _listing_row()
     outside_with_school = _listing_row()
     seeds = [
-        (inside_with_school, _gold_row(inside_with_school["id"], school_catchment={"name": "GS Test"})),
+        (
+            inside_with_school,
+            _gold_row(inside_with_school["id"], school_catchment={"name": "GS Test"}),
+        ),
         (outside_with_school, _gold_row(outside_with_school["id"])),  # no catchment
     ]
     junctions = [
-        (ListingNearbySchool, nearby_school_row(inside_with_school["id"], distance_m=400)),
-        (ListingNearbySchool, nearby_school_row(outside_with_school["id"], distance_m=400)),
+        (
+            ListingNearbySchool,
+            nearby_school_row(inside_with_school["id"], distance_m=400),
+        ),
+        (
+            ListingNearbySchool,
+            nearby_school_row(outside_with_school["id"], distance_m=400),
+        ),
     ]
 
     async def body(service):
@@ -335,7 +383,9 @@ def test_hospital_plan_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(hospital=HospitalFilter()))
+        results, _preview, _ = await service.search(
+            SearchParams(hospital=HospitalFilter())
+        )
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -394,7 +444,10 @@ def test_mss_dynamics_exact(async_db_url):
     improving = _listing_row()
     stable = _listing_row()
     seeds = [
-        (improving, _gold_row(improving["id"], mss_status="mixed", mss_dynamics="improving")),
+        (
+            improving,
+            _gold_row(improving["id"], mss_status="mixed", mss_dynamics="improving"),
+        ),
         (stable, _gold_row(stable["id"], mss_status="mixed", mss_dynamics="stable")),
     ]
 
@@ -441,7 +494,9 @@ def test_near_playground_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_playground="near"))
+        results, _preview, _ = await service.search(
+            SearchParams(near_playground="near")
+        )
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -507,8 +562,14 @@ def test_min_greenery_jsonb_float_extraction(async_db_url):
     leafy = _listing_row()
     bare = _listing_row()
     seeds = [
-        (leafy, _gold_row(leafy["id"], greenery_profile={"green_m2_within_300m": 8000.0})),
-        (bare, _gold_row(bare["id"], greenery_profile={"green_m2_within_300m": 1000.0})),
+        (
+            leafy,
+            _gold_row(leafy["id"], greenery_profile={"green_m2_within_300m": 8000.0}),
+        ),
+        (
+            bare,
+            _gold_row(bare["id"], greenery_profile={"green_m2_within_300m": 1000.0}),
+        ),
     ]
 
     async def body(service):
@@ -562,7 +623,9 @@ def test_combined_filters_kitchen_sink(async_db_url):
     junctions = [
         (
             ListingNearbyTransit,
-            nearby_transit_row(listing["id"], distance_m=200, modes=[400], lines=["U1"]),
+            nearby_transit_row(
+                listing["id"], distance_m=200, modes=[400], lines=["U1"]
+            ),
         ),
         (ListingNearbySchool, nearby_school_row(listing["id"], distance_m=400)),
         (ListingNearbyHospital, nearby_hospital_row(listing["id"], distance_m=600)),

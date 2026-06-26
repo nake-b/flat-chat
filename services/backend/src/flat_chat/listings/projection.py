@@ -9,6 +9,7 @@ tweaks don't need a gold rebuild.
 
 from __future__ import annotations
 
+from typing import cast
 from typing import get_args as _typing_get_args
 
 from .context import ListingCard
@@ -38,19 +39,19 @@ _MSS_STATUS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssStatus))
 _MSS_DYNAMICS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssDynamics))
 
 
-def _safe_mss_status(value: str | None) -> str | None:
+def _safe_mss_status(value: str | None) -> MssStatus | None:
     """Coerce unknown / sentinel MSS status strings (e.g. ``Planungsraum
     ohne Zuordnung`` — the publisher's "no data" marker) to None instead
     of letting Pydantic raise. Real labels pass through unchanged."""
     if value is None:
         return None
-    return value if value in _MSS_STATUS_VALUES else None
+    return cast(MssStatus, value) if value in _MSS_STATUS_VALUES else None
 
 
-def _safe_mss_dynamics(value: str | None) -> str | None:
+def _safe_mss_dynamics(value: str | None) -> MssDynamics | None:
     if value is None:
         return None
-    return value if value in _MSS_DYNAMICS_VALUES else None
+    return cast(MssDynamics, value) if value in _MSS_DYNAMICS_VALUES else None
 
 
 def row_to_listing_card(row, *, with_score: bool) -> ListingCard:
@@ -60,9 +61,7 @@ def row_to_listing_card(row, *, with_score: bool) -> ListingCard:
     mapping = row._mapping
 
     nearest_transit_lines = mapping.get("nearest_transit_lines")
-    nearest_transit_line = (
-        nearest_transit_lines[0] if nearest_transit_lines else None
-    )
+    nearest_transit_line = nearest_transit_lines[0] if nearest_transit_lines else None
     nearest_transit_m = mapping.get("nearest_transit_m")
     noise_lden = mapping.get("noise_total_lden")
     pph = mapping.get("persons_per_hectare")

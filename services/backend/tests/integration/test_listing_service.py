@@ -89,7 +89,10 @@ def test_get_returns_detail_with_full_geo_context(async_db_url):
         (
             ListingNearbySchool,
             nearby_school_row(
-                listing["id"], name="GS Lenau", school_type="Grundschule", distance_m=300
+                listing["id"],
+                name="GS Lenau",
+                school_type="Grundschule",
+                distance_m=300,
             ),
         ),
         (

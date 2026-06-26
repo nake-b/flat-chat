@@ -1,6 +1,6 @@
-import asyncio
 import logging
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from pydantic import ValidationError
@@ -81,11 +81,20 @@ class ChatService:
         # subsequently runs the agent, streams events back, and reads
         # `deps.state` to emit JSON-Patch deltas to the frontend.
         try:
-            adapter = await AGUIAdapter.from_request(request, agent=agent)
+            # Subscript the adapter with our deps type — `AgentDepsT` defaults
+            # to `None`, so the bare-class classmethod would otherwise type the
+            # adapter (and `run_stream(deps=)`) as `None`-deps.
+            adapter = await AGUIAdapter[ChatDeps, str].from_request(
+                request, agent=agent
+            )
         except ValidationError as exc:
             raise InvalidAgentRequestError(str(exc)) from exc
 
         session_id = adapter.conversation_id
+        if session_id is None:
+            raise InvalidAgentRequestError(
+                "AG-UI request envelope has no thread_id / conversation_id"
+            )
         # Bind the request context for every log line + every SQL statement
         # that runs within this asyncio task. `session_prefix` (logging filter)
         # and the `before_cursor_execute` hook in `core/database.py` both
@@ -147,16 +156,12 @@ class ChatService:
             session.message_history = list(result.all_messages())
             session.state = deps.state
             self.store.save(session)
-            logger.info(
-                "Agent complete: messages=%d", len(session.message_history)
-            )
+            logger.info("Agent complete: messages=%d", len(session.message_history))
 
         try:
             model = build_chat_model()
         except RuntimeError as exc:
-            raise LlmProviderUnavailableError(
-                "No LLM provider configured"
-            ) from exc
+            raise LlmProviderUnavailableError("No LLM provider configured") from exc
 
         stream = adapter.run_stream(
             deps=deps,
@@ -200,7 +205,7 @@ def _extract_incoming_state(adapter) -> SessionState | None:
 async def _with_session_and_lock(
     stream: AsyncIterator[Any],
     session_id: str,
-    lock: asyncio.Lock,
+    lock: AbstractAsyncContextManager[object],
 ) -> AsyncIterator[Any]:
     """Hold the per-session lock and Phoenix session context for the SSE stream.
 

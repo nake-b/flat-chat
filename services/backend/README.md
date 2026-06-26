@@ -25,15 +25,19 @@ docker compose up backend
 
 ```bash
 just              # list all commands
-just check        # lint + typecheck + test
-just lint         # ruff check
-just typecheck    # ty check
+just check        # lint + format-check + typecheck + test (mirrors CI exactly)
+just lint         # ruff check src tests
+just format-check # ruff format --check src tests (fails on unformatted)
+just typecheck    # ty check src
 just test         # pytest (passes args: just test -k health)
-just format       # ruff format
+just format       # ruff format src tests (rewrites in place)
 just fix          # auto-fix lint + format
 ```
 
 CI runs the same checks on every push and PR — see [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+`just check` is kept in lock-step with CI's step order (ruff check →
+ruff format --check → ty → pytest) and scope (`src` *and* `tests`), so a
+green `just check` means green CI.
 
 ## API Endpoints
 

@@ -42,9 +42,7 @@ from flat_chat.listings.context import ListingCard, ListingDetail, Marker
 class _MockSearchService:
     """Returns canned (markers, preview, total) for whatever params it gets."""
 
-    def __init__(
-        self, markers: list[Marker], preview: list[ListingCard], total: int
-    ):
+    def __init__(self, markers: list[Marker], preview: list[ListingCard], total: int):
         self.markers = markers
         self.preview = preview
         self.total = total

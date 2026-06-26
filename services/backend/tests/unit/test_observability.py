@@ -117,9 +117,7 @@ def test_contextvar_isolation_across_tasks():
         return session_id_var.get()
 
     async def race() -> tuple[str, str]:
-        a, b = await asyncio.gather(
-            read_after_set("a-side"), read_after_set("b-side")
-        )
+        a, b = await asyncio.gather(read_after_set("a-side"), read_after_set("b-side"))
         return a, b
 
     a, b = asyncio.run(race())

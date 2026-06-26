@@ -31,6 +31,8 @@ Architecture-decision doc: `agent-compound-docs/decisions/session-state-design.m
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from flat_chat.listings.context import ListingCard, ListingDetail, Marker
@@ -105,13 +107,14 @@ class SessionState(BaseModel):
         documented "a malformed frontend push must not clobber server state"
         behaviour."""
         if isinstance(value, dict):
-            ids = value.get("ids") or []
+            columns = cast(dict[str, list[Any] | None], value)
+            ids = columns.get("ids") or []
             n = len(ids)
-            lats = value.get("lats") or []
-            lngs = value.get("lngs") or []
+            lats = columns.get("lats") or []
+            lngs = columns.get("lngs") or []
             # `prices` is legitimately absent on old/empty envelopes; default
             # it to all-None. Any present column, though, must match `ids`.
-            prices = value.get("prices")
+            prices = columns.get("prices")
             if prices is None:
                 prices = [None] * n
             if len(lats) != n or len(lngs) != n or len(prices) != n:

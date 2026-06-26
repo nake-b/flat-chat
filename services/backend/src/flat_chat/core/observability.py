@@ -153,7 +153,12 @@ def shutdown_observability() -> None:
     """Flush buffered spans before process exit. Safe to call when disabled."""
     if not settings.phoenix_enabled:
         return
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+    except ImportError:
+        return
     provider = trace.get_tracer_provider()
-    # ProxyTracerProvider (the no-op default before setup runs) has no shutdown.
-    if hasattr(provider, "shutdown"):
+    # ProxyTracerProvider (the no-op default before setup runs) is the API base
+    # type, not the SDK one — only the SDK provider exposes `shutdown()`.
+    if isinstance(provider, TracerProvider):
         provider.shutdown()
