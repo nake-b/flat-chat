@@ -11,7 +11,7 @@ src/flat_chat/
   main.py              → FastAPI app + lifespan + router registration
   core/                → DB engines (sync + async), config, observability, deps
   api/                 → HTTP routes — thin
-                          chat.py     POST /api/conversations + GET history
+                          chat.py     POST /api/conversations + GET messages + GET state
                           agent.py    POST /api/agent (AG-UI SSE)
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
@@ -20,10 +20,13 @@ src/flat_chat/
                           tools.py        FunctionToolset[ChatDeps]
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
-                          state.py        ChatSession + ChatDeps
-                          sessions.py     SessionStore Protocol + InMemorySessionStore
-                          service.py      ChatService — dispatches AG-UI run
+                          state.py        ChatSession (+ user_id) + ChatDeps
+                          models.py       app.* ORMs: Conversation, Message, SessionStateRow
+                          sessions.py     SessionStore Protocol + InMemory + DbSessionStore
+                          service.py      ChatService — dispatches AG-UI run, history-authoritative
                           providers/      Provider dispatch (Anthropic / Azure)
+  users/               → Identity domain (app.* owned).
+                          models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total)
                           schemas.py      SearchParams + SortBy
@@ -197,11 +200,12 @@ Each constant traces to a row in
 
 ```bash
 docker compose up backend                      # Backend at http://localhost (via nginx)
-cd services/backend && alembic upgrade head    # Apply APP-schema migrations (no-op today)
+cd services/backend && alembic upgrade head    # Apply APP-schema migrations
 ```
 
-> **Schema ownership.** The backend's Alembic owns only the `app` schema
-> (users/sessions/bookmarks — not built yet, so the history is empty). The
+> **Schema ownership.** The backend's Alembic owns the `app` schema
+> (`users` / `conversations` / `messages` / `session_state` as of
+> `0001_app_users_sessions`; `bookmarks` planned). The
 > medallion + geo-context tables the backend READS live in the `world` schema,
 > owned and migrated by the **ingestion** service; the backend's ORM
 > (`listings/models.py`) carries `{"schema": "world"}` and a drift test
@@ -226,10 +230,13 @@ Two tiers under `tests/`:
 
 - **Pure unit** (`test_health.py`, `test_observability.py`) — no DB, run
   with bare `pytest`.
-- **Integration** (`test_alembic_round_trip.py`, `test_search_service.py`)
-  — execute against Postgres. Gated on `TEST_DATABASE_URL`; skipped
-  silently when unset. Setup + conventions in
-  [`tests/README.md`](tests/README.md).
+- **Integration** (`test_search_service.py`, `test_session_store.py`,
+  `test_conversations_api.py`, `test_app_schema.py`) — execute against
+  Postgres. Gated on `TEST_DATABASE_URL`; skipped silently when unset.
+  Setup + conventions in [`tests/README.md`](tests/README.md). Store tests
+  bind `DbSessionStore`'s `session_factory` to the test connection with
+  `join_transaction_mode="create_savepoint"` so its commits roll back;
+  `test_app_schema.py` is the autogenerate drift guard (ORM == migration).
 
 `test_search_service.py` is the regression suite for the search SQL —
 one test per geo-context filter, each actually executes against
@@ -241,9 +248,14 @@ When adding a new search filter, add a test in the same change.
 
 ## TODOs
 
-- Auth / user identity not implemented; `users/` stub kept for future.
+- Auth not implemented — a single dummy user via the `get_user_id()` seam
+  (`core/dependencies.py`), upserted on demand by `DbSessionStore.create`.
+  `users.models.User` is designed for claim-in-place (add nullable
+  `email`/`password_hash`/`auth_provider`/`claimed_at`, UPDATE the same row on
+  signup → PK never changes). See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - Bookmarks not implemented; slot ready (`listings/bookmarks_service.py`
-  + `api/bookmarks.py` following the same pattern as listings).
+  + `api/bookmarks.py` following the same pattern as listings). Decision: a
+  per-user join table with a plain `listing_id` reference (see session-persistence.md).
 - Refinement cache deferred (see `session-state-design.md` — if
   refinement becomes slow, integrate pandas into `SessionState` and add
   `state.refine(params)` for in-memory filtering).

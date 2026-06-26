@@ -1,54 +1,95 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CopilotKit } from "@copilotkit/react-core";
 import { HttpAgent } from "@ag-ui/client";
 
 import App from "./App";
 import { AGENT_NAME } from "./state/UiState";
-import { createConversation } from "./api/session";
+import { ConversationRecovery } from "./components/ConversationRecovery";
+import {
+  createConversation,
+  getConversationState,
+} from "./api/session";
+import {
+  readStoredConversationId,
+  rememberConversationId,
+} from "./state/conversationId";
 import { useHover } from "./hooks/useHover";
 import "./index.css";
 
-// Bootstrap: allocate a backend conversation, then mount CopilotKit pointing
-// at our AG-UI route. The conversation id doubles as the AG-UI thread_id, so
-// every subsequent agent run lands on the same ChatSession.
+// Bootstrap: resolve the conversation thread, then mount CopilotKit pointing at
+// our AG-UI route. The conversation id doubles as the AG-UI thread_id.
 //
-// We use `agents__unsafe_dev_only` because we don't have a CopilotRuntime
-// middleware (Next.js-only). For a Vite project this is the documented
-// direct-AG-UI path — the prop name is intentionally alarming so production
-// deployments don't accidentally rely on it without a runtime.
+// Reload recovery: a stored id (URL `/c/{id}` or localStorage) is reused so the
+// conversation survives refresh / cross-device. We verify it still exists
+// (GET /…/state ≠ 404) before resuming — a stale id (DB wiped, different user)
+// falls back to a fresh conversation, so /api/agent never 404s on an unknown
+// thread. `<CopilotKit key={id}>` makes "New conversation" a clean remount
+// (fresh useCoAgent state + empty chat).
+//
+// `agents__unsafe_dev_only` is the documented direct-AG-UI path for Vite (no
+// CopilotRuntime middleware) — the prop name is intentionally alarming.
 function Bootstrap() {
-  const [agent, setAgent] = useState<HttpAgent | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [resumed, setResumed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    // Hover is client-local ephemera (zustand singleton). Reset synchronously
-    // on mount — before the createConversation() network round-trip — so a
-    // stale id from a prior thread can't ghost-highlight a card during the
-    // tens-of-ms gap between mount and agent allocation.
+    // Hover is client-local ephemera (zustand singleton) — reset on mount so a
+    // stale id can't ghost-highlight a card during the init round-trip.
     useHover.getState().reset();
-    createConversation()
-      .then((conv) => {
+
+    void (async () => {
+      try {
+        const existing = readStoredConversationId();
+        if (existing) {
+          // Verify the thread still exists before resuming.
+          const state = await getConversationState(existing).catch(() => null);
+          if (cancelled) return;
+          if (state !== null) {
+            rememberConversationId(existing);
+            setResumed(true);
+            setConversationId(existing);
+            return;
+          }
+        }
+        const conv = await createConversation();
         if (cancelled) return;
-        setAgent(
-          new HttpAgent({
-            url: "/api/agent",
-            threadId: conv.id,
-          }),
-        );
-      })
-      .catch((err) => setError(String(err)));
+        rememberConversationId(conv.id);
+        setResumed(false);
+        setConversationId(conv.id);
+      } catch (err) {
+        if (!cancelled) setError(String(err));
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const startNewConversation = useCallback(async () => {
+    useHover.getState().reset();
+    const conv = await createConversation();
+    rememberConversationId(conv.id);
+    setResumed(false);
+    // Changing the key (below) remounts CopilotKit → fresh state + empty chat.
+    setConversationId(conv.id);
+  }, []);
+
+  // One HttpAgent per thread id. Recreated when the id changes (new conversation).
+  const agent = useMemo(
+    () =>
+      conversationId
+        ? new HttpAgent({ url: "/api/agent", threadId: conversationId })
+        : null,
+    [conversationId],
+  );
+
   // CopilotKit injects a floating dev-console / promo widget as a
-  // <cpk-web-inspector> custom element with a closed shadow root. The
-  // `showDevConsole={false}` prop covers the console toggle but not the
-  // promo bubble, and shadow-DOM content can't be styled via the page's
-  // CSS cascade. Hide the host element itself whenever it appears.
+  // <cpk-web-inspector> custom element with a closed shadow root. Hide the host
+  // element itself whenever it appears (CSS can't reach its shadow DOM).
   useEffect(() => {
     const hideCopilotInspectors = () => {
       for (const el of document.querySelectorAll("cpk-web-inspector")) {
@@ -68,7 +109,7 @@ function Bootstrap() {
       </div>
     );
   }
-  if (!agent) {
+  if (!agent || !conversationId) {
     return (
       <div className="flex h-screen items-center justify-center bg-paper text-sm text-ink/50">
         starting…
@@ -78,17 +119,17 @@ function Bootstrap() {
 
   return (
     <CopilotKit
-      // CopilotKit requires *something* in `runtimeUrl` even when all agent
-      // traffic is going through `agents__unsafe_dev_only`. The URL itself
-      // is never hit in self-managed mode — the HttpAgent above owns the
-      // wire — but the provider's runtime client throws at construction
-      // without it.
+      key={conversationId}
+      // CopilotKit requires *something* in `runtimeUrl` even in
+      // `agents__unsafe_dev_only` mode — it's never hit (the HttpAgent owns the
+      // wire) but the provider's runtime client throws at construction without it.
       runtimeUrl="/api/agent"
       agent={AGENT_NAME}
       agents__unsafe_dev_only={{ [AGENT_NAME]: agent }}
       showDevConsole={false}
     >
-      <App />
+      <ConversationRecovery conversationId={conversationId} resumed={resumed} />
+      <App onNewConversation={startNewConversation} />
     </CopilotKit>
   );
 }

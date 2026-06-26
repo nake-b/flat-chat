@@ -11,8 +11,9 @@ only READS them (read-only ORM in flat_chat.listings.models, all carrying
 keep autogenerate scoped to `app` so it never tries to create or drop the
 ingestion-owned `world.*` tables. See schema-ownership-split.md.
 
-Boundary-only today: there are no `app.*` models yet, so the versions/ history
-is empty and `alembic upgrade head` is a no-op until the first app feature lands.
+`app.*` models live in `flat_chat.users.models` + `flat_chat.chat.models` (imported
+below so `Base.metadata` sees them); migration `0001_app_users_sessions` creates
+users / conversations / messages / session_state.
 """
 
 from logging.config import fileConfig
@@ -23,6 +24,8 @@ from sqlalchemy import engine_from_config, pool
 from flat_chat.core.config import settings
 from flat_chat.core.database import Base
 import flat_chat.listings.models  # noqa: F401 — registers (world-schema) read models
+import flat_chat.users.models  # noqa: F401 — registers app.users
+import flat_chat.chat.models  # noqa: F401 — registers app.conversations/messages/session_state
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
