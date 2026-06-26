@@ -84,6 +84,12 @@ Adding a new backend tool: register a label in `toolStatus.ts` and a
 `useCopilotAction` handler. Zero backend churn — tools stay pure data
 mutators.
 
+Because the wildcard pill echoes the tool `result`, a tool **retry/
+validation error** would otherwise print its raw error text. That's
+neutralized on the backend (empty-content `TOOL_CALL_RESULT` for a
+`RetryPromptPart`), not string-matched here — see
+[`ag-ui-tool-retry-suppression.md`](../../agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md).
+
 ## Card-strip / Map / Detail rendering
 
 - **Map markers** (`MapPane.tsx`) — clustered, plots ALL markers via

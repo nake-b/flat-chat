@@ -3,9 +3,11 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 
+import { AnimatedDots, RotatingWord } from "../components/StatusAnimation";
 import {
   firstLine,
   THINKING_LABEL,
+  THINKING_VERBS,
   TOOL_STATUS,
   type ToolUiSpec,
 } from "../state/toolStatus";
@@ -63,6 +65,9 @@ function ToolPill({
   result: unknown;
 }) {
   const bump = useActiveToolCount((s) => s.bump);
+  // Current SessionState so rotating labels can derive progress (e.g. the
+  // pagination percent from total_results).
+  const { state } = useUiState();
 
   // CopilotKit's lifecycle for render-only backend tools is `inProgress` (args
   // streaming, repeated as deltas arrive) → `complete` (tool returned). The
@@ -79,12 +84,24 @@ function ToolPill({
   }, [isRunning, bump]);
 
   if (isRunning) {
-    return <ToolStatusInline label={spec.executing(args)} pulse />;
+    const rot = spec.executingRotating?.(args, state);
+    const label = rot ? (
+      <>
+        <RotatingWord words={rot.verbs} />
+        {rot.suffix}
+        {rot.trailing}
+      </>
+    ) : (
+      spec.executing(args)
+    );
+    return <ToolStatusInline label={label} pulse />;
   }
   if (status === "complete") {
     const label = spec.complete
       ? spec.complete(args, result)
       : firstLine(result);
+    // Empty completion (e.g. a suppressed tool-retry whose result content the
+    // backend blanked) renders nothing — the failed attempt quietly vanishes.
     if (label) return <ToolStatusInline label={label} pulse={false} />;
   }
   return <></>;
@@ -163,22 +180,35 @@ export function useThinkingPillInStream(): React.ReactNode {
   }, [shouldShow]);
 
   if (!slot || !shouldShow) return null;
-  return createPortal(<ToolStatusInline label={THINKING_LABEL} pulse />, slot);
+  return createPortal(
+    <ToolStatusInline
+      label={<RotatingWord words={THINKING_VERBS} />}
+      ariaLabel={THINKING_LABEL}
+      pulse
+    />,
+    slot,
+  );
 }
 
-// Reusable pill UI shared by tool renders and the Thinking slot.
+// Reusable pill UI shared by tool renders and the Thinking slot. When `pulse`
+// (running), animated dots are appended to the label so the line breathes;
+// `label` may be a rotating element, so it's a ReactNode. `ariaLabel` gives
+// screen readers a stable phrase when the visible label is animated.
 export function ToolStatusInline({
   label,
   pulse,
+  ariaLabel,
 }: {
-  label: string;
+  label: React.ReactNode;
   pulse: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <div
       className="fc-status-line my-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft"
       role="status"
       aria-live="polite"
+      aria-label={ariaLabel}
     >
       <span
         className={`inline-block h-1.5 w-1.5 rounded-full bg-red ${
@@ -187,6 +217,7 @@ export function ToolStatusInline({
         aria-hidden
       />
       {label}
+      {pulse && <AnimatedDots />}
     </div>
   );
 }

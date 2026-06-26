@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Map as MapLibreMap, Source, Layer, useMap } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
   GeoJSONSource,
+  Map as MaplibreGl,
   MapLayerMouseEvent,
   SymbolLayerSpecification,
 } from "maplibre-gl";
@@ -38,6 +39,93 @@ const RED = "#E4003C";
 const RED_DEEP = "#B00030";
 const RED_TINT = "#F47A95";
 const INK = "#0A0A0A";
+const GREY = "#5A5A5A"; // default (unselected) pin colour
+
+// ── Teardrop pin (SDF) ────────────────────────────────────────────────────
+// Unclustered listings render as teardrop pins via a MapLibre symbol layer
+// fed a runtime-generated SDF icon. SDF (vs a plain raster) is what lets
+// `icon-color` recolour the same image to ARBITRARY colours at render time —
+// the seam for future price/prompt-driven colouring. We generate the SDF in
+// JS (no committed binary asset): the teardrop is an analytic shape (head
+// circle ∪ tip triangle), so its signed-distance field is exact and cheap.
+const PIN_IMAGE_ID = "apt-pin";
+const PIN_W = 48;
+const PIN_H = 64;
+const SDF_RANGE = 8; // px over which the signed distance spans the alpha ramp
+
+function dist(ax: number, ay: number, bx: number, by: number): number {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+// Signed distance to a triangle — Inigo Quilez's 2D primitive, ported to JS.
+// Negative inside, positive outside. Used unioned (min) with the head circle.
+function sdTriangle(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number,
+): number {
+  const e0x = bx - ax, e0y = by - ay;
+  const e1x = cx - bx, e1y = cy - by;
+  const e2x = ax - cx, e2y = ay - cy;
+  const v0x = px - ax, v0y = py - ay;
+  const v1x = px - bx, v1y = py - by;
+  const v2x = px - cx, v2y = py - cy;
+  const cl = (n: number) => Math.max(0, Math.min(1, n));
+  const t0 = cl((v0x * e0x + v0y * e0y) / (e0x * e0x + e0y * e0y));
+  const t1 = cl((v1x * e1x + v1y * e1y) / (e1x * e1x + e1y * e1y));
+  const t2 = cl((v2x * e2x + v2y * e2y) / (e2x * e2x + e2y * e2y));
+  const p0x = v0x - e0x * t0, p0y = v0y - e0y * t0;
+  const p1x = v1x - e1x * t1, p1y = v1y - e1y * t1;
+  const p2x = v2x - e2x * t2, p2y = v2y - e2y * t2;
+  const s = Math.sign(e0x * e2y - e0y * e2x);
+  // vec2 min by .x (squared distance), carrying .y (signed cross product).
+  let dx = p0x * p0x + p0y * p0y;
+  let dy = s * (v0x * e0y - v0y * e0x);
+  const d1x = p1x * p1x + p1y * p1y;
+  const d1y = s * (v1x * e1y - v1y * e1x);
+  if (d1x < dx) { dx = d1x; dy = d1y; }
+  const d2x = p2x * p2x + p2y * p2y;
+  const d2y = s * (v2x * e2y - v2y * e2x);
+  if (d2x < dx) { dx = d2x; dy = d2y; }
+  return -Math.sqrt(dx) * Math.sign(dy);
+}
+
+function makeTeardropSDF(): { width: number; height: number; data: Uint8ClampedArray } {
+  const w = PIN_W, h = PIN_H;
+  const data = new Uint8ClampedArray(w * h * 4);
+  const cx = w / 2;
+  const r = w / 2 - 6; // head radius
+  const cy = r + 3; // head centre near the top
+  const tipX = w / 2;
+  const tipY = h - 2; // tip near the bottom → icon-anchor "bottom" lands on the point
+  const a = 0.9; // splay of the triangle's top verts on the circle
+  const lx = cx - r * Math.sin(a), ly = cy + r * Math.cos(a);
+  const rx = cx + r * Math.sin(a), ry = cy + r * Math.cos(a);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const px = x + 0.5, py = y + 0.5;
+      const dCircle = dist(px, py, cx, cy) - r;
+      const dTri = sdTriangle(px, py, lx, ly, rx, ry, tipX, tipY);
+      const d = Math.min(dCircle, dTri); // union of head + tip
+      const alpha = Math.max(0, Math.min(1, 0.5 - d / (2 * SDF_RANGE)));
+      const i = (y * w + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(alpha * 255);
+    }
+  }
+  return { width: w, height: h, data };
+}
+
+// Idempotent — `hasImage` guards the duplicate-add throw, and a style reload
+// (e.g. a future Protomaps swap) drops added images so this re-runs on
+// `styledata`. Only adds once the style is loaded (addImage requires it).
+function ensurePinImage(m: MaplibreGl): void {
+  if (!m.isStyleLoaded() || m.hasImage(PIN_IMAGE_ID)) return;
+  m.addImage(PIN_IMAGE_ID, makeTeardropSDF(), { sdf: true, pixelRatio: 2 });
+}
 
 const CLUSTER_LAYER: CircleLayerSpecification = {
   id: "clusters",
@@ -87,61 +175,72 @@ const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
   },
 };
 
-// Translucent halo behind a selected dot — drawn first so the active circle
-// sits on top of it. Only visible when feature-state.active is true.
-const POINT_HALO_LAYER = {
+// Soft red glow behind a selected pin — same SDF teardrop, larger, drawn
+// first so the pin sits on top. Fades in only when feature-state.active.
+// NOTE: feature-state works in PAINT props only (not layout), so the size is
+// fixed and we toggle visibility via `icon-opacity` (paint), not icon-size.
+const PIN_HALO_LAYER: SymbolLayerSpecification = {
   id: "unclustered-point-halo",
-  type: "circle",
+  type: "symbol",
   source: "apartments",
   filter: ["!", ["has", "point_count"]],
-  paint: {
-    "circle-color": RED,
-    "circle-opacity": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      0.22,
-      0,
-    ],
-    "circle-radius": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      18,
-      0,
-    ],
-    "circle-radius-transition": { duration: 220, delay: 0 },
-    "circle-opacity-transition": { duration: 220, delay: 0 },
-    "circle-stroke-width": 0,
+  layout: {
+    "icon-image": PIN_IMAGE_ID,
+    "icon-anchor": "bottom",
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-size": 0.78,
   },
-} as unknown as CircleLayerSpecification;
+  paint: {
+    "icon-color": RED,
+    "icon-opacity": [
+      "case",
+      ["boolean", ["feature-state", "active"], false],
+      0.28,
+      0,
+    ],
+    "icon-opacity-transition": { duration: 220, delay: 0 },
+  },
+};
 
-const POINT_LAYER = {
+// The apartment pin. Same layer id ("unclustered-point") as the old circle so
+// click/hover wiring + interactiveLayerIds need no change. Active = ink,
+// hover = red, default = grey, recoloured via `icon-color` (paint → can read
+// feature-state). icon-size is fixed (layout can't read feature-state); the
+// emphasis comes from colour + a thicker white halo + the glow layer above.
+const PIN_LAYER: SymbolLayerSpecification = {
   id: "unclustered-point",
-  type: "circle",
+  type: "symbol",
   source: "apartments",
   filter: ["!", ["has", "point_count"]],
+  layout: {
+    "icon-image": PIN_IMAGE_ID,
+    "icon-anchor": "bottom",
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-size": 0.5,
+  },
   paint: {
-    "circle-color": [
+    "icon-color": [
       "case",
       ["boolean", ["feature-state", "active"], false],
       INK,
       ["boolean", ["feature-state", "hover"], false],
       RED,
-      "#3A3A3A",
+      GREY,
     ],
-    "circle-radius": [
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": [
       "case",
       ["boolean", ["feature-state", "active"], false],
-      9,
+      2,
       ["boolean", ["feature-state", "hover"], false],
-      8,
-      5,
+      1.8,
+      1.2,
     ],
-    "circle-radius-transition": { duration: 180, delay: 0 },
-    "circle-color-transition": { duration: 140, delay: 0 },
-    "circle-stroke-color": "#ffffff",
-    "circle-stroke-width": 2,
+    "icon-color-transition": { duration: 140, delay: 0 },
   },
-} as unknown as CircleLayerSpecification;
+};
 
 export function MapPane() {
   // Click + hover handlers live at the MapLibreMap level so we use
@@ -237,6 +336,25 @@ function ApartmentLayer() {
   const { hoverId } = useHover();
   const { "apartments-map": map } = useMap();
   const lastFeatureStateIds = useRef<Set<string>>(new Set());
+  const lastPannedId = useRef<string | null>(null);
+
+  // The SDF pin image must exist before the symbol layers reference it, or
+  // they render nothing (and don't auto-recover). Register it once the style
+  // is loaded, re-register on style reloads, and gate the pin layers on it.
+  const [pinReady, setPinReady] = useState(false);
+  useEffect(() => {
+    const m = map?.getMap();
+    if (!m) return undefined;
+    const register = () => {
+      ensurePinImage(m);
+      setPinReady(m.hasImage(PIN_IMAGE_ID));
+    };
+    register();
+    m.on("styledata", register);
+    return () => {
+      m.off("styledata", register);
+    };
+  }, [map]);
 
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
     const features = decodeMarkers(state?.result_markers).map((m) => ({
@@ -250,6 +368,44 @@ function ApartmentLayer() {
     }));
     return { type: "FeatureCollection", features };
   }, [state?.result_markers]);
+
+  // id → [lng, lat] for the active result set, so a card/pin click can pan
+  // the map to the selected listing.
+  const coordsById = useMemo(() => {
+    const m = new Map<string, [number, number]>();
+    for (const mk of decodeMarkers(state?.result_markers)) {
+      m.set(mk.id, [mk.lng, mk.lat]);
+    }
+    return m;
+  }, [state?.result_markers]);
+
+  // Pan (and gently zoom in only when far out) to the active listing whenever
+  // the selection changes. Highlight is handled by the feature-state effect.
+  useEffect(() => {
+    const activeId = state?.active_id ?? null;
+    if (!activeId) {
+      lastPannedId.current = null; // allow re-pan if the same id is re-selected
+      return;
+    }
+    if (activeId === lastPannedId.current) return;
+    const m = map?.getMap();
+    if (!m) return;
+    let center = coordsById.get(activeId);
+    if (!center) {
+      const d = state?.active_listing_detail;
+      if (d && d.latitude != null && d.longitude != null) {
+        center = [d.longitude, d.latitude];
+      }
+    }
+    if (!center) return;
+    lastPannedId.current = activeId;
+    const opts: { center: [number, number]; duration: number; zoom?: number } = {
+      center,
+      duration: 500,
+    };
+    if (m.getZoom() < 12.5) opts.zoom = 14; // gentle zoom-in only when zoomed far out
+    m.easeTo(opts);
+  }, [map, state?.active_id, state?.active_listing_detail, coordsById]);
 
   // Drive hover + active visual state by setFeatureState. Track which ids
   // we touched last frame so we can clean them up — feature-state persists
@@ -285,8 +441,8 @@ function ApartmentLayer() {
     >
       <Layer {...CLUSTER_LAYER} />
       <Layer {...CLUSTER_COUNT_LAYER} />
-      <Layer {...POINT_HALO_LAYER} />
-      <Layer {...POINT_LAYER} />
+      {pinReady && <Layer {...PIN_HALO_LAYER} />}
+      {pinReady && <Layer {...PIN_LAYER} />}
     </Source>
   );
 }
