@@ -14,10 +14,14 @@ src/
   db.py                 → engine (search_path=world,public), SessionLocal, get_session()
   iron/, bronze/        → (iron + bronze tiers; raw scraper output)
   scraper/              → Per-source Node scrapers (NEVER run automatically)
+    _lib/stealth.js     → Shared browser stealth: puppeteer-extra + stealth
+                          plugin, rotating CURRENT Chrome UA pool + matching
+                          client hints. See "Scraper anti-bot" below.
   silver/               → Bronze → typed Listing rows
     run.py              → `python -m silver.run` — chains gold + platinum at end
     transformer.py      → Dispatcher by source; UPSERT logic
-    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht)
+    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
+                          housinganywhere, wohninberlin)
   geo_context/          → Berlin GDI WFS + VBB GTFS → silver geo tables
     run.py              → CLI with --only / --skip-wfs / --skip-gtfs
     extract/, transform/, load/
@@ -46,6 +50,34 @@ docker compose run --rm ingestion uv run alembic upgrade head
 `db.py`'s engine pins `search_path = world, public`, so all raw ETL SQL
 (`to_sql`/`to_postgis`, enrich UPSERTs) resolves unqualified names to `world`.
 Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/schema-ownership-split.md).
+
+## Scraper anti-bot / stealth
+
+All Node scrapers share `scraper/_lib/stealth.js` (`require('scraper-lib/stealth')`):
+
+- `makeStealthPuppeteer(require('puppeteer'))` wraps the engine with
+  puppeteer-extra + puppeteer-extra-plugin-stealth — hides `navigator.webdriver`,
+  gives a real `PluginArray` (the old hand patch set it to `[1,2,3,4,5]`, an
+  integer tell), patches the `Runtime.enable` CDP leak, etc.
+- `applyStealthToPage(page, {userAgent, profile, acceptLanguage, timeoutMs})`
+  replaces every old per-scraper `preparePage`. It rotates a CURRENT
+  desktop-Chrome UA **per run** (not per request — real browsers don't change UA
+  mid-session) with a MATCHING `userAgentMetadata`, so the UA string and the
+  `sec-ch-ua` client hints agree, and aligns `navigator.languages` to
+  `Accept-Language`. Returns the chosen `{userAgent, metadata}` so a multi-tab
+  scraper reuses one UA across tabs via `profile:`.
+- `detectChallenge(page)` covers Cloudflare + DataDome + visible captcha iframes.
+
+Search-page `goto` uses `waitUntil: 'domcontentloaded'` (not `networkidle2`) so a
+challenge interstitial fails fast and `detectChallenge` can report it, instead of
+silently eating the full timeout.
+
+**Maintenance: bump `CHROME_BUILDS` in `_lib/stealth.js` every few Chrome
+releases.** A stale UA pool is the exact failure this module exists to prevent —
+the scrapers shipped pinned to Chrome 124 (April 2024), and by mid-2026 that
+version alone was a bot signal. Deps live in `_lib/package.json` only; each
+scraper keeps its own `puppeteer` and passes it in. `USER_AGENT=` pins a UA;
+`HEADLESS=false` runs headful for debugging.
 
 ## Medallion tiers in this service
 

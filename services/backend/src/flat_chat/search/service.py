@@ -31,7 +31,7 @@ from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
 from pgvector.sqlalchemy import Vector
 from pydantic_ai import Embedder
-from sqlalchemy import ARRAY, Integer, Select, Text, cast, func, or_, select
+from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import ListingCard, Marker
@@ -308,7 +308,7 @@ class SearchService:
                     cast(Listing.location, Geography),
                     cast(point, Geography),
                     radius_m,
-                    type_=bool,
+                    type_=Boolean,
                 )
             )
 

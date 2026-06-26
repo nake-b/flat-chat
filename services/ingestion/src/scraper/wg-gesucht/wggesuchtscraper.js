@@ -4,8 +4,12 @@
 // split into Kaltmiete / Nebenkosten / Heizkosten.
 
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
 const db = require('scraper-lib');
+const stealth = require('scraper-lib/stealth');
+
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
 const {
   DEFAULT_USER_AGENT,
   DEFAULT_TIMEOUT_MS,
@@ -21,14 +25,23 @@ const SEARCH_URL =
   'https://www.wg-gesucht.de/en/1-zimmer-wohnungen-und-wohnungen-in-Berlin.8.1+2.1.0.html?categories%5B%5D=1&categories%5B%5D=2&rent_types%5B%5D=2&rent_range=0%2C0&min_rent=0&offer_filter=1&city_id=8&sort_order=0&noDeact=1';
 const ORIGIN = 'https://www.wg-gesucht.de';
 const LISTING_SOURCE = 'wg-gesucht';
-const USER_AGENT = process.env.USER_AGENT || DEFAULT_USER_AGENT;
+// null → rotate a current Chrome UA per run (see _lib/stealth.js). An explicit
+// USER_AGENT env var still pins it.
+const USER_AGENT = process.env.USER_AGENT || null;
 
 const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_PAGES = Number.parseInt(process.env.MAX_PAGES || '1', 10);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
 const HEADLESS = process.env.HEADLESS !== 'false';
-const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '1500', 10);
+// Conservative defaults matching the kleinanzeigen search scraper (15s base),
+// plus jitter on top so page-to-page timing isn't perfectly periodic.
+const PAGE_DELAY_MS = Number.parseInt(process.env.PAGE_DELAY_MS || '15000', 10);
+const PAGE_JITTER_MS = Number.parseInt(process.env.PAGE_JITTER_MS || '5000', 10);
 const PAGE_TIMEOUT = DEFAULT_TIMEOUT_MS;
+
+function pageDelay() {
+  return PAGE_DELAY_MS + Math.floor(Math.random() * Math.max(0, PAGE_JITTER_MS + 1));
+}
 
 function printBanner() {
   console.log('');
@@ -239,7 +252,11 @@ async function collectCards(page, pool) {
     console.log(`\n[search ${pageNumber}/${MAX_PAGES}] ${url}`);
 
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+      // domcontentloaded (not networkidle2): a Cloudflare "Just a moment"
+      // challenge never reaches network-idle, so networkidle2 silently ate the
+      // full timeout. domcontentloaded resolves on the challenge HTML, then
+      // detectChallenge below catches it immediately.
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
     } catch (error) {
       console.warn(`  navigation failed: ${error.message}`);
       await dumpDebugArtifacts(page, DEBUG_DIR, `search-page-${pageNumber}-nav`);
@@ -305,7 +322,7 @@ async function collectCards(page, pool) {
     }
 
     if (pageNumber < MAX_PAGES && PAGE_DELAY_MS > 0) {
-      await sleep(PAGE_DELAY_MS);
+      await sleep(pageDelay());
     }
   }
 
