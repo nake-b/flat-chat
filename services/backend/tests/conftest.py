@@ -66,19 +66,48 @@ def test_db_url() -> str:
 
 @pytest.fixture(scope="session")
 def schema_at_head(test_db_url: str) -> None:
-    """Bring the test DB to alembic head once per session.
+    """Build the full schema on the test DB once per session.
 
-    ``alembic/env.py`` clobbers ``sqlalchemy.url`` with ``settings.database_url``
-    so we patch the loaded Settings field for the duration of the upgrade.
-    Restored afterwards so app code still sees the real DB.
+    After the schema-ownership split the backend's own Alembic only owns the
+    (currently empty) ``app`` schema, so the tables the backend READS live in
+    ``world`` and are created by the INGESTION service's Alembic. Mirror the
+    real bring-up order here:
+
+      1. bootstrap — extensions (in ``public``) + ``world`` / ``app`` schemas
+         (idempotent; mirrors services/postgres/init/01-bootstrap.sql)
+      2. ingestion ``alembic upgrade head`` → creates ``world.*``
+      3. backend ``alembic upgrade head`` → ``app.*`` (no-op today; boundary-only)
+
+    All steps are idempotent so a persistent test DB can be reused across runs.
     """
+    import sqlalchemy as sa
+
     from flat_chat.core.config import settings
 
     backend_root = Path(__file__).resolve().parents[1]
+    services_root = backend_root.parent
+    ingestion_root = services_root / "ingestion"
+
+    # 1. Bootstrap.
+    engine = sa.create_engine(test_db_url, isolation_level="AUTOCOMMIT")
+    with engine.connect() as conn:
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS world"))
+        conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS app"))
+    engine.dispose()
+
+    # 2. ingestion alembic → world.* (its env.py reads DATABASE_URL).
+    os.environ["DATABASE_URL"] = test_db_url
+    ing_cfg = Config(str(ingestion_root / "alembic.ini"))
+    ing_cfg.set_main_option("script_location", str(ingestion_root / "alembic"))
+    ing_cfg.set_main_option("sqlalchemy.url", test_db_url)
+    command.upgrade(ing_cfg, "head")
+
+    # 3. backend alembic → app.* (no-op until the first app migration lands).
     cfg = Config(str(backend_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_root / "alembic"))
     cfg.set_main_option("sqlalchemy.url", test_db_url)
-
     original_url = settings.database_url
     settings.database_url = test_db_url
     try:

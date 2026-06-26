@@ -70,8 +70,17 @@ def _sync_url(async_url: str) -> str:
 
 @pytest.fixture
 def sync_conn(async_db_url: str) -> Iterator[Connection]:
-    """Open a sync connection wrapped in a single transaction; ROLLBACK on exit."""
-    engine = create_engine(_sync_url(async_db_url))
+    """Open a sync connection wrapped in a single transaction; ROLLBACK on exit.
+
+    Pin search_path to ``world, public`` via connect_args — exactly what the
+    ingestion service's engine (services/ingestion/src/db.py) does at runtime.
+    The gold enrich functions and this test's seed SQL use unqualified table
+    names; this resolves them to ``world`` just like production.
+    """
+    engine = create_engine(
+        _sync_url(async_db_url),
+        connect_args={"options": "-csearch_path=world,public"},
+    )
     try:
         with engine.connect() as conn:
             trans = conn.begin()

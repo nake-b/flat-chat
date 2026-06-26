@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.14"
 
 dependencies = [
+    "alembic>=1.13",
+    "pgvector>=0.3",
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
     "python-dotenv>=1.0",
@@ -36,6 +38,9 @@ packages = ["src"]
 target-version = "py314"
 line-length = 88
 src = ["src"]
+# Ported medallion migrations — generated artifacts kept byte-identical to their
+# backend origins (and the backend likewise doesn't lint alembic/). env.py IS linted.
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

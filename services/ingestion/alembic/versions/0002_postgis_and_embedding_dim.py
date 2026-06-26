@@ -18,8 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-
+    # postgis extension is created by the postgres bootstrap, not here.
     # Lock the embedding column to Jina v3's 1024 dims. Safe to ALTER while
     # there's no data; if rows already carry NULL embeddings, pgvector accepts
     # the type change.

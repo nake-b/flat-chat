@@ -7,9 +7,11 @@ pipelines.
 ## Layout
 
 ```
+alembic/                → OWNS the `world` schema migrations (ported from the
+                          backend; revision IDs preserved). world.alembic_version.
 src/
   config.py             → Catalog, WfsDataset loading from datasets.yaml
-  db.py                 → engine, SessionLocal, get_session()
+  db.py                 → engine (search_path=world,public), SessionLocal, get_session()
   iron/, bronze/        → (iron + bronze tiers; raw scraper output)
   scraper/              → Per-source Node scrapers (NEVER run automatically)
   silver/               → Bronze → typed Listing rows
@@ -27,6 +29,23 @@ src/
     embed.py            → Calls Jina API, UPSERTs into listings_embeddings
     run.py              → CLI with --reembed / --since flags
 ```
+
+## Migrations — this service owns the `world` schema
+
+All tables below live in the **`world`** Postgres schema, and this service's
+Alembic (`alembic/`, tracked in `world.alembic_version`) is the authoritative
+DDL. The backend keeps read-only ORM over them + a drift test.
+
+```bash
+# Requires the postgres bootstrap to have created the world/app schemas +
+# extensions first (services/postgres/init/ on a fresh volume, or
+# ./scripts/bootstrap-schemas.sh on an existing one).
+docker compose run --rm ingestion uv run alembic upgrade head
+```
+
+`db.py`'s engine pins `search_path = world, public`, so all raw ETL SQL
+(`to_sql`/`to_postgis`, enrich UPSERTs) resolves unqualified names to `world`.
+Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/schema-ownership-split.md).
 
 ## Medallion tiers in this service
 
