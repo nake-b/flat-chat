@@ -1,6 +1,6 @@
 # flat-chat
 
-Berlin Apartment AI Assistant — a chatbot to help Berliners find apartments quickly and make informed decisions through conversational search.
+Flat Chat — the Berlin Real Estate (AI) Agent. A chatbot to help Berliners find apartments quickly and make informed decisions through conversational search.
 
 ## Quick Start
 

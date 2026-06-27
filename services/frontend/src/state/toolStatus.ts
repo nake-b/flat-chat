@@ -9,35 +9,94 @@
 // Adding a new backend tool: write the tool, then add one entry here AND
 // one matching `useToolPill("<name>")` call in `ChatPane.tsx`. Backend stays
 // pure data — no status strings live in tool bodies; UI copy lives here.
+//
+// One entry gives the tool full control of both lifecycle phases. e.g. a
+// future `locate_place` tool:
+//   locate_place: {
+//     executing: (a) => `Finding ${a?.query ?? "location"}`,  // during
+//     complete:  ()  => "",                                   // after (silent)
+//   }
+// The run-level Thinking/streaming/idle phases are owned separately by
+// `useAgentPhase` — see agent-compound-docs/decisions/frontend-status-lifecycle.md.
+
+// A running label that rotates through verbs (e.g. "Checking" → "Reviewing"),
+// with an optional fixed suffix and trailing string (e.g. a progress percent).
+// Rendered by ToolPill via <RotatingWord>. Labels carry NO trailing "…" — the
+// pill appends animated dots itself.
+export interface RotatingExecuting {
+  verbs: readonly string[];
+  suffix?: string;
+  trailing?: string;
+}
 
 export interface ToolUiSpec {
+  // Static running label (no trailing "…" — animated dots are appended by the pill).
   executing: (args: any) => string;
-  complete?: (args: any, result: any) => string;
+  // Optional richer running label that rotates verbs + shows progress. Takes the
+  // current SessionState so it can derive things like a percent from total_results.
+  executingRotating?: (args: any, state: any) => RotatingExecuting;
+  complete?: (args: any, result: any, state: any) => string;
 }
+
+// Backend default; the LLM may override via the page_size arg (see compute below).
+const DEFAULT_PAGE_SIZE = 10;
 
 export const TOOL_STATUS: Record<string, ToolUiSpec> = {
   search_apartments: {
     executing: (a: { districts?: string[] | null }) =>
       a?.districts?.length
-        ? `Searching ${a.districts.join(", ")}…`
-        : "Searching apartments…",
+        ? `Searching ${a.districts.join(", ")}`
+        : "Searching apartments",
     complete: (_a, result) => firstLine(result) || "Search complete.",
   },
 
   get_result_page: {
-    executing: (a: { page?: number }) => `Loading page ${a?.page ?? 1}…`,
-    complete: (_a, result) => firstLine(result) || "Page loaded.",
+    // Fallback if the rotating variant can't render for some reason.
+    executing: () => "Looking through apartments",
+    executingRotating: (
+      a: { page?: number; page_size?: number },
+      state: { total_results?: number } | null,
+    ) => {
+      const page = a?.page ?? 1;
+      const pageSize = a?.page_size ?? DEFAULT_PAGE_SIZE;
+      const total = state?.total_results ?? 0;
+      const pct =
+        total > 0
+          ? Math.min(100, Math.round(((page * pageSize) / total) * 100))
+          : null;
+      return {
+        verbs: PAGE_VERBS,
+        suffix: " apartments",
+        trailing: pct != null ? ` · ${pct}%` : undefined,
+      };
+    },
+    // No completion pill for pagination — only the live "Checking apartments ·
+    // NN%" matters; once the page loads, the cards/map carry the result. (""
+    // → ToolPill renders nothing.) The backend result string ("Page N/M…") is
+    // deliberately never echoed.
+    complete: () => "",
   },
 
   open_listing: {
     executing: (a: { indices?: number[] }) =>
-      `Looking up listing #${a?.indices?.[0] ?? "?"}…`,
+      `Looking up listing #${a?.indices?.[0] ?? "?"}`,
     complete: (a: { indices?: number[] }) =>
       `Opened listing #${a?.indices?.[0] ?? "?"}`,
   },
 };
 
-export const THINKING_LABEL = "Thinking…";
+// Rotating verb sets. Module-level (stable refs) so <RotatingWord>'s timer
+// doesn't restart on every render.
+export const PAGE_VERBS = ["Checking", "Reviewing", "Browsing"] as const;
+export const THINKING_VERBS = [
+  "Thinking",
+  "Reasoning",
+  "Pondering",
+  "Working",
+] as const;
+
+// Static fallback / aria label for the thinking phase.
+export const THINKING_LABEL = "Thinking";
 
 // First non-empty headline line of a tool's return value, used as the default
 // `complete` label when the registry doesn't override. Skips leading "Note: …"

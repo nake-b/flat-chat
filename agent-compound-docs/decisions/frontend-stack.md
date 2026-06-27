@@ -24,7 +24,7 @@ Keep `POST /api/conversations` (session creation) and `GET /api/conversations/{i
 
 `@copilotkit/react-core` + `@copilotkit/react-ui`. The killer primitive is `useCoAgent<UiState>({ name, initialState })` — a hook that mirrors backend agent state on the frontend and re-renders any subscribed component when the agent mutates `ctx.deps.ui_state`. Sibling React components (chat, map, cards) all subscribe via this hook to slices of the same state.
 
-Tool-call lifecycle pills ("Searching Kreuzberg…", "Found 12 listings…") are rendered inline in the chat thread via `useCopilotAction({ name, render })` per backend tool (executing/complete phases). The "Thinking…" pill lives separately as ChatPane chrome (positioned above the input) because CopilotKit's `useCoAgentStateRender` claim-bridge anchored it to stale message IDs. UI copy lives entirely on the frontend in a tool-name → label registry. See §Status-pill lifecycle below.
+Tool-call lifecycle pills ("Searching Kreuzberg…", "Found 12 listings…") are rendered inline in the chat thread via `useCopilotAction({ name, render })` per backend tool (executing/complete phases). The "Thinking…" pill lives separately as a DOM portal pinned to the end of `.copilotKitMessagesContainer` (CopilotKit's `useCoAgentStateRender` claim-bridge anchored it to stale message IDs). UI copy lives entirely on the frontend in a tool-name → label registry, and *which* indicator shows is decided by a single derived phase (`useAgentPhase`). See §Status-pill lifecycle below.
 
 ### Map: MapLibre GL JS v5 + `@vis.gl/react-maplibre` + self-hosted Protomaps
 
@@ -115,18 +115,28 @@ The `executing` label is built from the tool's args (built up across `inProgress
 
 Adding a new tool is **one entry here**. The wildcard registration already picks it up — no ChatPane edit needed. Backend tools never need to know about UI copy.
 
-**Thinking phase.** `<ThinkingSlot />` is rendered once by `ChatPane`, absolutely positioned just above CopilotChat's input area. It self-hides unless `running === true` AND `useActiveToolCount() === 0`. `running` is `useCoAgent<UiState>().running` — CopilotKit's `agent.isRunning` flag, true between LLM reasoning start and final reply. The active-tool counter (`useToolStatus.ts`'s `useActiveToolCount`) is a tiny zustand store — same shape as `useHover`. The counter increments in `<ToolPill>`'s `useEffect` on `status === "executing"` and decrements on cleanup, so render functions stay pure.
+**Thinking phase — one derived phase, not a boolean.** Which run-level indicator shows is decided by `useAgentPhase()` (`hooks/useAgentPhase.ts`), which collapses three orthogonal signals into one mutually-exclusive phase:
 
-**Why ChatPane chrome, not `useCoAgentStateRender`.** Earlier the Thinking pill used `useCoAgentStateRender({ name, render: () => <ThinkingSlot /> })`, which inserts a sibling `<div>` into `.copilotKitMessagesContainer`. CopilotKit's claim bridge then binds that div to a message ID — and that ID went stale, sometimes anchoring the pill **above an old assistant bubble** instead of below the latest one. CopilotKit `^1.10.0` exposes no positional override for the hook. Pulling the pill out of the stream into ChatPane gives us deterministic positioning at the cost of one absolute-positioned div; tool pills stay in-stream (they're inherently message-tied via `useCopilotAction`, no anchor drift). Index.css still carves out `.copilotKitMessagesContainer > div:has(.fc-status-line)` so the tool pills remain visible.
+| phase | condition | indicator |
+|---|---|---|
+| `idle` | `!running` | nothing |
+| `tool` | a backend tool is executing (`useActiveToolCount() > 0`) | the per-tool pill |
+| `streaming` | the latest message is an assistant text msg with content | nothing — the answer is the indicator |
+| `reasoning` | `running` & none of the above | the "Thinking…" pill |
+
+`running` is `useCoAgent().running` — true from `RUN_STARTED` to `RUN_FINISHED`. The active-tool counter (`useToolStatus.ts`'s exported `useActiveToolCount`) is a tiny zustand store; it increments in `<ToolPill>`'s `useEffect` while a tool runs and decrements on cleanup, so render functions stay pure. Assistant-text-streaming is read from `useCopilotChatInternal().messages`. The Thinking pill renders only when the phase is `reasoning`, so it never sits on top of a running tool **or a streaming answer**. Full rationale: [`frontend-status-lifecycle.md`](./frontend-status-lifecycle.md).
+
+**Why a DOM portal, not `useCoAgentStateRender`.** Earlier the Thinking pill used `useCoAgentStateRender({ name, render: () => <ThinkingSlot /> })`, which inserts a sibling `<div>` into `.copilotKitMessagesContainer`. CopilotKit's claim bridge then binds that div to a message ID — and that ID went stale, sometimes anchoring the pill **above an old assistant bubble** instead of below the latest one. CopilotKit `^1.10.0` exposes no positional override for the hook. So the pill is rendered through a `createPortal` slot we append to the **end** of `.copilotKitMessagesContainer` and keep there via a `MutationObserver` — deterministic positioning, in the same vertical rhythm as the tool pills. Tool pills stay in-stream (they're inherently message-tied via `useCopilotAction`, no anchor drift). Index.css still carves out `.copilotKitMessagesContainer > div:has(.fc-status-line)` so the pills remain visible.
 
 **Lifecycle visible to the user:**
 
 ```
-Thinking…           ← agent picking a tool, no tool active
-Searching K…        ← status=executing, label from args
-Found 12 in K       ← status=complete, label from first line of return
-Thinking…           ← LLM writing the reply
-(reply lands)       ← running=false, pill gone
+Thinking…           ← reasoning: agent picking a tool, no tool active
+Searching K…        ← tool: status=executing, label from args
+Found 12 in K       ← tool result: status=complete, label from first line of return
+Thinking…           ← reasoning: gap before the reply starts
+(reply streams)     ← streaming: Thinking suppressed, the answer is the indicator
+(reply lands)       ← idle: running=false, nothing shown
 ```
 
 **Why this and not `tool_logs` on `UiState`** (the previous design): putting status strings in shared state coupled tool code to UI copy, deleted on every search (lost history), and couldn't represent the "Thinking…" phase (no signal until the first tool finished). Tool-call lifecycle events are first-class in AG-UI and already streamed — the redesign just consumes what was already there.
