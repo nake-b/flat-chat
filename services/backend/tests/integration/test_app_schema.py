@@ -21,6 +21,7 @@ from alembic.migration import MigrationContext
 
 # Importing the models registers the app tables on Base.metadata.
 import flat_chat.chat.models  # noqa: F401
+import flat_chat.listings.bookmarks_models  # noqa: F401
 import flat_chat.users.models  # noqa: F401
 from flat_chat.core.database import Base
 

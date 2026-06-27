@@ -5,6 +5,8 @@ import {
   type ListingDetail,
   type ListingCard,
 } from "../state/SessionState";
+import { useBookmarks } from "../state/useBookmarks";
+import { BookmarkStar } from "./BookmarkStar";
 
 // The subset of fields the detail body reads — present on BOTH ListingCard
 // and ListingDetail. We render from `active_listing_detail ?? apt` so the
@@ -83,6 +85,13 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const activeId = state?.active_id ?? null;
+  // Star binds to the active listing id — when active_id changes the star
+  // flips with it. Same store the cards subscribe to, so a toggle here
+  // updates every visible star with the same id.
+  const isBookmarked = useBookmarks((s) =>
+    activeId != null ? s.ids.has(activeId) : false,
+  );
+  const toggleBookmark = useBookmarks((s) => s.toggle);
 
   // Tier-3 detail blob — fetched by `activate(id)` via GET /api/listings/{id}
   // when the user clicks a card (the primary path) OR pushed by the agent's
@@ -141,14 +150,23 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
             Loading…
           </div>
-          <button
-            ref={backButtonRef}
-            type="button"
-            className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
-            onClick={close}
-          >
-            ← back
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            {activeId != null && (
+              <BookmarkStar
+                filled={isBookmarked}
+                onToggle={() => void toggleBookmark(activeId)}
+                size="md"
+              />
+            )}
+            <button
+              ref={backButtonRef}
+              type="button"
+              className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
+              onClick={close}
+            >
+              ← back
+            </button>
+          </div>
         </header>
       </div>
     );
@@ -179,14 +197,22 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
             {view.address ?? view.district ?? "—"}
           </div>
         </div>
-        <button
-          ref={backButtonRef}
-          type="button"
-          className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
-          onClick={close}
-        >
-          ← back
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          <BookmarkStar
+            filled={isBookmarked}
+            onToggle={() => void toggleBookmark(view.id)}
+            size="md"
+            label={view.title ?? "this listing"}
+          />
+          <button
+            ref={backButtonRef}
+            type="button"
+            className="shrink-0 border border-ink/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:bg-ink hover:text-white"
+            onClick={close}
+          >
+            ← back
+          </button>
+        </div>
       </header>
 
       {/* Stat row: only cells with real data render. flex-wrap lets the row

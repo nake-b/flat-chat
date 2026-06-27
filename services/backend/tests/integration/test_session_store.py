@@ -169,3 +169,72 @@ def test_state_snapshot_overwrites_not_appends(async_db_url):
 
     got = drive(async_db_url, body)
     assert got.state.total_results == 99
+
+
+def test_list_by_user_excludes_empty_conversations(async_db_url):
+    """Store-layer guard for the EXISTS filter — paired with the HTTP-level test."""
+
+    async def body(store):
+        empty = await store.create(USER)
+        with_msg = await store.create(USER)
+        with_msg.message_history = [_user("hello"), _assistant("hi")]
+        await store.save(with_msg)
+        return empty.id, with_msg.id, await store.list_by_user(USER)
+
+    empty_id, with_msg_id, rows = drive(async_db_url, body)
+    ids = [row.id for row in rows]
+    assert with_msg_id in ids
+    assert empty_id not in ids
+
+
+def test_set_title_if_unset_idempotent(async_db_url):
+    """First call wins. Second call is a no-op (idempotent at the SQL layer)."""
+
+    async def body(store):
+        session = await store.create(USER)
+        session.message_history = [_user("a"), _assistant("b")]
+        await store.save(session)
+
+        first = await store.set_title_if_unset(session.id, "first title")
+        second = await store.set_title_if_unset(session.id, "second title")
+        reloaded = await store.get(session.id)
+        return first, second, reloaded.title
+
+    first_ok, second_ok, title = drive(async_db_url, body)
+    assert first_ok is True
+    assert second_ok is False
+    assert title == "first title"
+
+
+def test_delete_if_owned_scopes_to_user(async_db_url):
+    """A wrong-user delete returns False and leaves the row alive."""
+    OTHER = "00000000-0000-0000-0000-0000000000ff"
+
+    async def body(store):
+        session = await store.create(USER)
+        session.message_history = [_user("hi"), _assistant("hello")]
+        await store.save(session)
+
+        wrong_user = await store.delete_if_owned(session.id, OTHER)
+        # Conversation should still be retrievable (delete didn't fire).
+        still_there = await store.get(session.id)
+
+        right_user = await store.delete_if_owned(session.id, USER)
+        with pytest.raises(SessionNotFoundError):
+            await store.get(session.id)
+
+        return wrong_user, still_there.id == session.id, right_user
+
+    wrong_returned, was_intact, right_returned = drive(async_db_url, body)
+    assert wrong_returned is False
+    assert was_intact is True
+    assert right_returned is True
+
+
+def test_delete_if_owned_malformed_id_returns_false(async_db_url):
+    """A malformed UUID is treated as missing, not a 500."""
+
+    async def body(store):
+        return await store.delete_if_owned("not-a-uuid", USER)
+
+    assert drive(async_db_url, body) is False

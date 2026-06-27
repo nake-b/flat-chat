@@ -15,6 +15,7 @@ import {
   rememberConversationId,
 } from "./state/conversationId";
 import { useHover } from "./hooks/useHover";
+import { useSidebarOpen } from "./hooks/useSidebarOpen";
 import "./index.css";
 
 // Bootstrap: resolve the conversation thread, then mount CopilotKit pointing at
@@ -76,6 +77,18 @@ function Bootstrap() {
     setResumed(false);
     // Changing the key (below) remounts CopilotKit → fresh state + empty chat.
     setConversationId(conv.id);
+    useSidebarOpen.getState().closeSidebar();
+  }, []);
+
+  const switchConversation = useCallback((id: string) => {
+    // Switching from the sidebar goes through the same recovery path as a
+    // page reload — `setResumed(true)` so ConversationRecovery hydrates state
+    // + transcript on the next CopilotKit mount (key change below).
+    useHover.getState().reset();
+    rememberConversationId(id);
+    setResumed(true);
+    setConversationId(id);
+    useSidebarOpen.getState().closeSidebar();
   }, []);
 
   // One HttpAgent per thread id. Recreated when the id changes (new conversation).
@@ -129,7 +142,11 @@ function Bootstrap() {
       showDevConsole={false}
     >
       <ConversationRecovery conversationId={conversationId} resumed={resumed} />
-      <App onNewConversation={startNewConversation} />
+      <App
+        conversationId={conversationId}
+        onNewConversation={startNewConversation}
+        onSwitchConversation={switchConversation}
+      />
     </CopilotKit>
   );
 }

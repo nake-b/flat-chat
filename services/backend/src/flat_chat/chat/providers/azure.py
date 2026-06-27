@@ -47,3 +47,37 @@ def build_azure_model(settings: Settings) -> Model:
             api_version=settings.azure_openai_api_version,
         ),
     )
+
+
+def build_azure_title_model(settings: Settings) -> Model:
+    """Build an Azure OpenAI model for one-shot conversation titling.
+
+    Falls back to the chat deployment when no dedicated title deployment is
+    configured — cheap to share, single call per conversation.
+    """
+    missing = [
+        name
+        for name in (
+            "azure_openai_endpoint",
+            "azure_openai_deployment",
+            "azure_openai_api_version",
+        )
+        if not getattr(settings, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "AZURE_OPENAI_API_KEY is set but the following are empty: "
+            + ", ".join(name.upper() for name in missing)
+            + ". Set them in .env."
+        )
+    deployment = (
+        settings.azure_openai_title_deployment or settings.azure_openai_deployment
+    )
+    return OpenAIChatModel(
+        deployment,
+        provider=AzureProvider(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_api_version,
+        ),
+    )

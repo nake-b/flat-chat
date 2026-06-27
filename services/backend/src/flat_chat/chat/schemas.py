@@ -11,6 +11,20 @@ class ConversationResponse(BaseModel):
     created_at: datetime
 
 
+class ConversationSummary(BaseModel):
+    """Sidebar list row — one conversation, lightweight.
+
+    `title` is null briefly between first persistence and background title-gen
+    completion; the frontend renders "Untitled" for that window. `updated_at`
+    drives both the sidebar's sort order (DESC) and its relative-time label.
+    """
+
+    id: str
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class MessageResponse(BaseModel):
     id: str
     role: str

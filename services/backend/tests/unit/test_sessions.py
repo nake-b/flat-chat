@@ -118,3 +118,65 @@ def test_save_replaces_session_in_store():
     # impls will rely on this path.
     asyncio.run(store.save(session))
     assert asyncio.run(store.get(session.id)) is session
+
+
+def test_list_by_user_filters_empty_and_scopes():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    store = InMemorySessionStore()
+    USER_OTHER = "00000000-0000-0000-0000-000000000002"
+
+    empty = asyncio.run(store.create(USER))  # zero messages → hidden
+    with_msg = asyncio.run(store.create(USER))
+    with_msg.message_history = [ModelRequest(parts=[UserPromptPart(content="hi")])]
+    asyncio.run(store.save(with_msg))
+
+    other = asyncio.run(store.create(USER_OTHER))
+    other.message_history = [ModelRequest(parts=[UserPromptPart(content="hey")])]
+    asyncio.run(store.save(other))
+
+    rows = asyncio.run(store.list_by_user(USER))
+    ids = [r.id for r in rows]
+    assert with_msg.id in ids
+    assert empty.id not in ids
+    assert other.id not in ids
+
+
+def test_set_title_if_unset_is_idempotent():
+    store = InMemorySessionStore()
+    session = asyncio.run(store.create(USER))
+    assert asyncio.run(store.set_title_if_unset(session.id, "first")) is True
+    assert asyncio.run(store.set_title_if_unset(session.id, "second")) is False
+    assert session.title == "first"
+
+
+def test_set_title_if_unset_unknown_session_returns_false():
+    store = InMemorySessionStore()
+    assert asyncio.run(store.set_title_if_unset("does-not-exist", "x")) is False
+
+
+def test_delete_if_owned_happy_path_drops_session_and_lock():
+    store = InMemorySessionStore()
+    session = asyncio.run(store.create(USER))
+    # Force the lock entry to exist so we can verify it's pruned.
+    _ = store.lock(session.id)
+    assert session.id in store._locks
+
+    assert asyncio.run(store.delete_if_owned(session.id, USER)) is True
+    assert session.id not in store._sessions
+    assert session.id not in store._locks
+
+
+def test_delete_if_owned_wrong_user_is_a_noop():
+    store = InMemorySessionStore()
+    session = asyncio.run(store.create(USER))
+    OTHER = "00000000-0000-0000-0000-000000000002"
+
+    assert asyncio.run(store.delete_if_owned(session.id, OTHER)) is False
+    # Row stayed put.
+    assert asyncio.run(store.get(session.id)) is session
+
+
+def test_delete_if_owned_unknown_session_returns_false():
+    store = InMemorySessionStore()
+    assert asyncio.run(store.delete_if_owned("does-not-exist", USER)) is False

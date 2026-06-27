@@ -45,6 +45,8 @@ green `just check` means green CI.
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
 | `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`                |
+| `/api/conversations`                      | GET    | List the calling user's conversations with at least one persisted message — powers the sidebar             |
+| `/api/conversations/{id}`                 | DELETE | Hard-delete a conversation owned by the caller; cascades to messages + session_state; 204 on success       |
 | `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only, ownership-checked)                     |
 | `/api/conversations/{id}/state`           | GET    | Latest `SessionState` snapshot — the reload-recovery primitive (map/cards/active listing), ownership-checked |
 | `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas      |
@@ -63,7 +65,7 @@ src/flat_chat/
 │   ├── dependencies.py  # FastAPI Depends wiring (session store, services)
 │   └── observability.py # Logs (dictConfig) + traces (OpenTelemetry → Phoenix)
 ├── api/
-│   ├── chat.py          # Conversation lifecycle: POST create + GET messages + GET state (no message-send)
+│   ├── chat.py          # Conversation lifecycle: POST create + GET list + GET messages + GET state (no message-send)
 │   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
 ├── users/
 │   └── models.py        # User ORM (app schema) + DUMMY_USER_ID (the get_user_id seam)
@@ -130,10 +132,12 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `DATABASE_URL`             | PostgreSQL connection string                                                                                           | — (required)                       |
 | `ANTHROPIC_API_KEY`        | Anthropic API key (preferred provider — native prompt caching). One of Anthropic *or* the Azure quartet must be set.   | — (one provider required)          |
 | `ANTHROPIC_MODEL`          | Anthropic model id (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5`)                                                      | `claude-sonnet-4-6`                |
+| `ANTHROPIC_TITLE_MODEL`    | Cheap/fast model for one-shot sidebar title generation. Defaults to Haiku.                                             | `claude-haiku-4-5-20251001`        |
 | `AZURE_OPENAI_API_KEY`     | Azure OpenAI Service key. Used when Anthropic is unset.                                                                | —                                  |
 | `AZURE_OPENAI_ENDPOINT`    | e.g. `https://<resource>.openai.azure.com/`                                                                            | —                                  |
 | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name from Foundry (often matches the model name)                                                            | —                                  |
 | `AZURE_OPENAI_API_VERSION` | API version — use a preview version for o-series reasoning models                                                      | `2024-12-01-preview`               |
+| `AZURE_OPENAI_TITLE_DEPLOYMENT` | Optional separate Azure deployment for title generation. Empty = reuse `AZURE_OPENAI_DEPLOYMENT`.                 | `""`                               |
 | `JINA_API_KEY`             | Jina embeddings API key (optional — empty disables semantic search)                                                    | —                                  |
 | `JINA_BASE_URL`            | Jina API base URL                                                                                                      | `https://api.jina.ai/v1`           |
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |

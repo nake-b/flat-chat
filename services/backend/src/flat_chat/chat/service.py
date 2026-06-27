@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
@@ -5,7 +6,7 @@ from typing import Any
 
 from ag_ui.core import BaseEvent, EventType, ToolCallResultEvent
 from pydantic import ValidationError
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
@@ -16,6 +17,7 @@ from flat_chat.chat.providers import build_chat_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.title_gen import generate_title, is_first_completed_turn
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.service import SearchService
@@ -215,6 +217,20 @@ class ChatService:
             await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
 
+            # Fire-and-forget title generation on the FIRST completed turn,
+            # after persistence has returned. Background-task isolation keeps
+            # a cosmetic LLM call off the user-visible critical path; a title
+            # failure leaves the row with `title=NULL`, the list endpoint
+            # returns null, and the frontend renders "Untitled".
+            if session.title is None and is_first_completed_turn(
+                session.message_history
+            ):
+                asyncio.create_task(
+                    _generate_and_persist_title(
+                        self.store, session.id, session.message_history
+                    )
+                )
+
         try:
             model = build_chat_model()
         except RuntimeError as exc:
@@ -270,6 +286,31 @@ def _extract_incoming_state(adapter) -> SessionState | None:
     except Exception as exc:  # pragma: no cover — defensive logging
         logger.warning("Could not parse incoming state from envelope: %s", exc)
     return None
+
+
+async def _generate_and_persist_title(
+    store: SessionStore,
+    session_id: str,
+    history: list[ModelMessage],
+) -> None:
+    """Background task: generate a title from the first turn, persist if NULL.
+
+    Catches all exceptions — the title is cosmetic and a failure here must
+    never propagate into the user's request loop. The `session_id` ContextVar
+    bound in `dispatch_agent_request` does NOT propagate into tasks spawned
+    via `create_task` in newer Python versions, but the SQL hook in
+    `core/database.py` reads it via `.get("")` which simply omits the SQL
+    comment — no error.
+    """
+    try:
+        title = await generate_title(history)
+        if title is None:
+            return
+        updated = await store.set_title_if_unset(session_id, title)
+        if updated:
+            logger.info("Conversation title set: session=%s title=%r", session_id, title)
+    except Exception:
+        logger.exception("Background title generation failed for %s", session_id)
 
 
 async def _with_session_and_lock(

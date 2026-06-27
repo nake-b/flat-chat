@@ -32,3 +32,19 @@ def build_anthropic_model(settings: Settings) -> Model:
         provider=AnthropicProvider(api_key=settings.anthropic_api_key),
         settings=_CACHE_SETTINGS,
     )
+
+
+def build_anthropic_title_model(settings: Settings) -> Model:
+    """Build an Anthropic-direct model for one-shot conversation titling.
+
+    No cache breakpoints — it's a single ~50-token call per conversation, the
+    cache would never pay back. Cheaper/faster default model (Haiku).
+    """
+    if not settings.anthropic_title_model:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is set but ANTHROPIC_TITLE_MODEL is empty."
+        )
+    return AnthropicModel(
+        settings.anthropic_title_model,
+        provider=AnthropicProvider(api_key=settings.anthropic_api_key),
+    )

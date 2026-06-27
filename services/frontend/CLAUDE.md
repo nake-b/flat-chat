@@ -17,6 +17,7 @@ src/
     conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
     toolStatus.ts         → Tool-name → status-pill label registry
     cardCache.ts          → zustand store of lazily-hydrated tier-2 ListingCards (by id)
+    useBookmarks.ts       → zustand store: per-user bookmarked listing ids (optimistic toggle)
   hooks/
     useSessionState.ts    → CANONICAL. useCoAgent<SessionState> + activate() helper
     useUiState.ts         → Compat re-export of useSessionState
@@ -25,7 +26,20 @@ src/
     session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
     ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
+    ConversationSidebar.tsx → slide-out left panel: + New chat + list of previous conversations
+    ConversationSidebarItem.tsx → single sidebar row (title + relative timestamp + active highlight)
+    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → slide-out left panel for per-user bookmarks
+    BookmarkStar.tsx → clickable star button (yellow-filled when bookmarked, outline otherwise)
     ChatPane.tsx, MapPane.tsx, CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
+  hooks/
+    useConversationList.ts → fetch + refetch-on-turn-end for the conversation sidebar list
+    useSidebarOpen.ts → zustand store: open/closed state of the conversation sidebar
+    useBookmarkSidebarOpen.ts → zustand store: open/closed state of the bookmark sidebar
+    useBookmarkList.ts → fetch tier-2 cards for the bookmark sidebar rows
+  api/
+    bookmarks.ts → list/add/remove for /api/bookmarks (plain fetch, typed)
+  utils/
+    relativeTime.ts → "12:04 PM" / "Yesterday" / "3 days ago" / "Jun 12" formatter
 ```
 
 ## Reload recovery + New conversation
@@ -43,6 +57,44 @@ typed, and works WITHOUT a publicApiKey (the public `useCopilotChat` omits it).
 a clean remount (fresh state + empty chat). The backend is history-authoritative,
 so the agent keeps context on resume even if the transcript restore is skipped.
 See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+
+## Bookmark sidebar (and bookmark mode)
+
+`BookmarkSidebar.tsx` mirrors the conversation sidebar's slide-out skeleton
+(always-mounted aside, `data-open` transform, conditional backdrop sibling,
+Esc-to-close). Mutual exclusion with the conversation sidebar is wired in
+`App.tsx` via two `useEffect`s — opening one closes the other (avoids a
+circular zustand-import).
+
+While the bookmark sidebar is open the layout enters **bookmark mode**: the
+two right-column sections (`MapPane` + `CardsPane`) animate their heights
+from `70/30` to `100/0` via `transition-[height]`, so the card strip
+collapses and the map fills its space. The map's `ApartmentLayer` reads
+`useBookmarkSidebarOpen.open` and substitutes its marker source —
+`bookmarkCards` (from `useBookmarkList`) instead of `state.result_markers`
+— so only bookmarked pins render. The existing fade + camera reframe
+(keyed off `markersSig`) gives a free cross-fade and re-fit. Closing the
+sidebar restores `result_markers` and the card strip.
+
+Per-user bookmark state lives OUTSIDE `SessionState` (which is
+per-conversation) in `useBookmarks` — a zustand `Set<string>` hydrated once
+on app mount from `GET /api/bookmarks/ids`. Toggles are optimistic; failures
+roll back and refetch. Every visible star (card + detail header + sidebar
+remove icon) subscribes to the same store so a toggle anywhere flips every
+star with that id.
+
+## Conversation sidebar
+
+`ConversationSidebar.tsx` is a slide-out left panel housing the "+ New chat"
+button (relocated from `ChatPane.tsx`) and a list of the user's previous
+conversations. It hydrates from `GET /api/conversations` on mount and refetches
+whenever `useAgentPhase()` transitions back to `idle` (a turn just finished →
+persistence has run → the list may have grown / titles may have arrived).
+Clicking a row goes through the same `setResumed(true)` + `setConversationId(...)`
+flow as page-reload recovery, so `ConversationRecovery` hydrates state +
+messages via plain HTTP. Open/closed state is a zustand singleton
+(`useSidebarOpen`) so the hamburger in `ChatPane`, the panel, and the backdrop
+each subscribe without prop-drilling.
 
 ## The data-flow split (frontend perspective)
 

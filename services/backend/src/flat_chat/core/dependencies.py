@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from flat_chat.chat.sessions import DbSessionStore, SessionStore
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
+from flat_chat.listings.bookmarks_service import BookmarkService
 from flat_chat.listings.service import ListingService
 from flat_chat.search.service import SearchService
 from flat_chat.users.models import DUMMY_USER_ID
@@ -42,6 +43,13 @@ def get_listing_service(
     db: AsyncSession = Depends(get_async_db),
 ) -> ListingService:
     return ListingService(db)
+
+
+def get_bookmark_service(
+    db: AsyncSession = Depends(get_async_db),
+    listing_service: ListingService = Depends(get_listing_service),
+) -> BookmarkService:
+    return BookmarkService(db, listing_service)
 
 
 def get_search_service(

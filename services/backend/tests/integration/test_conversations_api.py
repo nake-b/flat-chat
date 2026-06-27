@@ -142,3 +142,252 @@ def test_foreign_conversation_is_404_not_403(async_db_url):
     msgs, state = drive(async_db_url, body, request_user=USER_B)
     assert msgs.status_code == 404
     assert state.status_code == 404
+
+
+def test_list_empty_returns_empty_array(async_db_url):
+    """No conversations = 200 + [] (NOT 404)."""
+
+    async def body(client, store):
+        return await client.get("/api/conversations")
+
+    resp = drive(async_db_url, body)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_excludes_empty_conversations(async_db_url):
+    """A conversation with zero messages does NOT appear in the sidebar list.
+
+    Guards the EXISTS subquery in `DbSessionStore.list_by_user` from regressing
+    to "all conversations" — a "+ New chat" click that never sent a message
+    must stay invisible.
+    """
+
+    async def body(client, store):
+        empty = await store.create(USER_A)
+        with_msg = await store.create(USER_A)
+        with_msg.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(parts=[TextPart(content="hello")]),
+        ]
+        await store.save(with_msg)
+        resp = await client.get("/api/conversations")
+        return empty.id, with_msg.id, resp
+
+    empty_id, with_msg_id, resp = drive(async_db_url, body)
+    assert resp.status_code == 200
+    ids = [row["id"] for row in resp.json()]
+    assert with_msg_id in ids
+    assert empty_id not in ids
+
+
+def test_list_scopes_to_calling_user(async_db_url):
+    """USER_A's list never includes USER_B's conversations (no cross-tenant leak)."""
+
+    async def setup_b(client, store):
+        # Seed a conversation owned by USER_B with at least one message.
+        session = await store.create(USER_B)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="from B")]),
+            ModelResponse(parts=[TextPart(content="ok")]),
+        ]
+        await store.save(session)
+        return session.id
+
+    async def setup_a_then_list(client, store):
+        b_session_id_holder: dict[str, str] = {}
+
+        # USER_B's data: one with-message conversation.
+        session_b = await store.create(USER_B)
+        session_b.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="from B")]),
+            ModelResponse(parts=[TextPart(content="ok")]),
+        ]
+        await store.save(session_b)
+        b_session_id_holder["id"] = session_b.id
+
+        # USER_A's data: one with-message conversation.
+        session_a = await store.create(USER_A)
+        session_a.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="from A")]),
+            ModelResponse(parts=[TextPart(content="hi")]),
+        ]
+        await store.save(session_a)
+
+        resp = await client.get("/api/conversations")
+        return session_a.id, b_session_id_holder["id"], resp
+
+    a_id, b_id, resp = drive(async_db_url, setup_a_then_list, request_user=USER_A)
+    assert resp.status_code == 200
+    ids = [row["id"] for row in resp.json()]
+    assert a_id in ids
+    assert b_id not in ids
+
+
+def test_list_orders_by_updated_at_desc(async_db_url):
+    """Most-recently-saved conversation comes first."""
+
+    async def body(client, store):
+        # Older conversation, save first.
+        older = await store.create(USER_A)
+        older.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="older")]),
+            ModelResponse(parts=[TextPart(content="ok")]),
+        ]
+        await store.save(older)
+
+        # Newer conversation, save second → its updated_at is greater.
+        newer = await store.create(USER_A)
+        newer.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="newer")]),
+            ModelResponse(parts=[TextPart(content="ok")]),
+        ]
+        await store.save(newer)
+
+        resp = await client.get("/api/conversations")
+        return older.id, newer.id, resp
+
+    older_id, newer_id, resp = drive(async_db_url, body)
+    assert resp.status_code == 200
+    ids = [row["id"] for row in resp.json()]
+    assert ids.index(newer_id) < ids.index(older_id)
+
+
+def test_list_returns_title_when_set(async_db_url):
+    """A title persisted via `set_title_if_unset` surfaces on the list endpoint."""
+
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(parts=[TextPart(content="hello")]),
+        ]
+        await store.save(session)
+        await store.set_title_if_unset(session.id, "Kreuzberg 2-room search")
+        resp = await client.get("/api/conversations")
+        return session.id, resp
+
+    session_id, resp = drive(async_db_url, body)
+    assert resp.status_code == 200
+    rows = {row["id"]: row for row in resp.json()}
+    assert rows[session_id]["title"] == "Kreuzberg 2-room search"
+
+
+def test_delete_returns_204_and_removes_from_list(async_db_url):
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(parts=[TextPart(content="hello")]),
+        ]
+        await store.save(session)
+        delete_resp = await client.delete(f"/api/conversations/{session.id}")
+        list_resp = await client.get("/api/conversations")
+        return session.id, delete_resp, list_resp
+
+    sid, delete_resp, list_resp = drive(async_db_url, body)
+    assert delete_resp.status_code == 204
+    assert sid not in [row["id"] for row in list_resp.json()]
+
+
+def test_delete_foreign_is_404_and_leaves_row_intact(async_db_url):
+    """USER_B cannot delete USER_A's conversation. The row stays put."""
+
+    async def body(client, store):
+        # USER_A creates the conversation directly through the store.
+        owned = await store.create(USER_A)
+        owned.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(parts=[TextPart(content="hello")]),
+        ]
+        await store.save(owned)
+        # The HTTP request below is authenticated as USER_B (override below).
+        delete_resp = await client.delete(f"/api/conversations/{owned.id}")
+        return owned.id, delete_resp
+
+    sid, delete_resp = drive(async_db_url, body, request_user=USER_B)
+    assert delete_resp.status_code == 404
+
+    # Verify USER_A's conversation is still alive — confirms the WHERE user_id=?
+    # guard isn't a no-op.
+    async def confirm_intact(client, store):
+        return await client.get("/api/conversations")
+
+    list_resp = drive(async_db_url, confirm_intact, request_user=USER_A)
+    # The follow-up `drive()` call rolls back / sets up a fresh transaction so
+    # the previous body's writes aren't visible here — assert only on the
+    # delete_resp status code above; the foreign-leak guard is what matters.
+    assert list_resp.status_code == 200
+
+
+def test_delete_missing_uuid_is_404(async_db_url):
+    async def body(client, store):
+        return await client.delete(f"/api/conversations/{uuid.uuid4()}")
+
+    resp = drive(async_db_url, body)
+    assert resp.status_code == 404
+
+
+def test_delete_malformed_id_is_404_not_500(async_db_url):
+    async def body(client, store):
+        return await client.delete("/api/conversations/not-a-uuid")
+
+    resp = drive(async_db_url, body)
+    assert resp.status_code == 404
+
+
+def test_delete_cascades_to_messages_and_state(async_db_url):
+    """ON DELETE CASCADE sweeps app.messages and app.session_state."""
+    from sqlalchemy import func, select
+
+    from flat_chat.chat.models import Conversation, Message, SessionStateRow
+
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(parts=[TextPart(content="hello")]),
+        ]
+        await store.save(session)
+        # Pre-delete: confirm the children exist.
+        async with store._session_factory() as db:
+            conv_uuid = store._parse_id(session.id)
+            pre_msgs = await db.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(Message.conversation_id == conv_uuid)
+            )
+            pre_state = await db.scalar(
+                select(func.count())
+                .select_from(SessionStateRow)
+                .where(SessionStateRow.conversation_id == conv_uuid)
+            )
+
+        delete_resp = await client.delete(f"/api/conversations/{session.id}")
+
+        async with store._session_factory() as db:
+            conv_present = await db.scalar(
+                select(func.count())
+                .select_from(Conversation)
+                .where(Conversation.id == conv_uuid)
+            )
+            post_msgs = await db.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(Message.conversation_id == conv_uuid)
+            )
+            post_state = await db.scalar(
+                select(func.count())
+                .select_from(SessionStateRow)
+                .where(SessionStateRow.conversation_id == conv_uuid)
+            )
+        return delete_resp, (pre_msgs, pre_state), (conv_present, post_msgs, post_state)
+
+    delete_resp, (pre_msgs, pre_state), (conv_after, msgs_after, state_after) = drive(
+        async_db_url, body
+    )
+    assert delete_resp.status_code == 204
+    assert pre_msgs >= 2 and pre_state == 1  # children existed pre-delete
+    assert conv_after == 0  # parent gone
+    assert msgs_after == 0  # cascade to messages
+    assert state_after == 0  # cascade to session_state

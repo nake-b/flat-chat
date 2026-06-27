@@ -21,11 +21,12 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from flat_chat.core.config import settings
-from flat_chat.core.database import Base
+import flat_chat.chat.models  # noqa: F401 — registers app.conversations/messages/session_state
+import flat_chat.listings.bookmarks_models  # noqa: F401 — registers app.bookmarks
 import flat_chat.listings.models  # noqa: F401 — registers (world-schema) read models
 import flat_chat.users.models  # noqa: F401 — registers app.users
-import flat_chat.chat.models  # noqa: F401 — registers app.conversations/messages/session_state
+from flat_chat.core.config import settings
+from flat_chat.core.database import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
