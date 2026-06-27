@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import cast, func, select
+from sqlalchemy import cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import (
@@ -42,6 +43,27 @@ logger = logging.getLogger(__name__)
 # from — small enough to stay cheap in the prompt, large enough to
 # disambiguate (e.g. several "Stadtpark"s).
 LOCATE_LIMIT = 5
+
+# Seed-alias backstops (e.g. "TU Berlin", "Görli", "Kotti") store their target
+# in the description as `Alias → <Canonical Name> (optional note).`. The
+# canonical name is the string between "Alias → " and the first " (" or ".".
+# When an overlay resolves to such an alias, we also union footprints named
+# `<Canonical Name>` so the short alias draws the real (often fragmented) place
+# — e.g. "TU Berlin" → the "Technische Universität Berlin" campus footprints,
+# not just the alias point. Fails closed: a description without this exact
+# shape yields None and the alias falls back to its own name only.
+_ALIAS_CANONICAL_RE = re.compile(r"^\s*Alias\s*→\s*(?P<name>.+?)\s*(?:\(|\.|$)")
+
+
+def _alias_canonical_name(description: str | None) -> str | None:
+    """Extract the canonical place name from a seed-alias description, or None."""
+    if not description:
+        return None
+    match = _ALIAS_CANONICAL_RE.match(description)
+    if match is None:
+        return None
+    name = match.group("name").strip()
+    return name or None
 
 
 class PlaceCandidate:
@@ -133,14 +155,15 @@ class PlaceService:
         """Resolve a `place_ref` to a drawable `MapOverlay`, or None if unknown.
 
         Resolves the hit by `kind`+`src_id` (same view pruning the search side
-        uses), then UNIONS every same-kind, same-name footprint within
-        `OVERLAY_CLUSTER_RADIUS_M` of it — so a campus fragmented into many
-        identically-named building rows draws as one local cluster, while a
-        unique-named place unions to itself. Exact-name match (NULL-safe) keeps
-        unrelated neighbours out (see OVERLAY_CLUSTER_RADIUS_M). Returns the
-        unioned geometry as simplified GeoJSON. `_parse_place_ref` is the
-        shared, fail-closed token parser — a hallucinated/garbage ref yields
-        None (no overlay), never a 500.
+        uses), then UNIONS same-kind footprints within `OVERLAY_CLUSTER_RADIUS_M`
+        of it whose name is the hit's name OR — if the hit is a seed alias — its
+        canonical target (see `_alias_canonical_name`). So a campus fragmented
+        into many identically-named rows draws as one local cluster, a short
+        alias ("TU Berlin") draws the real place ("Technische Universität
+        Berlin") footprints, and a unique-named place unions to itself.
+        Exact-name match keeps unrelated neighbours out (see
+        OVERLAY_CLUSTER_RADIUS_M). `_parse_place_ref` is the shared, fail-closed
+        token parser — a hallucinated/garbage ref yields None, never a 500.
         """
         from .service import _parse_place_ref  # same package; no import cycle
 
@@ -150,16 +173,35 @@ class PlaceService:
         kind, src_id = parsed
 
         np = named_places.c
-        # The resolved hit's name + geometry, as scalar subqueries (same pattern
-        # SearchService uses for the geometry anchor — no cross join).
-        anchor_name = (
-            select(np.name).where(np.kind == kind, np.src_id == src_id).limit(1)
-        ).scalar_subquery()
+        # Resolve the hit's own name + description first; the description may
+        # carry an "Alias → <canonical>" pointer we also union by.
+        meta = (
+            await self.db.execute(
+                select(np.name, np.description)
+                .where(np.kind == kind, np.src_id == src_id)
+                .limit(1)
+            )
+        ).first()
+        if meta is None:
+            return None
+        anchor_name = meta.name
+        canonical = _alias_canonical_name(meta.description)
+        union_names = [n for n in {anchor_name, canonical} if n is not None]
+
+        # Name predicate: any of the union names (alias own name ∪ canonical),
+        # NULL-safe so an unnamed hit still unions same-(NULL)-named rows.
+        if union_names:
+            name_cond = np.name.in_(union_names)
+            if anchor_name is None:
+                name_cond = or_(name_cond, np.name.is_(None))
+        else:
+            name_cond = np.name.is_(None)
+
         anchor_geom = (
             select(np.geom).where(np.kind == kind, np.src_id == src_id).limit(1)
         ).scalar_subquery()
-        # The local cluster: same-kind, same-name (NULL-safe) footprints within
-        # the radius of the anchor, each tagged with its geometry dimension.
+        # The local cluster: matching-name, same-kind footprints within the
+        # radius of the anchor, each tagged with its geometry dimension.
         cluster = (
             select(
                 np.geom.label("geom"),
@@ -167,7 +209,7 @@ class PlaceService:
             )
             .where(
                 np.kind == kind,
-                np.name.is_not_distinct_from(anchor_name),
+                name_cond,
                 geo_func.ST_DWithin(
                     cast(np.geom, Geography),
                     cast(anchor_geom, Geography),
@@ -188,9 +230,7 @@ class PlaceService:
             ),
             OVERLAY_COORD_DIGITS,
         )
-        stmt = select(anchor_name.label("name"), geojson_expr.label("geojson")).where(
-            cluster.c.dim == max_dim
-        )
+        stmt = select(geojson_expr.label("geojson")).where(cluster.c.dim == max_dim)
         row = (await self.db.execute(stmt)).first()
         if row is None or row.geojson is None:
             return None
@@ -198,7 +238,7 @@ class PlaceService:
         return MapOverlay(
             id=f"place:{place_ref}",
             kind="place",
-            label=row.name or place_ref,
+            label=anchor_name or place_ref,
             geojson=json.loads(row.geojson),
             origin=origin,
         )

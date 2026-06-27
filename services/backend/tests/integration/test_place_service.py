@@ -289,3 +289,41 @@ def test_overlay_geometry_drops_coincident_point_keeps_polygon(async_db_url):
     overlay = _run(async_db_url, body)
     assert overlay is not None
     assert overlay.geojson["type"] == "Polygon"  # the point was dropped
+
+
+def test_overlay_geometry_alias_unions_canonical_footprints(async_db_url):
+    """A seed-alias POINT ("TU Berlin" → 'Alias → Technische ...') draws the
+    canonical place's footprints, not just the alias point — the alias own name
+    has no polygon, so this proves the canonical-name union kicked in."""
+
+    async def body(session: AsyncSession):
+        # Two canonical campus footprints ~150 m apart.
+        await _insert_landmark(
+            session, "Technische Universität Musterstadt", _box(13.40, 52.50)
+        )
+        await _insert_landmark(
+            session, "Technische Universität Musterstadt", _box(13.402, 52.50)
+        )
+        # The seed alias: a POINT named "TU Muster", canonical in the description.
+        alias_id = await _insert_landmark(
+            session,
+            "TU Muster",
+            "POINT(13.4011 52.5005)",
+            category="alias",
+            source="seed",
+        )
+        await session.execute(
+            sa.text("UPDATE world.landmarks SET description = :d WHERE id = :i"),
+            {
+                "d": "Alias → Technische Universität Musterstadt (Hauptgebäude).",
+                "i": alias_id,
+            },
+        )
+        return await PlaceService(session).overlay_geometry(f"landmark:{alias_id}")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.label == "TU Muster"  # chip keeps the alias the user named
+    # Drew the two canonical footprints (alias point dropped), not a dot.
+    assert overlay.geojson["type"] == "MultiPolygon"
+    assert len(overlay.geojson["coordinates"]) == 2
