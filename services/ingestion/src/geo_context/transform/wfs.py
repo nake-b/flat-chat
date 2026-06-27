@@ -35,7 +35,7 @@ SILVER_SRID = 4326
 # ---------------------------------------------------------------------------
 
 _NAMED_ONLY_LAYERS: set[tuple[str, str]] = {
-    ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk"),
+    ("alkis_gebaeude", "alkis_gebaeude:gebaeude"),
 }
 
 

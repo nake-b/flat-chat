@@ -192,19 +192,16 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     # NOTE: column names below mirror the published kita WFS schema; verify
     # against GetCapabilities if a refresh drops fields (status: wip).
     # ---------------------------------------------------------------------
-    ("kitas", "kitas"): {
-        "name": "name",
-        "traeger": "operator",
-        "traegertyp": "operator_type",
-        "strasse": "street",
-        "hausnr": "house_number",
-        "plz": "postal_code",
-        "bezirk": "district",
-        "ortsteil": "neighborhood",
-        "telefon": "phone",
-        "email": "email",
-        "internet": "website",
-        "plaetze": "capacity",
+    ("kita", "kita:kita"): {
+        "e_name": "name",
+        "t_name": "operator",
+        "t_art": "operator_type",
+        "e_strasse": "street",
+        "e_hnr": "house_number",
+        "e_plz": "postal_code",
+        "e_bez": "district",
+        "e_tel": "phone",
+        "e_web": "website",
     },
 
     # ---------------------------------------------------------------------
@@ -212,7 +209,7 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     # category='building' injected via YAML `extra`). Keep named-only: the
     # transform drops rows with an empty `name` (see transform_wfs_layer).
     # ---------------------------------------------------------------------
-    ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk"): {
+    ("alkis_gebaeude", "alkis_gebaeude:gebaeude"): {
         "nam": "name",
         "bezeich": "description",
     },
@@ -231,7 +228,7 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     # ---------------------------------------------------------------------
     # alkis_ortsteile  (locality boundary polygons) — `nam` is the label here.
     # ---------------------------------------------------------------------
-    ("alkis_ortsteile", "alkis_ortsteile"): {
+    ("alkis_ortsteile", "alkis_ortsteile:ortsteile"): {
         "nam": "name",
     },
 

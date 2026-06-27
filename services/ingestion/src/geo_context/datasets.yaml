@@ -149,14 +149,14 @@ wfs:
     description: "All Berlin water body surfaces (lakes, Spree, Havel, canals)."
 
   - key: kitas
-    dataset: kitas
-    layer: kitas
+    dataset: kita
+    layer: kita:kita
     table: kitas
     geom_type: Point
     enabled: true
     status: wip
     license: "dl-de/zero-2-0"
-    source_url: "https://gdi.berlin.de/services/wfs/kitas"
+    source_url: "https://gdi.berlin.de/services/wfs/kita"
     update_cadence: monthly
     description: "Day-care centres (Kindertagesstätten) — name, operator, address."
 
@@ -166,7 +166,7 @@ wfs:
   # its own run.step — see geo_context/extract/osm.py.
   - key: alkis_buildings
     dataset: alkis_gebaeude
-    layer: alkis_gebaeude:gebaeudebauwerk
+    layer: alkis_gebaeude:gebaeude
     table: landmarks
     geom_type: MultiPolygon
     enabled: true
@@ -193,7 +193,7 @@ wfs:
 
   - key: ortsteile
     dataset: alkis_ortsteile
-    layer: alkis_ortsteile
+    layer: alkis_ortsteile:ortsteile
     table: ortsteile
     geom_type: MultiPolygon
     enabled: true
