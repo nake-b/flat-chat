@@ -21,17 +21,17 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import cast, func, or_, select
+from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import (
     OVERLAY_CLUSTER_RADIUS_M,
     OVERLAY_COORD_DIGITS,
     OVERLAY_SIMPLIFY_TOLERANCE,
+    OVERLAY_SNAP_RADIUS_M,
     MapOverlay,
     OverlayOrigin,
 )
@@ -43,27 +43,6 @@ logger = logging.getLogger(__name__)
 # from — small enough to stay cheap in the prompt, large enough to
 # disambiguate (e.g. several "Stadtpark"s).
 LOCATE_LIMIT = 5
-
-# Seed-alias backstops (e.g. "TU Berlin", "Görli", "Kotti") store their target
-# in the description as `Alias → <Canonical Name> (optional note).`. The
-# canonical name is the string between "Alias → " and the first " (" or ".".
-# When an overlay resolves to such an alias, we also union footprints named
-# `<Canonical Name>` so the short alias draws the real (often fragmented) place
-# — e.g. "TU Berlin" → the "Technische Universität Berlin" campus footprints,
-# not just the alias point. Fails closed: a description without this exact
-# shape yields None and the alias falls back to its own name only.
-_ALIAS_CANONICAL_RE = re.compile(r"^\s*Alias\s*→\s*(?P<name>.+?)\s*(?:\(|\.|$)")
-
-
-def _alias_canonical_name(description: str | None) -> str | None:
-    """Extract the canonical place name from a seed-alias description, or None."""
-    if not description:
-        return None
-    match = _ALIAS_CANONICAL_RE.match(description)
-    if match is None:
-        return None
-    name = match.group("name").strip()
-    return name or None
 
 
 class PlaceCandidate:
@@ -154,16 +133,22 @@ class PlaceService:
     ) -> MapOverlay | None:
         """Resolve a `place_ref` to a drawable `MapOverlay`, or None if unknown.
 
-        Resolves the hit by `kind`+`src_id` (same view pruning the search side
-        uses), then UNIONS same-kind footprints within `OVERLAY_CLUSTER_RADIUS_M`
-        of it whose name is the hit's name OR — if the hit is a seed alias — its
-        canonical target (see `_alias_canonical_name`). So a campus fragmented
-        into many identically-named rows draws as one local cluster, a short
-        alias ("TU Berlin") draws the real place ("Technische Universität
-        Berlin") footprints, and a unique-named place unions to itself.
-        Exact-name match keeps unrelated neighbours out (see
-        OVERLAY_CLUSTER_RADIUS_M). `_parse_place_ref` is the shared, fail-closed
-        token parser — a hallucinated/garbage ref yields None, never a 500.
+        Two-step:
+
+        1. **Snap.** If the hit is a representative POINT (a seed alias like
+           "TU Berlin" / "Görli"), snap to the nearest footprint (polygon/line,
+           ANY kind) within `OVERLAY_SNAP_RADIUS_M` and use it as the anchor —
+           the curated pin sits ON its target, so the nearest footprint IS the
+           place (the Hauptgebäude building, the Görlitzer Park polygon). The
+           building/park name never matches the alias, so proximity (not name)
+           is what finds it. No footprint near → fall back to the point.
+        2. **Cluster-union.** Union the anchor's same-kind, same-name footprints
+           within `OVERLAY_CLUSTER_RADIUS_M` (a campus fragmented into many
+           identically-named rows → its local cluster; a unique place → itself),
+           keeping the richest dimension.
+
+        The chip label stays the name the user referenced. `_parse_place_ref`
+        is the shared, fail-closed token parser — a garbage ref yields None.
         """
         from .service import _parse_place_ref  # same package; no import cycle
 
@@ -173,43 +158,65 @@ class PlaceService:
         kind, src_id = parsed
 
         np = named_places.c
-        # Resolve the hit's own name + description first; the description may
-        # carry an "Alias → <canonical>" pointer we also union by.
-        meta = (
+        base = (
             await self.db.execute(
-                select(np.name, np.description)
+                select(np.name, geo_func.ST_Dimension(np.geom).label("dim"))
                 .where(np.kind == kind, np.src_id == src_id)
                 .limit(1)
             )
         ).first()
-        if meta is None:
+        if base is None:
             return None
-        anchor_name = meta.name
-        canonical = _alias_canonical_name(meta.description)
-        union_names = [n for n in {anchor_name, canonical} if n is not None]
+        label = base.name or place_ref
 
-        # Name predicate: any of the union names (alias own name ∪ canonical),
-        # NULL-safe so an unnamed hit still unions same-(NULL)-named rows.
-        if union_names:
-            name_cond = np.name.in_(union_names)
-            if anchor_name is None:
-                name_cond = or_(name_cond, np.name.is_(None))
-        else:
-            name_cond = np.name.is_(None)
+        # Step 1 — snap a marker point to the footprint it sits on.
+        anchor_kind, anchor_src_id = kind, src_id
+        if base.dim == 0:
+            base_geom = (
+                select(np.geom).where(np.kind == kind, np.src_id == src_id).limit(1)
+            ).scalar_subquery()
+            snap = (
+                await self.db.execute(
+                    select(np.kind.label("kind"), np.src_id.label("src_id"))
+                    .where(
+                        geo_func.ST_Dimension(np.geom) >= 1,
+                        geo_func.ST_DWithin(
+                            cast(np.geom, Geography),
+                            cast(base_geom, Geography),
+                            OVERLAY_SNAP_RADIUS_M,
+                        ),
+                    )
+                    .order_by(
+                        geo_func.ST_Distance(
+                            cast(np.geom, Geography), cast(base_geom, Geography)
+                        )
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if snap is not None:
+                anchor_kind, anchor_src_id = snap.kind, snap.src_id
 
-        anchor_geom = (
-            select(np.geom).where(np.kind == kind, np.src_id == src_id).limit(1)
+        # Step 2 — cluster-union the (possibly snapped) anchor's same-name,
+        # same-kind footprints within the cluster radius.
+        anchor_name = (
+            select(np.name)
+            .where(np.kind == anchor_kind, np.src_id == anchor_src_id)
+            .limit(1)
         ).scalar_subquery()
-        # The local cluster: matching-name, same-kind footprints within the
-        # radius of the anchor, each tagged with its geometry dimension.
+        anchor_geom = (
+            select(np.geom)
+            .where(np.kind == anchor_kind, np.src_id == anchor_src_id)
+            .limit(1)
+        ).scalar_subquery()
         cluster = (
             select(
                 np.geom.label("geom"),
                 geo_func.ST_Dimension(np.geom).label("dim"),
             )
             .where(
-                np.kind == kind,
-                name_cond,
+                np.kind == anchor_kind,
+                np.name.is_not_distinct_from(anchor_name),
                 geo_func.ST_DWithin(
                     cast(np.geom, Geography),
                     cast(anchor_geom, Geography),
@@ -238,7 +245,7 @@ class PlaceService:
         return MapOverlay(
             id=f"place:{place_ref}",
             kind="place",
-            label=anchor_name or place_ref,
+            label=label,
             geojson=json.loads(row.geojson),
             origin=origin,
         )

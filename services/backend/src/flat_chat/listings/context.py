@@ -180,6 +180,15 @@ OVERLAY_COORD_DIGITS = 5
 # unique-named place unions to itself (no-op). Metres.
 OVERLAY_CLUSTER_RADIUS_M = 500
 
+# A seed alias is a representative POINT ("TU Berlin", "Görli", "Kotti") that
+# sits ON its real target. When an overlay resolves to such a point, we snap to
+# the nearest footprint (polygon/line, any kind) within this radius and draw
+# that — "TU Berlin" → the Hauptgebäude building it marks, "Görli" → the
+# Görlitzer Park polygon. The building/park names don't match the alias, so this
+# proximity snap (not name matching) is what actually finds the target. Falls
+# back to the point itself if nothing solid is within range. Metres.
+OVERLAY_SNAP_RADIUS_M = 150
+
 
 class MapOverlay(BaseModel):
     """One geometry drawn on the map, mirrored to the frontend via SessionState.
