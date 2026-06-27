@@ -35,7 +35,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
-from flat_chat.listings.context import ListingCard, ListingDetail, Marker
+from flat_chat.listings.context import ListingCard, ListingDetail, MapOverlay, Marker
 from flat_chat.search.schemas import SearchParams
 
 
@@ -74,6 +74,16 @@ class SessionState(BaseModel):
     frontend's HTTP fetch on card click; cleared on next search. The agent
     reads it in the `<user_focus>` block to answer follow-ups without a tool
     call."""
+
+    # Map overlays — geometries drawn alongside the markers (the Spree, U-Bahn
+    # lines, a Bezirk, the inside-the-ring zone). Bidirectional shared state:
+    # the agent adds/replaces overlays (content is agent-owned); the frontend
+    # may only REMOVE them when the user dismisses one (handled in
+    # `service.py:merge_incoming_state`). Surfaced to the agent each turn via
+    # `build_dynamic_state_prompt` so it never blindly re-draws a dismissed one.
+    map_overlays: list[MapOverlay] = Field(default_factory=list)
+    """Geometries currently drawn on the map. GeoJSON rides as-is (no columnar
+    packing); kept small via server-side simplification at resolution time."""
 
     @field_serializer("result_markers")
     def _serialize_markers(self, markers: list[Marker]) -> dict[str, list]:

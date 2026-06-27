@@ -144,6 +144,54 @@ class Marker(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Map overlay — a geometry the agent draws on the map (the Spree, a U-Bahn
+# line, a park/lake polygon, a Bezirk, the inside-the-ring zone). Lives in the
+# leaf `listings` layer so both `search/` (the resolvers that build overlays)
+# and `chat/` (SessionState + tools) can import it without breaking the
+# import-direction rule. The backend sets only SEMANTICS (`kind` / `label` /
+# `geojson`); APPEARANCE (colors, opacity, line vs fill) is the frontend's
+# job, keyed off `kind` + the geojson geometry type in
+# `services/frontend/src/state/overlayStyles.ts`. No `style_hint` — that would
+# be a second, drifting source of truth. See agent-compound-docs/decisions/
+# map-overlays.md.
+# ---------------------------------------------------------------------------
+
+OverlayKind = Literal["place", "transit_line", "bezirk", "ring", "parks"]
+OverlayOrigin = Literal["search", "pinned"]
+
+# Geometry simplification applied when resolving an overlay to GeoJSON (shared
+# by every resolver — PlaceService, TransitRouteService). Douglas-Peucker
+# tolerance in degrees (~0.00005° ≈ 5 m at Berlin's latitude) drops redundant
+# vertices on long lines/polygons (the Spree, a Bezirk) while preserving shape;
+# `OVERLAY_COORD_DIGITS=5` rounds coordinates to ~1 m. Both keep the GeoJSON
+# that rides the AG-UI state snapshot small. Use with
+# `ST_SimplifyPreserveTopology` (never breaks rings; a no-op for points).
+OVERLAY_SIMPLIFY_TOLERANCE = 0.00005
+OVERLAY_COORD_DIGITS = 5
+
+
+class MapOverlay(BaseModel):
+    """One geometry drawn on the map, mirrored to the frontend via SessionState.
+
+    `id` is stable per logical overlay (e.g. `"place:park:42"`,
+    `"transit_line:U7"`) so re-drawing replaces rather than duplicates, and the
+    frontend can dismiss by id. `origin` drives the clear policy:
+      - `"search"` overlays are derived from the active search's spatial anchors
+        (`near_place_ref` / `transit.lines`) and are REPLACED on the next search.
+      - `"pinned"` overlays come from an explicit `show_on_map` (or proactive
+        agent draw) and PERSIST across searches until removed/dismissed.
+    `geojson` is a GeoJSON geometry or Feature — source-agnostic (a
+    `named_places` shape or a transit route shape look identical here).
+    """
+
+    id: str
+    kind: OverlayKind
+    label: str
+    geojson: dict
+    origin: OverlayOrigin = "search"
+
+
+# ---------------------------------------------------------------------------
 # Tier-2 card shape — the top-N `preview_cards` kept hot in `SessionState`
 # and the shape `GET /api/listings?ids=…&view=card` returns for lazy
 # hydration. Labels are populated at projection time from `listings.labels`

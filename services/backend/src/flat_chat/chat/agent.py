@@ -14,6 +14,7 @@ from pydantic_ai import Agent, RunContext
 
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.state_emission import StateEmittingToolset
 from flat_chat.chat.tools import toolset
 
 
@@ -75,7 +76,7 @@ def _city_center_block() -> str:
         '"central", "Innenstadt", or "Zentrum", treat it as INSIDE THE S-BAHN\n'
         "RING (pass `inside_ring=true` to `search_apartments`) AND briefly explain\n"
         "— the first time only — why you mapped their words to the ring (they are\n"
-        "likely new to Berlin). BUT if the user explicitly says \"ring\",\n"
+        'likely new to Berlin). BUT if the user explicitly says "ring",\n'
         '"S-Bahn-Ring", or "Ringbahn", just apply `inside_ring=true` SILENTLY —\n'
         "they already know what the ring is; do NOT add the explanation.",
     )
@@ -101,9 +102,12 @@ INSTRUCTIONS = "\n\n".join(
 # Module-level Agent is the canonical Pydantic AI pattern — the Agent is
 # immutable config (toolset binding, instructions, retries). Per-request state
 # (model, deps, history) is passed at `agent.run(...)` time, so no DI needed.
+# The toolset is wrapped in `StateEmittingToolset` so any `deps.state` mutation
+# made by a tool auto-emits a STATE_SNAPSHOT to the frontend — emission is
+# structural, not something each tool has to remember. See state_emission.py.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    toolsets=[toolset],
+    toolsets=[StateEmittingToolset(toolset)],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

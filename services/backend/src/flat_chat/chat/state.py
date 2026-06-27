@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from flat_chat.listings.service import ListingService
     from flat_chat.search.places import PlaceService
     from flat_chat.search.service import SearchService
+    from flat_chat.search.transit_routes import TransitRouteService
 
 
 @dataclass
@@ -66,6 +67,7 @@ class ChatDeps:
     search_service: SearchService
     listing_service: ListingService
     place_service: PlaceService
+    transit_route_service: TransitRouteService
     session: ChatSession
     # Overwritten per-request by the dispatch path from session.state +
     # the incoming AG-UI envelope's state (frontend-driven changes like

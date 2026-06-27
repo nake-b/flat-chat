@@ -369,12 +369,16 @@ def build_dynamic_state_prompt(state: SessionState) -> str:
 
 
 def _current_state_block(view: LlmResultSetView) -> str:
+    overlays_line = _map_overlays_line(view.state)
+
     if view.state.search_params is None:
-        return xml_block(
-            "current_state",
+        body = (
             "  <total>0</total>\n"
-            "  <note>No search has run yet in this conversation.</note>",
+            "  <note>No search has run yet in this conversation.</note>"
         )
+        if overlays_line:
+            body += "\n" + overlays_line
+        return xml_block("current_state", body)
 
     filters = view.state.search_params.model_dump(
         exclude_none=True, exclude_defaults=True
@@ -388,7 +392,20 @@ def _current_state_block(view: LlmResultSetView) -> str:
         f"  <order>{view.order_label()}</order>",
         f"  <filters>{filters_json}</filters>",
     ]
+    if overlays_line:
+        lines.append(overlays_line)
     return xml_block("current_state", "\n".join(lines))
+
+
+def _map_overlays_line(state: SessionState) -> str:
+    """One line listing geometries currently drawn on the map, so the agent
+    knows what's visible — and won't redraw something the user dismissed.
+
+    Empty when nothing is drawn. Lists each overlay as `label (kind)`."""
+    if not state.map_overlays:
+        return ""
+    drawn = ", ".join(f"{o.label} ({o.kind})" for o in state.map_overlays)
+    return f"  <map_overlays>{drawn}</map_overlays>"
 
 
 def _index_for_active(state: SessionState) -> int | None:

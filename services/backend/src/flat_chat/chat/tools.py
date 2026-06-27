@@ -1,7 +1,6 @@
 from datetime import date
 
-from ag_ui.core import EventType, StateSnapshotEvent
-from pydantic_ai import FunctionToolset, RunContext, ToolReturn
+from pydantic_ai import FunctionToolset, RunContext
 
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
@@ -51,6 +50,21 @@ Tools:
   - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
     Indices in the CSV are absolute (1..N of the whole result set), not
     page-local.
+  - `show_on_map(place_ref=… | transit_line=…)` — DRAW a geometry on the map
+    (a named place via its `place_ref`, or a transit line by name like "U7")
+    WITHOUT filtering. For "draw the U8 so I can see these listings against it",
+    "show me the Spree", "where is Tiergarten?".
+  - `clear_map_overlays()` — wipe all drawn geometries ("clear the map").
+
+Drawing geometries on the map. Two ways a geometry appears:
+  1. AUTOMATICALLY — a `search_apartments` call that uses `near_place_ref` or
+     `transit.lines` draws that place/line as a side effect, so results are
+     shown in relation to it. You don't call anything extra.
+  2. ON PURPOSE — `show_on_map(...)` draws a place/line WITHOUT changing the
+     results. Use it when the user wants to see something, or proactively when
+     it helps orient them (e.g. they're weighing a listing and mentioned a
+     river/line nearby). `<current_state>` lists what's already drawn — never
+     redraw something already there or that the user has dismissed.
 
 Named-place search — the 2-tool flow. When the user names a SPECIFIC place
 ("near TU Berlin", "near the Spree", "by the Brandenburger Tor", "near
@@ -106,6 +120,15 @@ filters for `search_apartments`:
     "near Schlachtensee"        → locate_place("…") → near_place_ref
   - "arty / queer-friendly /
     nightlife / loft vibe"      → query: "<the user's words>"
+  - "show me the U7" /
+    "draw the U8" /
+    "trace the M10"             → show_on_map(transit_line="U7")
+  - "show me the Spree" /
+    "where's Tiergarten?" /
+    "draw the Tiergarten"       → locate_place(…) → show_on_map(place_ref=…)
+  - "clear the map" /
+    "remove those lines" /
+    "hide everything"           → clear_map_overlays()
 </phrase_map>
 """
 
@@ -166,7 +189,7 @@ async def search_apartments(
     min_greenery: GreeneryLabel | None = None,
     density: DensityLabel | None = None,
     sort_by: SortBy = "relevance",
-) -> ToolReturn:
+) -> str:
     """Search for apartments in Berlin. Replaces the current result set.
 
     Berlin renters search structurally — by warm rent, rooms, district, WBS,
@@ -356,8 +379,14 @@ async def search_apartments(
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 
-    summary = LlmResultSetView(ctx.deps.state).summary(preview)
-    return _return_with_state(return_value=summary, session_state=ctx.deps.state)
+    # Draw the geometry this search is anchored to (the Spree, the U7) so the
+    # user sees results IN RELATION to it. Replaces the previous search-derived
+    # overlays; pinned overlays (from show_on_map) survive.
+    await _rebuild_search_overlays(ctx, params)
+
+    # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
+    # the tool just returns prose for the LLM.
+    return LlmResultSetView(ctx.deps.state).summary(preview)
 
 
 @toolset.tool
@@ -407,6 +436,129 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
     return "\n".join(lines)
 
 
+@toolset.tool
+async def show_on_map(
+    ctx: RunContext[ChatDeps],
+    place_ref: str | None = None,
+    transit_line: str | None = None,
+) -> str:
+    """Draw a place or a transit line on the map WITHOUT changing the results.
+
+    Use this when the user wants to SEE a geometry in relation to the current
+    listings — "draw the U8 so I can see these against it", "show me the Spree",
+    "where's Tiergarten?" — or proactively when it helps orient them. It does
+    NOT filter; the result set and map markers are untouched. (To filter
+    listings near a place, use `search_apartments(near_place_ref=…)` instead —
+    that draws the geometry too, as a side effect.)
+
+    The overlay is PINNED: it stays on the map across subsequent searches until
+    removed (`clear_map_overlays`) or the user dismisses it. Drawing the same
+    place/line again just refreshes it. The `<current_state>` block lists what's
+    already drawn — don't redraw something that's there or that the user hid.
+
+    Args:
+        place_ref: An opaque `place_ref` from `locate_place` (a named park,
+            lake/river, landmark, etc.). Resolve the name with `locate_place`
+            first, then pass the chosen candidate's `place_ref` here.
+        transit_line: A transit line name like "U7", "S41", "M10". Passed by
+            name directly — no `locate_place` needed (line names are
+            unambiguous).
+    """
+    if not place_ref and not transit_line:
+        return (
+            "Pass either place_ref (from locate_place) or transit_line (e.g. "
+            '"U7") to draw something.'
+        )
+
+    drawn: list[str] = []
+    missed: list[str] = []
+
+    if place_ref:
+        overlay = await ctx.deps.place_service.overlay_geometry(
+            place_ref, origin="pinned"
+        )
+        if overlay is not None:
+            _upsert_overlay(ctx.deps.state, overlay)
+            drawn.append(overlay.label)
+        else:
+            missed.append(f'place_ref "{place_ref}"')
+
+    if transit_line:
+        overlay = await ctx.deps.transit_route_service.route_geometry(
+            transit_line, origin="pinned"
+        )
+        if overlay is not None:
+            _upsert_overlay(ctx.deps.state, overlay)
+            drawn.append(overlay.label)
+        else:
+            missed.append(f'line "{transit_line}"')
+
+    if not drawn:
+        return (
+            f"Couldn't find {', '.join(missed)} to draw. For a place, resolve it "
+            "with locate_place first; transit lines must be a real line name."
+        )
+    note = f"Drawing {', '.join(drawn)} on the map."
+    if missed:
+        note += f" (Couldn't find {', '.join(missed)}.)"
+    return note
+
+
+@toolset.tool
+async def clear_map_overlays(ctx: RunContext[ChatDeps]) -> str:
+    """Remove ALL geometries currently drawn on the map (lines, shapes, zones).
+
+    Use when the user wants a clean map ("clear the map", "remove those lines",
+    "hide everything"). Does not touch the result set or markers. To remove just
+    one, the user can dismiss it directly in the UI.
+    """
+    overlays = ctx.deps.state.map_overlays
+    if not overlays:
+        return "No geometries are currently drawn on the map."
+    n = len(overlays)
+    ctx.deps.state.map_overlays = []
+    return f"Cleared {n} geometr{'y' if n == 1 else 'ies'} from the map."
+
+
+def _upsert_overlay(state, overlay) -> None:
+    """Add `overlay`, replacing any existing one with the same id (stable per
+    logical place/line — so redrawing refreshes rather than duplicates)."""
+    state.map_overlays = [o for o in state.map_overlays if o.id != overlay.id] + [
+        overlay
+    ]
+
+
+async def _rebuild_search_overlays(ctx: RunContext[ChatDeps], params) -> None:
+    """Recompute the SEARCH-derived overlays from the active search's spatial
+    anchors (`near_place_ref` / `transit.lines`), preserving pinned overlays.
+
+    The two anchors mirror the search tool's own asymmetry: a named place goes
+    through `near_place_ref`, while "near the U8" rides `transit.lines` (never
+    `near_place_ref`). Both feed `map_overlays` so the geometry a search filters
+    on is always the geometry drawn. A pinned overlay with the same id wins
+    (it's sticky), so we never duplicate it as a search overlay."""
+    kept = [o for o in ctx.deps.state.map_overlays if o.origin == "pinned"]
+    kept_ids = {o.id for o in kept}
+    fresh: list = []
+
+    if params.near_place_ref:
+        overlay = await ctx.deps.place_service.overlay_geometry(
+            params.near_place_ref, origin="search"
+        )
+        if overlay is not None and overlay.id not in kept_ids:
+            fresh.append(overlay)
+
+    if params.transit is not None and params.transit.lines:
+        for line in params.transit.lines:
+            overlay = await ctx.deps.transit_route_service.route_geometry(
+                line, origin="search"
+            )
+            if overlay is not None and overlay.id not in kept_ids:
+                fresh.append(overlay)
+
+    ctx.deps.state.map_overlays = kept + fresh
+
+
 # TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
 # `select_listing` / `pan_map_to` pair, called in parallel by the LLM, once
 # the Generative-UI pattern-3 frontend tools land. See CLAUDE.md "Deferred /
@@ -415,7 +567,7 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
 async def open_listing(
     ctx: RunContext[ChatDeps],
     indices: list[int],
-) -> ToolReturn | str:
+) -> str:
     """Open a listing's detail panel AND return its full info.
 
     Dual purpose by design: this is both a data-fetch (returns prose so the
@@ -489,9 +641,9 @@ async def open_listing(
         else:
             items.append((i, hydrated.get(markers[p].id)))
 
-    return _return_with_state(
-        return_value=rs.detail(items), session_state=ctx.deps.state
-    )
+    # active_id / active_listing_detail mutations above auto-emit a
+    # STATE_SNAPSHOT via StateEmittingToolset; just return the prose.
+    return rs.detail(items)
 
 
 @toolset.tool
@@ -541,24 +693,4 @@ async def get_result_page(
 
     return rs.page(
         cards, start=start, page=page, total_pages=total_pages, page_size=page_size
-    )
-
-
-def _return_with_state(*, return_value: str, session_state) -> ToolReturn:
-    """Emit a STATE_SNAPSHOT alongside the tool's normal return value.
-
-    Pydantic AI's AG-UI adapter yields any `BaseEvent` placed in
-    `ToolReturn.metadata`. Snapshotting the full state on every mutating
-    tool call is simpler than diffing — the payload is bounded
-    (≤ 260 KB for 500 listings + active detail) and CopilotKit applies
-    snapshots idempotently.
-    """
-    return ToolReturn(
-        return_value=return_value,
-        metadata=[
-            StateSnapshotEvent(
-                type=EventType.STATE_SNAPSHOT,
-                snapshot=session_state.model_dump(),
-            ),
-        ],
     )
