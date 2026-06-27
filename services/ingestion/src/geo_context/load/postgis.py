@@ -73,9 +73,14 @@ def _write_gdf(
     dtype: dict[str, Any] = {"geom": Geometry(pg_type, srid=SILVER_SRID)}
     if extra_dtype:
         dtype.update(extra_dtype)
+    # Target the ingestion-owned `world` schema explicitly. The engine pins
+    # search_path=world,public (db.py), but geopandas' to_postgis defaults its
+    # existence check + Find_SRID to the literal `public` schema — so post
+    # schema-split (tables live in `world`) the SRID lookup fails without this.
     gdf.to_postgis(
         table_name,
         conn,
+        schema="world",
         if_exists="append",
         index=False,
         chunksize=chunksize,

@@ -387,9 +387,9 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
     candidates = await ctx.deps.place_service.locate(place_name)
     if not candidates:
         return (
-            f'No named place matching "{place_name}" found. It may not be in '
-            "the gazetteer — consider a district filter or a generic category "
-            "filter (near_park / near_water / kita) instead."
+            f'No place named "{place_name}" found. Try a different spelling or a '
+            "broader name; otherwise fall back to a district filter (districts=[…]) "
+            "or a generic category filter (near_park / near_water / kita)."
         )
 
     lines = [f'Candidates for "{place_name}" (pick one place_ref):']

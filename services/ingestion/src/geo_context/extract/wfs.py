@@ -15,6 +15,8 @@ from dataclasses import dataclass
 import geopandas as gpd
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,22 @@ class BerlinGdiWfsClient:
     ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self.http_timeout_s = http_timeout_s
+        # GDI WFS intermittently drops connections (RemoteDisconnected) and
+        # returns transient 5xx, especially on rapid paginated GetFeature runs.
+        # Retry with exponential backoff so one drop doesn't fail the layer.
+        self._session = requests.Session()
+        retry = Retry(
+            total=5,
+            connect=5,
+            read=5,
+            backoff_factor=1.5,  # 0, 1.5, 3, 6, 12 s
+            status_forcelist=(500, 502, 503, 504),
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def _endpoint(self, dataset: str) -> str:
         return f"{self.base_url}{dataset}"
@@ -52,7 +70,7 @@ class BerlinGdiWfsClient:
             "version": "2.0.0",
             "request": "GetCapabilities",
         }
-        resp = requests.get(
+        resp = self._session.get(
             self._endpoint(dataset),
             params=params,
             timeout=self.http_timeout_s,
@@ -126,7 +144,7 @@ class BerlinGdiWfsClient:
                 "count": str(self.PAGE_SIZE),
                 "startIndex": str(start_index),
             }
-            resp = requests.get(
+            resp = self._session.get(
                 self._endpoint(dataset),
                 params=params,
                 timeout=self.http_timeout_s,
