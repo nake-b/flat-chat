@@ -1,0 +1,93 @@
+# Curated landmark / area / alias seed for the `landmarks` table (source='seed').
+#
+# WHY this exists: OSM tags iconic places inconsistently (the East Side Gallery
+# is `tourism=information` + a bare node, so our curated OSM selectors skip it),
+# and pg_trgm can't bridge abbreviations ("TU Berlin" shares ~no trigrams with
+# "Technische Universität Berlin"). This file is the small, version-controlled
+# backstop: hand-verified rows that `locate_place` (trigram over `named_places`)
+# resolves directly. See agent-compound-docs/decisions/named-place-search.md.
+#
+# Each row: name, category, optional description, geometry (WKT, EPSG:4326 —
+# "lon lat" order). geometry may be a POINT / LINESTRING / POLYGON.
+#
+# category drives behaviour:
+#   notable (monument/attraction/tower/bridge/stadium) → searchable AND shown in
+#     the nearby-landmarks card display (listings_nearby_landmarks).
+#   area  → search-only (informal Kieze; an area isn't a card "landmark").
+#   alias → search-only abbreviation pointing at the target's geometry.
+# Only seed places genuinely ABSENT from ALKIS/OSM — duplicates add noise.
+
+seeds:
+  # ---- Missing iconic landmarks (notable) ----
+  - name: East Side Gallery
+    category: attraction
+    description: "Open-air gallery on the longest surviving Berlin Wall segment, along the Spree in Friedrichshain."
+    geometry: "LINESTRING(13.4330 52.5075, 13.4395 52.5050, 13.4452 52.5018)"
+  - name: Denkmal für die ermordeten Juden Europas
+    category: monument
+    description: "Holocaust Memorial (Memorial to the Murdered Jews of Europe), Mitte."
+    geometry: "POINT(13.3789 52.5139)"
+  - name: Alexanderplatz
+    category: attraction
+    description: "Central square in Mitte (TV Tower, Weltzeituhr)."
+    geometry: "POINT(13.4132 52.5219)"
+  - name: Kottbusser Tor
+    category: attraction
+    description: "Landmark square/junction in Kreuzberg."
+    geometry: "POINT(13.4180 52.4992)"
+
+  # ---- Aliases (search-only) → point at the target's location ----
+  - name: TU Berlin
+    category: alias
+    description: "Alias → Technische Universität Berlin (Hauptgebäude, Charlottenburg)."
+    geometry: "POINT(13.3269 52.5125)"
+  - name: HU Berlin
+    category: alias
+    description: "Alias → Humboldt-Universität (Unter den Linden, Mitte)."
+    geometry: "POINT(13.3935 52.5179)"
+  - name: FU Berlin
+    category: alias
+    description: "Alias → Freie Universität Berlin (Dahlem)."
+    geometry: "POINT(13.2926 52.4527)"
+  - name: Charité
+    category: alias
+    description: "Alias → Charité – Universitätsmedizin (Campus Mitte)."
+    geometry: "POINT(13.3765 52.5266)"
+  - name: Alex
+    category: alias
+    description: "Alias → Alexanderplatz."
+    geometry: "POINT(13.4132 52.5219)"
+  - name: Kotti
+    category: alias
+    description: "Alias → Kottbusser Tor."
+    geometry: "POINT(13.4180 52.4992)"
+  - name: Görli
+    category: alias
+    description: "Alias → Görlitzer Park (Kreuzberg)."
+    geometry: "POINT(13.4407 52.4979)"
+
+  # ---- Informal Kieze / important areas (search-only points) ----
+  - name: Bergmannkiez
+    category: area
+    description: "Lively Kiez in Kreuzberg around Bergmannstraße."
+    geometry: "POINT(13.3880 52.4890)"
+  - name: Graefekiez
+    category: area
+    description: "Kiez in Kreuzberg around Graefestraße."
+    geometry: "POINT(13.4200 52.4930)"
+  - name: Kreuzkölln
+    category: area
+    description: "Kreuzberg/Neukölln border area around the Landwehrkanal."
+    geometry: "POINT(13.4240 52.4920)"
+  - name: Reuterkiez
+    category: area
+    description: "Kiez in northern Neukölln."
+    geometry: "POINT(13.4300 52.4880)"
+  - name: Simon-Dach-Kiez
+    category: area
+    description: "Nightlife Kiez in Friedrichshain around Simon-Dach-Straße."
+    geometry: "POINT(13.4540 52.5100)"
+  - name: Sprengelkiez
+    category: area
+    description: "Quiet Kiez in Wedding (Mitte)."
+    geometry: "POINT(13.3600 52.5460)"
