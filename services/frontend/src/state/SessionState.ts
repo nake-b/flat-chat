@@ -296,6 +296,33 @@ export function decodeMarkers(
 }
 
 // ---------------------------------------------------------------------------
+// Map overlays — geometries the agent draws on the map (the Spree, a U-Bahn
+// line, a Bezirk, the inside-the-ring zone). Mirror of
+// listings/context.py:MapOverlay. The backend sets SEMANTICS only
+// (kind/label/geojson/origin); APPEARANCE is decided here in
+// `state/overlayStyles.ts`, keyed off `kind` + the geojson geometry type.
+// `geojson` is a raw GeoJSON geometry (from PostGIS ST_AsGeoJSON).
+// ---------------------------------------------------------------------------
+
+export type OverlayKind =
+  | "place"
+  | "transit_line"
+  | "bezirk"
+  | "ring"
+  | "parks";
+export type OverlayOrigin = "search" | "pinned";
+
+export interface MapOverlay {
+  id: string;
+  kind: OverlayKind;
+  label: string;
+  // GeoJSON geometry object ({type, coordinates}); typed loosely so a Feature
+  // would also pass. The map layer reads `.type` to pick line vs fill.
+  geojson: GeoJSON.Geometry;
+  origin: OverlayOrigin;
+}
+
+// ---------------------------------------------------------------------------
 // SessionState — the canonical in-memory representation mirrored from
 // backend over the AG-UI stream. The frontend renders markers + cards from
 // this; the LLM reads the same fields via build_dynamic_state_prompt.
@@ -313,6 +340,7 @@ export interface SessionState {
   preview_cards: ListingCard[];
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
+  map_overlays: MapOverlay[];
 }
 
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
@@ -322,6 +350,7 @@ export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   preview_cards: [],
   active_id: null,
   active_listing_detail: null,
+  map_overlays: [],
 }) as SessionState;
 
 export const AGENT_NAME = "berlin-agent";

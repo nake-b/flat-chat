@@ -76,7 +76,24 @@ export function useSessionState() {
     [setState],
   );
 
-  return { ...coAgent, activate };
+  // Dismiss a map overlay: remove it locally for an instant hide, then the
+  // reduced set is echoed back to the backend on the next turn, where
+  // `merge_incoming_state` treats the removal as authoritative (sticky — the
+  // agent sees it gone and won't redraw it). Frontend may only REMOVE overlays.
+  const dismissOverlay = useCallback(
+    (id: string) => {
+      setState((prev) => {
+        const s = prev ?? EMPTY_SESSION_STATE;
+        return {
+          ...s,
+          map_overlays: (s.map_overlays ?? []).filter((o) => o.id !== id),
+        };
+      });
+    },
+    [setState],
+  );
+
+  return { ...coAgent, activate, dismissOverlay };
 }
 
 // Backwards-compat alias — existing components import `useUiState`.

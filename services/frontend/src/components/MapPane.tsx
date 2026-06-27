@@ -12,11 +12,21 @@ import type {
   MapLayerMouseEvent,
   SymbolLayerSpecification,
 } from "maplibre-gl";
-import type { FeatureCollection, Point } from "geojson";
+import type { Feature, FeatureCollection, Point } from "geojson";
 
 import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
+import {
+  OVERLAY_FILL_OPACITY,
+  OVERLAY_LINE_OPACITY,
+  OVERLAY_LINE_WIDTH,
+  OVERLAY_OUTLINE_WIDTH,
+  OVERLAY_POINT_RADIUS,
+  overlayColor,
+  overlayShape,
+} from "../state/overlayStyles";
+import { OverlayLegend } from "./OverlayLegend";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -213,6 +223,7 @@ export function MapPane() {
   }, []);
 
   return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
     <MapLibreMap
       id="apartments-map"
       initialViewState={BERLIN_CENTER}
@@ -244,8 +255,91 @@ export function MapPane() {
         compact
         customAttribution="© OpenStreetMap contributors"
       />
+      {/* Overlays render BEFORE the apartment pins so markers stay on top. */}
+      <OverlayLayer />
       <ApartmentLayer />
     </MapLibreMap>
+      <OverlayLegend />
+    </div>
+  );
+}
+
+// Render every agent-drawn geometry in `state.map_overlays`. Appearance is
+// resolved from `overlayStyles` by (kind, geometry type) — the backend only
+// supplied semantics. Polygons → translucent fill + outline; lines → stroke;
+// points → dot.
+function OverlayLayer() {
+  const { state } = useSessionState();
+  const overlays = state?.map_overlays ?? [];
+
+  return (
+    <>
+      {overlays.map((o) => {
+        const shape = overlayShape(o.geojson);
+        const color = overlayColor(o, shape);
+        const srcId = `overlay-${o.id}`;
+        const data: FeatureCollection = {
+          type: "FeatureCollection",
+          features: [
+            { type: "Feature", geometry: o.geojson, properties: {} } as Feature,
+          ],
+        };
+
+        if (shape === "fill") {
+          return (
+            <Source key={srcId} id={srcId} type="geojson" data={data}>
+              <Layer
+                id={`${srcId}-fill`}
+                type="fill"
+                paint={{ "fill-color": color, "fill-opacity": OVERLAY_FILL_OPACITY }}
+              />
+              <Layer
+                id={`${srcId}-outline`}
+                type="line"
+                paint={{
+                  "line-color": color,
+                  "line-width": OVERLAY_OUTLINE_WIDTH,
+                  "line-opacity": 0.8,
+                }}
+              />
+            </Source>
+          );
+        }
+
+        if (shape === "line") {
+          return (
+            <Source key={srcId} id={srcId} type="geojson" data={data}>
+              <Layer
+                id={`${srcId}-line`}
+                type="line"
+                layout={{ "line-cap": "round", "line-join": "round" }}
+                paint={{
+                  "line-color": color,
+                  "line-width": OVERLAY_LINE_WIDTH,
+                  "line-opacity": OVERLAY_LINE_OPACITY,
+                }}
+              />
+            </Source>
+          );
+        }
+
+        return (
+          <Source key={srcId} id={srcId} type="geojson" data={data}>
+            <Layer
+              id={`${srcId}-point`}
+              type="circle"
+              paint={{
+                "circle-color": color,
+                "circle-radius": OVERLAY_POINT_RADIUS,
+                "circle-opacity": 0.85,
+                "circle-stroke-color": "#ffffff",
+                "circle-stroke-width": 2,
+              }}
+            />
+          </Source>
+        );
+      })}
+    </>
   );
 }
 
