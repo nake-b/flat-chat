@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from ag_ui.core import EventType, ToolCallResultEvent
+from ag_ui.core import BaseEvent, EventType, ToolCallResultEvent
 from pydantic import ValidationError
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
@@ -62,7 +62,7 @@ class _QuietRetryEventStream(AGUIEventStream[ChatDeps, str]):
 
     async def _handle_tool_result(
         self, result: ToolReturnPart | RetryPromptPart
-    ):
+    ) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):
             yield ToolCallResultEvent(
                 message_id=self.new_message_id(),
@@ -136,9 +136,7 @@ class ChatService:
             # so deps are typed as ChatDeps (not the `AgentDepsT=None` default)
             # without subscripting — the subclass is concrete, so subscripting it
             # would raise `TypeError: not subscriptable`.
-            adapter = await _FlatChatAGUIAdapter.from_request(
-                request, agent=agent
-            )
+            adapter = await _FlatChatAGUIAdapter.from_request(request, agent=agent)
         except ValidationError as exc:
             raise InvalidAgentRequestError(str(exc)) from exc
 

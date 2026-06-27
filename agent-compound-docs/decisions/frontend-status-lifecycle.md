@@ -49,6 +49,15 @@ Inputs, all already in the app:
 Exactly one phase is active at a time, so at most one indicator renders — this structurally
 kills the "two indicators fighting" class of bugs.
 
+> **Version coupling — `useCopilotChatInternal`.** The streaming check reads the *internal*
+> CopilotKit hook `useCopilotChatInternal().messages` and depends on the message shape
+> `{id, role, content}` (it's the same internal hook `ConversationRecovery` already uses for
+> `setMessages`, so the dependency is accepted project-wide). It's pinned at `@copilotkit/*
+> ^1.10.0`; a CopilotKit upgrade must re-verify that `messages` is still an array of
+> `{role, content}`. `useAgentPhase.test.tsx` asserts the `streaming` branch against that exact
+> shape, so a breaking reshape fails the test loudly rather than silently resurrecting the
+> "Thinking on top of the streaming answer" bug.
+
 ## Division of labour
 
 - **`useAgentPhase`** owns the *run-level* split: Thinking vs streaming vs tool vs idle.

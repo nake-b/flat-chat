@@ -10,7 +10,7 @@ import type {
 import type { FeatureCollection, Point } from "geojson";
 
 import { useSessionState } from "../hooks/useSessionState";
-import { useHover } from "../hooks/useHover";
+import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
@@ -226,6 +226,11 @@ export function MapPane() {
   // imperative effect (pin image, hover/active highlight, pan) bailing.
   const [mapInstance, setMapInstance] = useState<MaplibreGl | null>(null);
 
+  // Guards the one-time `styleimagemissing` registration. `onLoad` can fire
+  // again on a style reload (e.g. a future Protomaps swap), and we must not
+  // stack a fresh listener each time.
+  const pinHandlerBound = useRef(false);
+
   // Stable refs so the handler closures always see the LATEST activate /
   // setHover without needing to re-bind on every render. React's useState
   // setters are stable; CopilotKit-derived ones may not be.
@@ -304,9 +309,12 @@ export function MapPane() {
         // (and re-register after a style swap). This replaces a fragile
         // styledata/isStyleLoaded gate that left the image unregistered.
         ensurePinImage(m);
-        m.on("styleimagemissing", (ev: { id: string }) => {
-          if (ev.id === PIN_IMAGE_ID) ensurePinImage(m);
-        });
+        if (!pinHandlerBound.current) {
+          pinHandlerBound.current = true;
+          m.on("styleimagemissing", (ev: { id: string }) => {
+            if (ev.id === PIN_IMAGE_ID) ensurePinImage(m);
+          });
+        }
         setMapInstance(m);
       }}
     >
@@ -321,9 +329,16 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
   const lastFeatureStateIds = useRef<Set<string>>(new Set());
   const lastPannedId = useRef<string | null>(null);
 
-  // Selected listing for the map. Prefer the client-click selection (hover
-  // store — reliably reaches this component), fall back to the agent-driven
-  // selection in SessionState (open_listing, delivered over SSE).
+  // Mirror the authoritative SessionState.active_id into the hover store so the
+  // agent path (open_listing / reload hydration, which arrive as SSE deltas and
+  // never run through activate()) updates the same client-local selection a
+  // card click does. Without this, a stale click would mask a later agent
+  // selection. See useActiveIdMirror + useHover's comment.
+  useActiveIdMirror(state?.active_id ?? null);
+
+  // Selected listing for the map. The mirror above keeps `clientActiveId` in
+  // sync with both paths; the `?? state.active_id` fallback only covers the
+  // first-paint/hydration window before the mirror effect runs.
   const activeId = clientActiveId ?? state?.active_id ?? null;
 
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
