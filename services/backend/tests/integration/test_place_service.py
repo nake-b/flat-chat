@@ -187,3 +187,105 @@ def test_overlay_geometry_unknown_ref_returns_none(async_db_url):
     garbage, missing = _run(async_db_url, body)
     assert garbage is None  # malformed token fails closed
     assert missing is None  # valid format, nonexistent id
+
+
+def _box(lon: float, lat: float, d: float = 0.001) -> str:
+    """A small square POLYGON WKT anchored at (lon, lat)."""
+    return (
+        f"POLYGON(({lon} {lat}, {lon + d} {lat}, {lon + d} {lat + d}, "
+        f"{lon} {lat + d}, {lon} {lat}))"
+    )
+
+
+async def _insert_landmark(session, name, wkt, *, category="building", source="alkis"):
+    return await session.scalar(
+        sa.text(
+            "INSERT INTO world.landmarks (name, source, category, geom) "
+            "VALUES (:n, :s, :c, ST_SetSRID(ST_GeomFromText(:wkt), 4326)) RETURNING id"
+        ),
+        {"n": name, "s": source, "c": category, "wkt": wkt},
+    )
+
+
+def test_locate_prefers_polygon_over_coincident_point(async_db_url):
+    """A seed-alias POINT and a building POLYGON share a name; the polygon must
+    rank first (the ST_Dimension tiebreak), so overlays draw a shape not a dot."""
+
+    async def body(session: AsyncSession):
+        point_id = await _insert_landmark(
+            session,
+            "Glühwurmplatz",
+            "POINT(13.40 52.50)",
+            category="alias",
+            source="seed",
+        )
+        poly_id = await _insert_landmark(
+            session,
+            "Glühwurmplatz",
+            _box(13.40, 52.50),
+        )
+        return point_id, poly_id, await PlaceService(session).locate("Glühwurmplatz")
+
+    point_id, poly_id, candidates = _run(async_db_url, body)
+    assert candidates
+    # Equal trigram score (identical name) → polygon wins the tiebreak.
+    assert candidates[0].place_ref == f"landmark:{poly_id}"
+    assert f"landmark:{point_id}" in {c.place_ref for c in candidates}
+
+
+def test_overlay_geometry_unions_local_same_named_cluster(async_db_url):
+    """Same-named footprints within the cluster radius union into one shape; a
+    distant same-named one and a nearby differently-named one are excluded."""
+
+    async def body(session: AsyncSession):
+        near_a = await _insert_landmark(
+            session,
+            "Campus Q",
+            _box(13.40, 52.50),
+        )
+        # ~150 m east, same name → unioned.
+        await _insert_landmark(
+            session,
+            "Campus Q",
+            _box(13.402, 52.50),
+        )
+        # ~7 km away, same name → excluded (different local cluster).
+        await _insert_landmark(
+            session,
+            "Campus Q",
+            _box(13.50, 52.55),
+        )
+        # Adjacent but differently named → excluded (no fuzzy swallow).
+        await _insert_landmark(
+            session,
+            "Nachbarhaus",
+            _box(13.4005, 52.5005, 0.0001),
+        )
+        return await PlaceService(session).overlay_geometry(f"landmark:{near_a}")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.label == "Campus Q"
+    # Exactly the two near same-named footprints → a 2-part MultiPolygon.
+    assert overlay.geojson["type"] == "MultiPolygon"
+    assert len(overlay.geojson["coordinates"]) == 2
+
+
+def test_overlay_geometry_drops_coincident_point_keeps_polygon(async_db_url):
+    """A polygon footprint and a coincident same-named alias POINT must union to
+    a clean Polygon (richest dimension only) — never a GeometryCollection."""
+
+    async def body(session: AsyncSession):
+        poly_id = await _insert_landmark(session, "Mixed Campus", _box(13.41, 52.49))
+        await _insert_landmark(
+            session,
+            "Mixed Campus",
+            "POINT(13.4105 52.4905)",
+            category="alias",
+            source="seed",
+        )
+        return await PlaceService(session).overlay_geometry(f"landmark:{poly_id}")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.geojson["type"] == "Polygon"  # the point was dropped

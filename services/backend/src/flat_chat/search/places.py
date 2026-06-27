@@ -22,11 +22,13 @@ from __future__ import annotations
 import json
 import logging
 
+from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import (
+    OVERLAY_CLUSTER_RADIUS_M,
     OVERLAY_COORD_DIGITS,
     OVERLAY_SIMPLIFY_TOLERANCE,
     MapOverlay,
@@ -100,7 +102,16 @@ class PlaceService:
                 geo_func.ST_X(centroid).label("lon"),
             )
             .where(np.name.op("%")(q))
-            .order_by(func.similarity(np.name, q).desc())
+            # Tiebreak on geometry richness so a polygon/line beats a coincident
+            # point at equal name-match (ST_Dimension: polygon=2, line=1,
+            # point=0). Without it, a seed-alias POINT sitting on top of real
+            # building footprints can win an exact-name tie and the agent draws
+            # a dot instead of a shape. Helps near_place_ref search too (a
+            # footprint is a better ST_DWithin target than a point).
+            .order_by(
+                func.similarity(np.name, q).desc(),
+                geo_func.ST_Dimension(np.geom).desc(),
+            )
             .limit(LOCATE_LIMIT)
         )
         rows = (await self.db.execute(stmt)).all()
@@ -121,11 +132,15 @@ class PlaceService:
     ) -> MapOverlay | None:
         """Resolve a `place_ref` to a drawable `MapOverlay`, or None if unknown.
 
-        Same view + same `kind`+`src_id` pruning as the search-side geometry
-        resolution (`SearchService`), but returns the geometry as simplified
-        GeoJSON for the map instead of running `ST_DWithin`. `_parse_place_ref`
-        is the shared, fail-closed token parser — a hallucinated/garbage ref
-        yields None (no overlay), never a 500.
+        Resolves the hit by `kind`+`src_id` (same view pruning the search side
+        uses), then UNIONS every same-kind, same-name footprint within
+        `OVERLAY_CLUSTER_RADIUS_M` of it — so a campus fragmented into many
+        identically-named building rows draws as one local cluster, while a
+        unique-named place unions to itself. Exact-name match (NULL-safe) keeps
+        unrelated neighbours out (see OVERLAY_CLUSTER_RADIUS_M). Returns the
+        unioned geometry as simplified GeoJSON. `_parse_place_ref` is the
+        shared, fail-closed token parser — a hallucinated/garbage ref yields
+        None (no overlay), never a 500.
         """
         from .service import _parse_place_ref  # same package; no import cycle
 
@@ -135,14 +150,46 @@ class PlaceService:
         kind, src_id = parsed
 
         np = named_places.c
+        # The resolved hit's name + geometry, as scalar subqueries (same pattern
+        # SearchService uses for the geometry anchor — no cross join).
+        anchor_name = (
+            select(np.name).where(np.kind == kind, np.src_id == src_id).limit(1)
+        ).scalar_subquery()
+        anchor_geom = (
+            select(np.geom).where(np.kind == kind, np.src_id == src_id).limit(1)
+        ).scalar_subquery()
+        # The local cluster: same-kind, same-name (NULL-safe) footprints within
+        # the radius of the anchor, each tagged with its geometry dimension.
+        cluster = (
+            select(
+                np.geom.label("geom"),
+                geo_func.ST_Dimension(np.geom).label("dim"),
+            )
+            .where(
+                np.kind == kind,
+                np.name.is_not_distinct_from(anchor_name),
+                geo_func.ST_DWithin(
+                    cast(np.geom, Geography),
+                    cast(anchor_geom, Geography),
+                    OVERLAY_CLUSTER_RADIUS_M,
+                ),
+            )
+            .cte("cluster")
+        )
+        # Keep only the richest-dimension members (polygons over a coincident
+        # alias point, etc.). ST_Union (not ST_Collect) dissolves them into a
+        # homogeneous Polygon/MultiPolygon (or Line) — ST_Collect would emit a
+        # GeometryCollection when mixing POLYGON + MULTIPOLYGON rows (ALKIS
+        # footprints are a mix), which the frontend can't classify.
+        max_dim = select(func.max(cluster.c.dim)).scalar_subquery()
         geojson_expr = geo_func.ST_AsGeoJSON(
-            geo_func.ST_SimplifyPreserveTopology(np.geom, OVERLAY_SIMPLIFY_TOLERANCE),
+            geo_func.ST_SimplifyPreserveTopology(
+                geo_func.ST_Union(cluster.c.geom), OVERLAY_SIMPLIFY_TOLERANCE
+            ),
             OVERLAY_COORD_DIGITS,
         )
-        stmt = (
-            select(np.name, geojson_expr.label("geojson"))
-            .where(np.kind == kind, np.src_id == src_id)
-            .limit(1)
+        stmt = select(anchor_name.label("name"), geojson_expr.label("geojson")).where(
+            cluster.c.dim == max_dim
         )
         row = (await self.db.execute(stmt)).first()
         if row is None or row.geojson is None:

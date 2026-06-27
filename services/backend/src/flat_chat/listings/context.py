@@ -169,6 +169,17 @@ OverlayOrigin = Literal["search", "pinned"]
 OVERLAY_SIMPLIFY_TOLERANCE = 0.00005
 OVERLAY_COORD_DIGITS = 5
 
+# When a named place is fragmented into many identically-named footprints (e.g.
+# a university campus stored as one ALKIS building per row, all named
+# "Technische Universität Berlin"), drawing one row looks arbitrary. The overlay
+# resolver unions every SAME-kind, SAME-name footprint within this radius of the
+# resolved hit into one shape — the *local* cluster only, so a distant same-name
+# cluster elsewhere in the city is excluded. Exact-name (not fuzzy) is
+# deliberate: within a campus radius sit unrelated neighbours ("UdK Berlin",
+# theatres, an embassy) that a similarity floor would wrongly swallow. A
+# unique-named place unions to itself (no-op). Metres.
+OVERLAY_CLUSTER_RADIUS_M = 500
+
 
 class MapOverlay(BaseModel):
     """One geometry drawn on the map, mirrored to the frontend via SessionState.
