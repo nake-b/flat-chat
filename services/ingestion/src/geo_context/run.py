@@ -137,6 +137,9 @@ def _run_osm(osm_client: OverpassClient) -> tuple[int, int]:
         # via the YAML `extra` block; the append loader takes no extras).
         gdf = gdf.assign(source="osm")
         with engine.begin() as conn:
+            # Idempotent like the seed step: clear prior source='osm' rows so an
+            # OSM-only / --skip-wfs re-run (no ALKIS TRUNCATE) doesn't duplicate.
+            conn.execute(text("DELETE FROM landmarks WHERE source = 'osm'"))
             # `landmarks` is mixed-geometry (geometry(Geometry, 4326)).
             _write_append(conn, gdf, "landmarks", geom_type="Geometry")
         logger.info("OK osm → landmarks (%d rows appended)", len(gdf))

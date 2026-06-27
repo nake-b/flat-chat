@@ -230,7 +230,7 @@ def test_locate_place_no_match_returns_guidance():
         locate_place(_ctx_place(SessionState(), place), place_name="Nonexistent")
     )
     assert isinstance(out, str)
-    assert "No named place" in out
+    assert "No place named" in out
 
 
 # ---------------------------------------------------------------------------

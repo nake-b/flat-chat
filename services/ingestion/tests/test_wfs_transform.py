@@ -13,7 +13,7 @@ from shapely.geometry import Point
 
 from geo_context.transform.wfs import transform_wfs_layer
 
-_ALKIS_KEY = ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk")
+_ALKIS_KEY = ("alkis_gebaeude", "alkis_gebaeude:gebaeude")
 
 
 def _alkis_frame() -> gpd.GeoDataFrame:
