@@ -62,7 +62,7 @@ agent-compound-docs/decisions/ → Architecture decision records.
 
 ```bash
 docker compose up --build                                  # Start all services at http://localhost
-docker compose --profile ingestion run --rm ingestion      # silver.run (chains gold + platinum)
+docker compose --profile ingestion run --rm ingestion      # silver.run (transform geocodes missing coords, then chains gold + platinum)
 docker compose --profile geo-context run --rm geo-context  # WFS + GTFS (chains gold re-enrichment)
 docker compose --profile gold run --rm gold                # Standalone gold rebuild (no scraping)
 docker compose --profile platinum run --rm platinum        # Standalone re-embed

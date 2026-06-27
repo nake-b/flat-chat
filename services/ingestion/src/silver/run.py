@@ -13,7 +13,7 @@ import sys
 
 from db import get_session
 
-from .transformer import transform
+from .transformer import deduplicate, transform
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,15 @@ def main() -> int:
         logger.info("Silver: transforming bronze rows into listings ...")
         n = transform(session)
         logger.info("Silver: upserted %d rows into listings", n)
+
+        # Collapse reposted duplicates (same title + address, any source) down to
+        # one survivor before gold enriches them. Runs every time: bronze rows
+        # survive a delete and transform reprocesses all of bronze, so a one-off
+        # cleanup wouldn't stick.
+        removed = deduplicate(session)
+        logger.info(
+            "Silver: removed %d duplicate listings (same title+address)", removed
+        )
     finally:
         session.close()
 
