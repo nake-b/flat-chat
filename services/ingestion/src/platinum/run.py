@@ -55,9 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             embedded, skipped = platinum.embed_pending(
                 conn, reembed=args.reembed, since=args.since
             )
-        logger.info(
-            "platinum: %d embedded, %d skipped (no text)", embedded, skipped
-        )
+        logger.info("platinum: %d embedded, %d skipped (no text)", embedded, skipped)
         return 0
     except Exception:
         logger.error(

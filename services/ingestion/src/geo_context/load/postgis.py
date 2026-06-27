@@ -40,6 +40,7 @@ def _safe_ident(name: str) -> str:
         raise ValueError(f"unsafe SQL identifier: {name!r}")
     return name
 
+
 _GEOM_KIND_BY_TYPE: dict[str, str] = {
     "Point": "POINT",
     "MultiPoint": "MULTIPOINT",
@@ -110,8 +111,7 @@ def to_pg_array(values: Any, *, kind: str) -> str | None:
     if kind == "text":
         # Quote and escape backslashes + double-quotes per Postgres array rules.
         escaped = [
-            '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
-            for v in values
+            '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"' for v in values
         ]
         return "{" + ",".join(escaped) + "}"
     raise ValueError(f"unsupported kind: {kind!r}")

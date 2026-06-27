@@ -18,7 +18,7 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     # schulen  (Berliner Schulverzeichnis)
     # ---------------------------------------------------------------------
     ("schulen", "schulen"): {
-        "bsn": "school_number",      # Berliner Schulnummer
+        "bsn": "school_number",  # Berliner Schulnummer
         "schulname": "name",
         "schulart": "school_type",
         "traeger": "operator",
@@ -38,7 +38,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "bez": "school_number",
         "bezname": "school_name",
     },
-
     # ---------------------------------------------------------------------
     # ua_einwohnerdichte_2025  (Einwohnerdichte – population density)
     # ---------------------------------------------------------------------
@@ -59,7 +58,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "typklar": "area_type",
         "etypklar": "area_type_en",
     },
-
     # ---------------------------------------------------------------------
     # ua_stratlaerm_2022  (strategic noise map)
     # Source x/y columns are explicitly dropped — redundant with Point geom.
@@ -77,7 +75,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "ges_den": "noise_total_lden",
         "ges_n": "noise_total_lnight",
     },
-
     # ---------------------------------------------------------------------
     # ua_gruenvolumen_2020  (3D vegetation volume from LiDAR)
     # ---------------------------------------------------------------------
@@ -107,7 +104,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "egrz_name": "block_type_name_en",
         "etypklar": "area_class_name_en",
     },
-
     # ---------------------------------------------------------------------
     # gruenanlagen  (parks + playgrounds share most of the schema)
     # ---------------------------------------------------------------------
@@ -142,7 +138,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "planname": "plan_name",
         "nettospfl": "play_area_m2",
     },
-
     # ---------------------------------------------------------------------
     # krankenhaeuser  (both layers feed one `hospitals` table; the `tier`
     # column is set by the orchestrator from the YAML `extra.tier` field).
@@ -169,7 +164,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "betten": "total_beds",
         "fachabteilungen": "departments",
     },
-
     # ---------------------------------------------------------------------
     # behindertenparkplaetze  (disabled parking)
     # Source gps_lat/gps_lon dropped — redundant with the projected geom.
@@ -186,7 +180,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "ortsteil": "neighborhood",
         "datum": "recorded_date",
     },
-
     # ---------------------------------------------------------------------
     # kitas  (Kindertagesstätten — day-care centres, points)
     # NOTE: column names below mirror the published kita WFS schema; verify
@@ -203,7 +196,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "e_tel": "phone",
         "e_web": "website",
     },
-
     # ---------------------------------------------------------------------
     # alkis_gebaeude  (named building footprints → landmarks; source='alkis',
     # category='building' injected via YAML `extra`). Keep named-only: the
@@ -213,7 +205,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "nam": "name",
         "bezeich": "description",
     },
-
     # ---------------------------------------------------------------------
     # alkis_bezirke  (borough boundary polygons)
     # CRITICAL: features carry NO `nam`. `name` is a numeric borough ID and
@@ -224,14 +215,12 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "namgem": "name",
         "name": "bezirk_id",
     },
-
     # ---------------------------------------------------------------------
     # alkis_ortsteile  (locality boundary polygons) — `nam` is the label here.
     # ---------------------------------------------------------------------
     ("alkis_ortsteile", "alkis_ortsteile:ortsteile"): {
         "nam": "name",
     },
-
     # ---------------------------------------------------------------------
     # umweltzone  (low-emission zone ≈ S-Bahn ring → inner_city_zone)
     # Single feature; only the geometry matters. `nam` aliased if present so
@@ -240,7 +229,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     ("umweltzone", "umweltzone:umweltzone"): {
         "nam": "name",
     },
-
     # ---------------------------------------------------------------------
     # gewaesserkarte  (water bodies — surface polygons)
     # ---------------------------------------------------------------------

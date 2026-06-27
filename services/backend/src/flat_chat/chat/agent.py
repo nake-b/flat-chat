@@ -75,7 +75,7 @@ def _city_center_block() -> str:
         '"central", "Innenstadt", or "Zentrum", treat it as INSIDE THE S-BAHN\n'
         "RING (pass `inside_ring=true` to `search_apartments`) AND briefly explain\n"
         "— the first time only — why you mapped their words to the ring (they are\n"
-        "likely new to Berlin). BUT if the user explicitly says \"ring\",\n"
+        'likely new to Berlin). BUT if the user explicitly says "ring",\n'
         '"S-Bahn-Ring", or "Ringbahn", just apply `inside_ring=true` SILENTLY —\n'
         "they already know what the ring is; do NOT add the explanation.",
     )

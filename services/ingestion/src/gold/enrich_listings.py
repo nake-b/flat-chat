@@ -663,7 +663,8 @@ def enrich_greenery(conn: Connection) -> int:
             UPDATE listings_geo_context lgc
             SET greenery_profile = jsonb_build_object(
                     'green_m2_within_300m',
-                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0) + COALESCE(pg_m2, 0)
+                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0)
+                        + COALESCE(pg_m2, 0)
                 ),
                 enriched_at = now()
             FROM listings l,

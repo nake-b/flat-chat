@@ -64,7 +64,9 @@ def transform_wfs_layer(
     # 1. Project — silver is always EPSG:4326 for cross-table joinability.
     if gdf.crs is None:
         raise ValueError(f"{dataset}/{layer}: GeoDataFrame has no CRS set")
-    projected = gdf.to_crs(epsg=SILVER_SRID) if gdf.crs.to_epsg() != SILVER_SRID else gdf
+    projected = (
+        gdf.to_crs(epsg=SILVER_SRID) if gdf.crs.to_epsg() != SILVER_SRID else gdf
+    )
 
     # Repair self-intersecting / invalid polygons via shapely make_valid.
     # No-op for geometries that are already valid. PostGIS would otherwise
@@ -77,7 +79,11 @@ def transform_wfs_layer(
         projected = projected.assign(
             **{
                 projected.geometry.name: projected.geometry.apply(
-                    lambda g: make_valid(g) if isinstance(g, BaseGeometry) and not g.is_valid else g
+                    lambda g: (
+                        make_valid(g)
+                        if isinstance(g, BaseGeometry) and not g.is_valid
+                        else g
+                    )
                 )
             }
         )
@@ -88,8 +94,13 @@ def transform_wfs_layer(
     keep_cols = [c for c in projected.columns if c in rename_map or c == geom_col]
     dropped = [c for c in projected.columns if c not in keep_cols]
     if dropped:
-        logger.debug("%s/%s: dropping %d unaliased columns: %s",
-                     dataset, layer, len(dropped), dropped)
+        logger.debug(
+            "%s/%s: dropping %d unaliased columns: %s",
+            dataset,
+            layer,
+            len(dropped),
+            dropped,
+        )
 
     renamed = projected[keep_cols].rename(columns=rename_map)
 
@@ -114,7 +125,9 @@ def transform_wfs_layer(
         if dropped_unnamed:
             logger.info(
                 "%s/%s: dropped %d unnamed rows (named-only layer)",
-                dataset, layer, dropped_unnamed,
+                dataset,
+                layer,
+                dropped_unnamed,
             )
 
     # 5. Coerce whole-number float columns to nullable Int64. pandas turns

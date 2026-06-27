@@ -164,9 +164,7 @@ class BerlinGdiWfsClient:
             )
             if page_n == 0:
                 return
-            page_gdf = gpd.GeoDataFrame.from_features(
-                features, crs=f"EPSG:{src_crs}"
-            )
+            page_gdf = gpd.GeoDataFrame.from_features(features, crs=f"EPSG:{src_crs}")
             yield page_gdf
             seen_total += page_n
             if seen_total >= self.MAX_FEATURES:

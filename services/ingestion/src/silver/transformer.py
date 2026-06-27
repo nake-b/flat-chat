@@ -56,7 +56,9 @@ def transform(session: Session) -> int:
             values["location"] = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
 
         stmt = pg_insert(listings).values(**values)
-        update_set = {k: v for k, v in values.items() if k not in ("source_name", "external_id")}
+        update_set = {
+            k: v for k, v in values.items() if k not in ("source_name", "external_id")
+        }
         stmt = stmt.on_conflict_do_update(
             constraint="uq_listing_source_external",
             set_=update_set,

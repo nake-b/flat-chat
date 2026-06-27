@@ -6,13 +6,23 @@ These functions are pure — no DB, no IO — and safe to unit-test.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
 GERMAN_MONTHS = {
-    "januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4,
-    "mai": 5, "juni": 6, "juli": 7, "august": 8, "september": 9,
-    "oktober": 10, "november": 11, "dezember": 12,
+    "januar": 1,
+    "februar": 2,
+    "märz": 3,
+    "maerz": 3,
+    "april": 4,
+    "mai": 5,
+    "juni": 6,
+    "juli": 7,
+    "august": 8,
+    "september": 9,
+    "oktober": 10,
+    "november": 11,
+    "dezember": 12,
 }
 
 
@@ -91,7 +101,8 @@ def parse_postal_district(locality: str | None) -> tuple[str | None, str | None]
 
 
 def parse_floor_label(label: str | None) -> int | None:
-    """'5. OG' -> 5, 'EG'/'Erdgeschoss' -> 0, 'höher als 5. OG' -> None, 'Tiefparterre' -> -1."""
+    """'5. OG' -> 5, 'EG'/'Erdgeschoss' -> 0, 'höher als 5. OG' -> None,
+    'Tiefparterre' -> -1."""
     if not label:
         return None
     s = label.strip().lower()
@@ -133,7 +144,18 @@ def parse_energy_label(label: str) -> dict:
             out["energy_pass_type"] = "Bedarfsausweis"
         elif "verbrauchsausweis" in pl:
             out["energy_pass_type"] = "Verbrauchsausweis"
-        elif pl in {"gas", "öl", "oel", "strom", "fernwärme", "fernwaerme", "kohle", "holz", "pellets", "solar"}:
+        elif pl in {
+            "gas",
+            "öl",
+            "oel",
+            "strom",
+            "fernwärme",
+            "fernwaerme",
+            "kohle",
+            "holz",
+            "pellets",
+            "solar",
+        }:
             out["main_energy_source"] = part.title()
         m = _BAUJAHR_RE.search(part)
         if m:
@@ -203,7 +225,7 @@ def clean_berlin_coords(
     try:
         lat_f = float(lat)
         lng_f = float(lng)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None, None
     if not (_BERLIN_LAT_MIN <= lat_f <= _BERLIN_LAT_MAX):
         return None, None
