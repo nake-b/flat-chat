@@ -16,16 +16,19 @@ src/
     UiState.ts            → Compat re-export of SessionState (existing imports keep working)
     conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
     toolStatus.ts         → Tool-name → status-pill label registry
+    overlayStyles.ts      → Map-overlay APPEARANCE registry: (kind, geometry type) → paint
+                            (frontend owns colors/opacity; backend sends semantics only)
     cardCache.ts          → zustand store of lazily-hydrated tier-2 ListingCards (by id)
   hooks/
-    useSessionState.ts    → CANONICAL. useCoAgent<SessionState> + activate() helper
+    useSessionState.ts    → CANONICAL. useCoAgent<SessionState> + activate() + dismissOverlay()
     useUiState.ts         → Compat re-export of useSessionState
     useHover.ts           → zustand store for client-local hover state
   api/
     session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
     ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
-    ChatPane.tsx, MapPane.tsx, CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
+    ChatPane.tsx, MapPane.tsx (incl. OverlayLayer), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
+    OverlayLegend.tsx     → chips for drawn map_overlays, each with × dismiss
 ```
 
 ## Reload recovery + New conversation

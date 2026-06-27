@@ -16,8 +16,11 @@ src/flat_chat/
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(toolsets=[toolset], instructions=...)
-                          tools.py        FunctionToolset[ChatDeps]
+                          agent.py        Agent(toolsets=[StateEmittingToolset(toolset)], ...)
+                          tools.py        FunctionToolset[ChatDeps] (search/open/page/
+                                          locate_place/show_on_map/clear_map_overlays)
+                          state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
+                                          on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
                           state.py        ChatSession (+ user_id) + ChatDeps
@@ -29,7 +32,10 @@ src/flat_chat/
                           models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total)
-                          places.py       PlaceService — locate_place trigram lookup over world.named_places
+                          places.py       PlaceService — locate_place trigram lookup +
+                                          overlay_geometry (named_places → GeoJSON)
+                          transit_routes.py TransitRouteService — line name → route-shape
+                                          GeoJSON (overlay display only; NOT the transit filter)
                           schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.

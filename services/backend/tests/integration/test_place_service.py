@@ -120,3 +120,70 @@ def test_locate_no_match_returns_empty(async_db_url):
         return await PlaceService(session).locate("zzzzx-no-such-place-qqqq")
 
     assert _run(async_db_url, body) == []
+
+
+# ---------------------------------------------------------------------------
+# overlay_geometry — resolve a place_ref to drawable GeoJSON (the map-overlay
+# read path). Executes against PostGIS: ST_AsGeoJSON + ST_SimplifyPreserveTopology
+# only exist there, and the kind+src_id prune through the named_places view is
+# the same shape SearchService uses for ST_DWithin.
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_geometry_returns_simplified_geojson(async_db_url):
+    """A seeded LINESTRING landmark (the Spree) resolves to a MapOverlay whose
+    geojson is a GeoJSON LineString; kind='place', label=the name."""
+
+    async def body(session: AsyncSession):
+        landmark_id = await session.scalar(
+            sa.text(
+                "INSERT INTO world.landmarks (name, source, category, geom) "
+                "VALUES ('Spree', 'osm', 'river', "
+                "ST_SetSRID(ST_GeomFromText(:wkt), 4326)) RETURNING id"
+            ),
+            {"wkt": "LINESTRING(13.30 52.50, 13.40 52.51, 13.50 52.50)"},
+        )
+        overlay = await PlaceService(session).overlay_geometry(
+            f"landmark:{landmark_id}", origin="pinned"
+        )
+        return overlay
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.kind == "place"
+    assert overlay.label == "Spree"
+    assert overlay.origin == "pinned"
+    assert overlay.id == overlay.id  # stable id round-trips
+    assert overlay.geojson["type"] == "LineString"
+    assert len(overlay.geojson["coordinates"]) >= 2
+
+
+def test_overlay_geometry_defaults_to_search_origin(async_db_url):
+    async def body(session: AsyncSession):
+        poly = "POLYGON((13.33 52.51, 13.36 52.51, 13.35 52.52, 13.33 52.51))"
+        landmark_id = await session.scalar(
+            sa.text(
+                "INSERT INTO world.landmarks (name, source, category, geom) "
+                "VALUES ('Tiergarten', 'osm', 'park', "
+                "ST_SetSRID(ST_GeomFromText(:wkt), 4326)) RETURNING id"
+            ),
+            {"wkt": poly},
+        )
+        return await PlaceService(session).overlay_geometry(f"landmark:{landmark_id}")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.origin == "search"
+    assert overlay.geojson["type"] == "Polygon"
+
+
+def test_overlay_geometry_unknown_ref_returns_none(async_db_url):
+    async def body(session: AsyncSession):
+        svc = PlaceService(session)
+        garbage = await svc.overlay_geometry("not-a-real-ref")
+        missing = await svc.overlay_geometry("landmark:999999999")
+        return garbage, missing
+
+    garbage, missing = _run(async_db_url, body)
+    assert garbage is None  # malformed token fails closed
+    assert missing is None  # valid format, nonexistent id
