@@ -71,12 +71,13 @@ def _city_center_block() -> str:
     return xml_block(
         "city_center",
         "Berlin has NO single city centre — it is polycentric (Mitte, City West\n"
-        'around Zoo, and several Kiez hubs). So when the user says "city center",\n'
+        'around Zoo, and several Kiez hubs). When the user says "city center",\n'
         '"central", "Innenstadt", or "Zentrum", treat it as INSIDE THE S-BAHN\n'
-        "RING (pass `inside_ring=true` to `search_apartments`) — the ring is the\n"
-        "closest thing Berlin has to a centre. Briefly explain this the first\n"
-        "time it comes up so the user understands why you mapped their words to\n"
-        "the ring rather than one neighbourhood.",
+        "RING (pass `inside_ring=true` to `search_apartments`) AND briefly explain\n"
+        "— the first time only — why you mapped their words to the ring (they are\n"
+        "likely new to Berlin). BUT if the user explicitly says \"ring\",\n"
+        '"S-Bahn-Ring", or "Ringbahn", just apply `inside_ring=true` SILENTLY —\n'
+        "they already know what the ring is; do NOT add the explanation.",
     )
 
 

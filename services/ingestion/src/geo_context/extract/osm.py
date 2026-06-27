@@ -56,7 +56,10 @@ _BERLIN_AREA_ID = 3_600_000_000 + _BERLIN_RELATION_ID
 # per entry across nodes / ways / relations.
 _TAG_CATEGORIES: dict[tuple[str, str], str] = {
     ("historic", "monument"): "monument",
-    ("historic", "memorial"): "memorial",
+    # NOTE: historic=memorial intentionally excluded — in Berlin it is ~99%
+    # Stolpersteine (named after individual Holocaust victims), which are both
+    # noise for an apartment search and tasteless to surface as "nearby
+    # landmarks". Iconic memorials (Holocaust-Mahnmal, …) come via tourism=attraction.
     ("man_made", "tower"): "tower",
     ("man_made", "bridge"): "bridge",
     ("tourism", "attraction"): "attraction",
