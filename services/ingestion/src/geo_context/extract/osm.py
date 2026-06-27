@@ -179,9 +179,16 @@ class OverpassClient:
         attempt so a real bug surfaces immediately instead of being masked by
         backoff.
         """
+        # Overpass rejects the default python-requests User-Agent with HTTP 406
+        # Not Acceptable. A descriptive UA (also Overpass etiquette) + explicit
+        # JSON Accept are required.
         resp = requests.post(
             self.url,
             data={"data": query},
+            headers={
+                "User-Agent": "flat-chat-geo-context/1.0 (Berlin apartment search ETL)",
+                "Accept": "application/json",
+            },
             timeout=self.http_timeout_s,
         )
         if resp.status_code in _RETRYABLE_STATUS:
