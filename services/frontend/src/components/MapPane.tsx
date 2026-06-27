@@ -12,6 +12,13 @@ import type { FeatureCollection, Point } from "geojson";
 import { useSessionState } from "../hooks/useSessionState";
 import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
+import {
+  REFRAME_MAX_ZOOM,
+  REFRAME_MS,
+  fractionInside,
+  markersBBox,
+  shouldReframe,
+} from "./mapCamera";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -173,10 +180,11 @@ const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
 };
 
 // The apartment pin — a single clean teardrop, recoloured by state. No glow
-// layer (it read as a muddy blob); selection is conveyed by colour: default
-// grey, hover red, selected the brand red. A crisp white halo outlines every
-// pin for legibility against the map, thicker on the selected one. Same layer
-// id ("unclustered-point") as the old circle so click/hover wiring +
+// layer (it read as a muddy blob); default grey, hover red. A crisp white halo
+// outlines every pin for legibility against the map. The SELECTED listing is
+// NOT styled here — it gets its own always-on-top pin (ACTIVE_PIN_LAYER) so it
+// shows even when this layer's feature is swallowed by a cluster. Same layer id
+// ("unclustered-point") as the old circle so click/hover wiring +
 // interactiveLayerIds need no change.
 const PIN_LAYER: SymbolLayerSpecification = {
   id: "unclustered-point",
@@ -193,22 +201,61 @@ const PIN_LAYER: SymbolLayerSpecification = {
   paint: {
     "icon-color": [
       "case",
-      ["boolean", ["feature-state", "active"], false],
-      RED,
       ["boolean", ["feature-state", "hover"], false],
       RED,
       GREY,
     ],
     "icon-halo-color": "#ffffff",
-    "icon-halo-width": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      2.5,
-      1.2,
-    ],
+    "icon-halo-width": 1.2,
     "icon-color-transition": { duration: 140, delay: 0 },
   },
 };
+
+// The SELECTED listing's pin — its own single-feature, UNCLUSTERED source drawn
+// on top of everything. This is what fixes "selecting a listing shows the
+// cluster bubble, not a pin": the clustered `unclustered-point` layer has no
+// feature to highlight when the selection sits inside a cluster, so we render
+// the active one separately. Bigger + brand-red + thicker halo so it reads as
+// the focus, floating above any cluster it overlaps. Purely visual — kept OUT
+// of interactiveLayerIds so clicks fall through to the cluster/point beneath.
+const ACTIVE_PIN_LAYER: SymbolLayerSpecification = {
+  id: "active-point",
+  type: "symbol",
+  source: "active-apartment",
+  layout: {
+    "icon-image": PIN_IMAGE_ID,
+    "icon-anchor": "bottom",
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-size": 1.6,
+  },
+  paint: {
+    "icon-color": RED,
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": 2.5,
+  },
+};
+
+// How long the marker/cluster layers fade in when a new result set lands (ms).
+const FADE_MS = 320;
+
+// Resolve the [lng, lat] for the selected listing: prefer its marker in the
+// active result set, fall back to the tier-3 detail blob (covers an agent
+// open_listing for an id outside the current results). Shared by the pan
+// effect and the active-pin overlay so they always agree on the location.
+function resolveActiveCenter(
+  activeId: string | null,
+  coordsById: Map<string, [number, number]>,
+  detail: { latitude: number | null; longitude: number | null } | null | undefined,
+): [number, number] | null {
+  if (!activeId) return null;
+  const fromMarkers = coordsById.get(activeId);
+  if (fromMarkers) return fromMarkers;
+  if (detail && detail.latitude != null && detail.longitude != null) {
+    return [detail.longitude, detail.latitude];
+  }
+  return null;
+}
 
 export function MapPane() {
   // Click + hover handlers live at the MapLibreMap level so we use
@@ -341,8 +388,28 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
   // first-paint/hydration window before the mirror effect runs.
   const activeId = clientActiveId ?? state?.active_id ?? null;
 
+  // The decoded result set — the single source for the geojson, the id→coord
+  // lookup, and the result-set fingerprint below. (decodeMarkers is cheap, but
+  // doing it once keeps the three derivations in lockstep.)
+  const markers = useMemo(
+    () => decodeMarkers(state?.result_markers),
+    [state?.result_markers],
+  );
+
+  // Cheap, stable fingerprint of the result set: length + first/last id. A new
+  // search yields a different signature; the same set echoed across turns keeps
+  // the same one even though `result_markers` is a fresh reference each
+  // snapshot. Drives the fade + reframe so they fire on a genuine new result
+  // set, not on every state delta (and NOT on pagination, which leaves
+  // `result_markers` untouched). Mirrors CardStrip's markersSig.
+  const markersSig = useMemo(
+    () =>
+      `${markers.length}:${markers[0]?.id ?? ""}:${markers[markers.length - 1]?.id ?? ""}`,
+    [markers],
+  );
+
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
-    const features = decodeMarkers(state?.result_markers).map((m) => ({
+    const features = markers.map((m) => ({
       type: "Feature" as const,
       id: m.id,
       geometry: { type: "Point" as const, coordinates: [m.lng, m.lat] },
@@ -352,20 +419,44 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
       },
     }));
     return { type: "FeatureCollection", features };
-  }, [state?.result_markers]);
+  }, [markers]);
 
   // id → [lng, lat] for the active result set, so a card/pin click can pan
   // the map to the selected listing.
   const coordsById = useMemo(() => {
     const m = new Map<string, [number, number]>();
-    for (const mk of decodeMarkers(state?.result_markers)) {
+    for (const mk of markers) {
       m.set(mk.id, [mk.lng, mk.lat]);
     }
     return m;
-  }, [state?.result_markers]);
+  }, [markers]);
+
+  // Single-feature collection for the always-on-top active pin. Empty when
+  // nothing is selected (or its location can't be resolved yet).
+  const activeGeojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
+    const center = resolveActiveCenter(
+      activeId,
+      coordsById,
+      state?.active_listing_detail,
+    );
+    if (!activeId || !center) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    return {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          id: activeId,
+          geometry: { type: "Point", coordinates: center },
+          properties: { id: activeId, price_warm_eur: null },
+        },
+      ],
+    };
+  }, [activeId, coordsById, state?.active_listing_detail]);
 
   // Pan (and gently zoom in only when far out) to the active listing whenever
-  // the selection changes. Highlight is handled by the feature-state effect.
+  // the selection changes. The highlight is the dedicated active-pin layer.
   useEffect(() => {
     if (!activeId) {
       lastPannedId.current = null; // allow re-pan if the same id is re-selected
@@ -374,13 +465,11 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     if (activeId === lastPannedId.current) return;
     const m = map;
     if (!m) return;
-    let center = coordsById.get(activeId);
-    if (!center) {
-      const d = state?.active_listing_detail;
-      if (d && d.latitude != null && d.longitude != null) {
-        center = [d.longitude, d.latitude];
-      }
-    }
+    const center = resolveActiveCenter(
+      activeId,
+      coordsById,
+      state?.active_listing_detail,
+    );
     if (!center) return;
     lastPannedId.current = activeId;
     const opts: { center: [number, number]; duration: number; zoom?: number } = {
@@ -391,42 +480,124 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     m.easeTo(opts);
   }, [map, activeId, state?.active_listing_detail, coordsById]);
 
-  // Drive hover + active visual state by setFeatureState. Track which ids
-  // we touched last frame so we can clean them up — feature-state persists
-  // until explicitly reset.
+  // Drive HOVER visual state by setFeatureState. (Active selection is rendered
+  // by the dedicated active-pin layer, not feature-state, so it shows even when
+  // clustered.) Track the id we touched last frame so we can clean it up —
+  // feature-state persists until explicitly reset.
   useEffect(() => {
     const m = map;
     if (!m) return;
     const src = "apartments";
-    const next = new Set<string>();
-    if (hoverId) next.add(hoverId);
-    if (activeId) next.add(activeId);
-    for (const id of lastFeatureStateIds.current) {
-      if (!next.has(id)) {
-        m.removeFeatureState({ source: src, id });
-      }
+    const prev = lastFeatureStateIds.current;
+    for (const id of prev) {
+      if (id !== hoverId) m.removeFeatureState({ source: src, id });
     }
-    if (hoverId) m.setFeatureState({ source: src, id: hoverId }, { hover: true });
-    if (activeId) {
-      m.setFeatureState({ source: src, id: activeId }, { active: true });
+    const next = new Set<string>();
+    if (hoverId) {
+      m.setFeatureState({ source: src, id: hoverId }, { hover: true });
+      next.add(hoverId);
     }
     lastFeatureStateIds.current = next;
-  }, [map, hoverId, activeId, state?.result_markers]);
+  }, [map, hoverId, state?.result_markers]);
+
+  // New result set → fade the marker + cluster layers in, and reframe the
+  // camera if warranted. Both fire on `markersSig` (a genuine new/refined set),
+  // skipping the first mount. The reframe rule lives in mapCamera.shouldReframe.
+  const didMountResults = useRef(false);
+  useEffect(() => {
+    const m = map;
+    if (!m) return;
+    if (!didMountResults.current) {
+      didMountResults.current = true;
+      return; // first paint: no fade / no reframe
+    }
+
+    // ── Fade-in: kill the transition, snap each layer's opacity to 0, then on
+    // the next frame restore the target with a transition. The layers persist
+    // across the data swap, so the paint transition animates the new features.
+    const fades: Array<[string, string, number]> = [
+      ["unclustered-point", "icon-opacity", 1],
+      ["clusters", "circle-opacity", 0.92],
+      ["cluster-count", "text-opacity", 1],
+    ];
+    for (const [layer, prop] of fades) {
+      if (!m.getLayer(layer)) continue;
+      m.setPaintProperty(layer, `${prop}-transition`, { duration: 0, delay: 0 });
+      m.setPaintProperty(layer, prop, 0);
+    }
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        for (const [layer, prop, target] of fades) {
+          if (!m.getLayer(layer)) continue;
+          m.setPaintProperty(layer, `${prop}-transition`, {
+            duration: FADE_MS,
+            delay: 0,
+          });
+          m.setPaintProperty(layer, prop, target);
+        }
+      }),
+    );
+
+    // ── Reframe (gated): never while a listing is selected; otherwise when
+    // zoomed out or the results aren't on screen. See mapCamera.shouldReframe.
+    const bbox = markersBBox(markers);
+    if (bbox) {
+      const b = m.getBounds();
+      const fractionInView = fractionInside(markers, {
+        west: b.getWest(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        north: b.getNorth(),
+      });
+      if (
+        shouldReframe({
+          zoom: m.getZoom(),
+          fractionInView,
+          // Read the authoritative snapshot field, NOT the `activeId` mirror —
+          // the hover-store mirror lags one render behind a state delta, so on
+          // the commit where new markers arrive it still holds the OLD
+          // selection and would wrongly suppress the reframe. `state.active_id`
+          // is correct in this same snapshot (a new search clears it; an agent
+          // open_listing in the same turn sets it → then we DO defer to it).
+          hasActiveSelection: !!state?.active_id,
+          markerCount: markers.length,
+        })
+      ) {
+        m.fitBounds(bbox, {
+          padding: 60,
+          maxZoom: REFRAME_MAX_ZOOM,
+          duration: REFRAME_MS,
+        });
+      }
+    }
+
+    return () => cancelAnimationFrame(raf);
+    // Keyed on markersSig (the result-set fingerprint), not `markers` identity,
+    // so it fires once per genuine change. activeId is read but intentionally
+    // not a dep — we want the selection state AT result-change time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, markersSig]);
 
   return (
-    <Source
-      id="apartments"
-      type="geojson"
-      data={geojson}
-      cluster
-      clusterRadius={50}
-      clusterMaxZoom={14}
-      promoteId="id"
-    >
-      <Layer {...CLUSTER_LAYER} />
-      <Layer {...CLUSTER_COUNT_LAYER} />
-      <Layer {...PIN_LAYER} />
-    </Source>
+    <>
+      <Source
+        id="apartments"
+        type="geojson"
+        data={geojson}
+        cluster
+        clusterRadius={50}
+        clusterMaxZoom={14}
+        promoteId="id"
+      >
+        <Layer {...CLUSTER_LAYER} />
+        <Layer {...CLUSTER_COUNT_LAYER} />
+        <Layer {...PIN_LAYER} />
+      </Source>
+      {/* Declared after the clustered source so the active pin draws on top. */}
+      <Source id="active-apartment" type="geojson" data={activeGeojson}>
+        <Layer {...ACTIVE_PIN_LAYER} />
+      </Source>
+    </>
   );
 }
 
