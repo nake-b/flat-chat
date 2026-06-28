@@ -418,9 +418,7 @@ def _map_overlays_line(state: SessionState) -> str:
     needs the filter dropped, not just hidden, to stay gone."""
     if not state.map_overlays:
         return ""
-    drawn = ", ".join(
-        f"{o.label} ({o.kind}, {o.origin})" for o in state.map_overlays
-    )
+    drawn = ", ".join(f"{o.label} ({o.kind}, {o.origin})" for o in state.map_overlays)
     return f"  {xml_inline('map_overlays', drawn)}"
 
 
