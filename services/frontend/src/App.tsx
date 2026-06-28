@@ -79,19 +79,32 @@ function App({
     [conversationId, removeOptimistically, refetch, onNewConversation],
   );
 
-  // Layout heights — when the bookmark sidebar is open, the card strip
-  // collapses and the map expands to fill the freed space. The
-  // `transition-[height]` class on the two sections smoothly interpolates
-  // between the two states. MapLibre's internal ResizeObserver keeps the GL
-  // canvas in sync during the transition.
-  const mapPct = bookmarkOpen ? 100 : TOP_PCT;
-  const stripPct = bookmarkOpen ? 0 : 100 - TOP_PCT;
+  // Layout heights — the `transition-[height]` class on the two sections
+  // smoothly interpolates between states; MapLibre's ResizeObserver keeps the
+  // GL canvas in sync during the transition.
+  //   - Normal mode: map 70% / cards 30%.
+  //   - Bookmark mode, nothing selected: map 100% / cards 0% (strip collapsed,
+  //     map fills the column showing only bookmarked pins).
+  //   - Bookmark mode, a bookmark clicked: the bottom panel rises to show that
+  //     listing's CardDetail (images + full detail) while the map stays large
+  //     enough to show the panned-to pin.
+  const mapPct = bookmarkOpen ? (activeId ? 55 : 100) : TOP_PCT;
+  const stripPct = 100 - mapPct;
 
   return (
     <>
       <div className="grid h-screen w-screen grid-cols-[2fr_3fr] overflow-hidden bg-paper">
-        <aside className="overflow-hidden border-r border-paper-rule">
+        <aside className="relative overflow-hidden border-r border-paper-rule">
           <ChatPane />
+          <BookmarkSidebar
+            open={bookmarkOpen}
+            items={bookmarkItems}
+            status={bookmarkStatus}
+            activeId={activeId}
+            onClose={closeBookmarkSidebar}
+            onSelect={(id) => void activate(id)}
+            onRemove={(id) => void toggleBookmark(id)}
+          />
         </aside>
         <main className="relative h-full overflow-hidden bg-paper">
           <section
@@ -117,15 +130,6 @@ function App({
         onSwitch={onSwitchConversation}
         onNewChat={onNewConversation}
         onDelete={handleDelete}
-      />
-      <BookmarkSidebar
-        open={bookmarkOpen}
-        items={bookmarkItems}
-        status={bookmarkStatus}
-        activeId={activeId}
-        onClose={closeBookmarkSidebar}
-        onSelect={(id) => void activate(id)}
-        onRemove={(id) => void toggleBookmark(id)}
       />
     </>
   );

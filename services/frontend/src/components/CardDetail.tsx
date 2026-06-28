@@ -144,7 +144,7 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
             close();
           }
         }}
-        className="flex h-full flex-col bg-white focus:outline-none"
+        className="flex h-full flex-col bg-white animate-detail-rise focus:outline-none"
       >
         <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
           <div className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
@@ -183,7 +183,7 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           close();
         }
       }}
-      className="flex h-full flex-col overflow-y-auto bg-white focus:outline-none"
+      className="flex h-full flex-col overflow-y-auto bg-white animate-detail-rise focus:outline-none"
     >
       <header className="flex items-start justify-between gap-3 border-b-2 border-red px-7 pb-2.5 pt-2.5">
         <div className="min-w-0">

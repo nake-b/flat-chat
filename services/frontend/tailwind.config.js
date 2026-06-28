@@ -40,7 +40,19 @@ export default {
       transitionTimingFunction: {
         snap: "cubic-bezier(0.22, 0.61, 0.36, 1)",
       },
-    },
+      keyframes: {
+        // Detail-panel entrance — content eases up + fades in as the bottom
+        // panel reveals. Re-triggered per listing via a `key={activeId}` remount.
+        "detail-rise": {
+          "0%": { opacity: "0", transform: "translateY(16px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "detail-rise":
+          "detail-rise 360ms cubic-bezier(0.22, 0.61, 0.36, 1) both",
+      },
+},
   },
   plugins: [],
 };

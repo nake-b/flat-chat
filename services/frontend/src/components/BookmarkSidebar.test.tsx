@@ -130,7 +130,7 @@ describe("BookmarkSidebar", () => {
     expect(onSelect).toHaveBeenCalledWith("abc");
   });
 
-  it("clicking the remove-star calls onRemove and does NOT also fire onSelect", () => {
+  it("clicking the remove-star opens a confirm dialog without removing or selecting", () => {
     const onSelect = vi.fn();
     const onRemove = vi.fn();
     renderSidebar({
@@ -138,10 +138,28 @@ describe("BookmarkSidebar", () => {
       onSelect,
       onRemove,
     });
-    const star = screen.getByLabelText("Remove bookmark: Pick me");
-    fireEvent.click(star);
-    expect(onRemove).toHaveBeenCalledWith("abc");
+    fireEvent.click(screen.getByLabelText("Remove bookmark: Pick me"));
+    // Dialog is up; nothing removed/selected yet.
+    expect(screen.getByText(/Remove bookmark\?/i)).toBeTruthy();
+    expect(onRemove).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("confirming the dialog calls onRemove with the row id", () => {
+    const onRemove = vi.fn();
+    renderSidebar({ items: [card("abc", { title: "Pick me" })], onRemove });
+    fireEvent.click(screen.getByLabelText("Remove bookmark: Pick me"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(onRemove).toHaveBeenCalledWith("abc");
+  });
+
+  it("cancelling the dialog does NOT call onRemove and closes it", () => {
+    const onRemove = vi.fn();
+    renderSidebar({ items: [card("abc", { title: "Pick me" })], onRemove });
+    fireEvent.click(screen.getByLabelText("Remove bookmark: Pick me"));
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Remove bookmark\?/i)).toBeNull();
   });
 
   it("calls onClose when Escape is pressed while open", () => {
@@ -158,10 +176,33 @@ describe("BookmarkSidebar", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("calls onClose when the backdrop is clicked", () => {
-    const onClose = vi.fn();
-    renderSidebar({ onClose });
-    fireEvent.click(screen.getByTestId("bookmark-sidebar-backdrop"));
-    expect(onClose).toHaveBeenCalled();
+  it("does NOT render a screen-dimming backdrop", () => {
+    renderSidebar({ items: [card("a", { title: "Anything" })] });
+    expect(screen.queryByTestId("bookmark-sidebar-backdrop")).toBeNull();
   });
+
+  it("filters rows by the search query (title)", () => {
+    renderSidebar({
+      items: [
+        card("a", { title: "Sunny Kreuzberg loft" }),
+        card("b", { title: "Quiet Pankow studio" }),
+      ],
+    });
+    fireEvent.change(screen.getByLabelText(/search bookmarks/i), {
+      target: { value: "pankow" },
+    });
+    expect(screen.queryByText("Sunny Kreuzberg loft")).toBeNull();
+    expect(screen.getByText("Quiet Pankow studio")).toBeTruthy();
+  });
+
+  it("shows a 'No matches' state when the query matches nothing", () => {
+    renderSidebar({ items: [card("a", { title: "Sunny loft" })] });
+    fireEvent.change(screen.getByLabelText(/search bookmarks/i), {
+      target: { value: "zzzznope" },
+    });
+    expect(screen.getByText(/No matches/i)).toBeTruthy();
+    // Distinct from the zero-bookmarks state.
+    expect(screen.queryByText(/No bookmarks yet/i)).toBeNull();
+  });
+
 });

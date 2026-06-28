@@ -28,7 +28,7 @@ src/
     ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
     ConversationSidebar.tsx → slide-out left panel: + New chat + list of previous conversations
     ConversationSidebarItem.tsx → single sidebar row (title + relative timestamp + active highlight)
-    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → slide-out left panel for per-user bookmarks
+    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + detailed rows (click to pan + open detail)
     BookmarkStar.tsx → clickable star button (yellow-filled when bookmarked, outline otherwise)
     ChatPane.tsx, MapPane.tsx, CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
   hooks/
@@ -58,23 +58,57 @@ a clean remount (fresh state + empty chat). The backend is history-authoritative
 so the agent keeps context on resume even if the transcript restore is skipped.
 See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 
-## Bookmark sidebar (and bookmark mode)
+## Bookmark panel (and bookmark mode)
 
-`BookmarkSidebar.tsx` mirrors the conversation sidebar's slide-out skeleton
-(always-mounted aside, `data-open` transform, conditional backdrop sibling,
-Esc-to-close). Mutual exclusion with the conversation sidebar is wired in
-`App.tsx` via two `useEffect`s — opening one closes the other (avoids a
-circular zustand-import).
+`BookmarkSidebar.tsx` is a **full-cover panel that replaces the chat column**,
+not a thin slide-out. It's rendered INSIDE the chat-column `<aside>` in
+`App.tsx` (the `<aside>` is `relative`), so the panel is `absolute inset-0`,
+opaque (`bg-paper`), and covers ONLY the chat — there is **no backdrop** and
+nothing else on screen is dimmed. Always mounted; `data-open` drives the
+slide transform so close also animates. `ChatPane` stays mounted underneath
+(CopilotChat streaming/scroll survive). Esc and the panel's own `×` close it
+(the chat-header toggle button is hidden beneath the panel while open).
+Mutual exclusion with the conversation sidebar is wired in `App.tsx` via two
+`useEffect`s — opening one closes the other (avoids a circular zustand-import).
 
-While the bookmark sidebar is open the layout enters **bookmark mode**: the
-two right-column sections (`MapPane` + `CardsPane`) animate their heights
-from `70/30` to `100/0` via `transition-[height]`, so the card strip
-collapses and the map fills its space. The map's `ApartmentLayer` reads
-`useBookmarkSidebarOpen.open` and substitutes its marker source —
-`bookmarkCards` (from `useBookmarkList`) instead of `state.result_markers`
-— so only bookmarked pins render. The existing fade + camera reframe
-(keyed off `markersSig`) gives a free cross-fade and re-fit. Closing the
-sidebar restores `result_markers` and the card strip.
+The panel is a browsing surface: a **search box** filters rows client-side by
+title (falling back to district/bezirk/address so null-title listings are
+still findable) — rows-only, the map keeps all bookmarked pins. Each row
+(`BookmarkSidebarItem.tsx`) is a detailed card — large thumbnail, title,
+district, warm price, rooms·area, transit. Clicking anywhere on the row calls
+`onSelect(id)` → `activate(id)` (`useSessionState`), which pans the (visible,
+right-column) map via MapPane's `easeTo` effect and opens the detail panel; the
+panel stays open so the user keeps browsing. The row's remove star opens the
+shared `ConfirmDialog` ("Remove bookmark?") — the panel tracks a
+`pendingRemoveId` and only calls `onRemove` on confirm (same pattern as the
+conversation sidebar's delete). While the dialog is open the panel yields
+Escape to it (cancel) instead of closing.
+
+While the panel is open the layout enters **bookmark mode**, with the
+right-column heights (`App.tsx` `mapPct`/`stripPct`) driven by `bookmarkOpen`
++ `active_id`:
+- nothing selected → map `100` / cards `0` (strip collapsed, map fills the
+  column showing only bookmarked pins);
+- a bookmark row clicked → map `55` / cards `45`, so the bottom panel **rises**
+  to show that listing's `CardDetail` (images + full detail) while the map
+  stays large enough to show the panned-to pin.
+`transition-[height]` animates the reveal; the detail content additionally
+plays an `animate-detail-rise` entrance (keyframe in `tailwind.config.js`),
+re-triggered per listing via a `key={activeId}` remount of `CardDetail` in
+`CardsPane`. Clicking a row → `activate(id)` sets `active_id` (→ the height
+shift + the map's `easeTo` pan) and fetches tier-3 detail; the detail's
+"← back" / Esc calls `activate(null)`, collapsing the panel again.
+
+The map's `ApartmentLayer` reads `useBookmarkSidebarOpen.open` and substitutes
+its marker source — `bookmarkCards` (from `useBookmarkList`) instead of
+`state.result_markers` — so only bookmarked pins render. The existing fade +
+camera reframe (keyed off `markersSig`) gives a free cross-fade and re-fit.
+Closing the panel restores `result_markers` and the card strip.
+
+The chat-header tab button that opens the panel (`ChatPane.tsx`) is a
+**house outline with an amber star in the middle** (the house follows
+`currentColor` for hover; the star fill is hard-coded amber). Per-listing
+save controls stay plain stars (`BookmarkStar.tsx`, unchanged).
 
 Per-user bookmark state lives OUTSIDE `SessionState` (which is
 per-conversation) in `useBookmarks` — a zustand `Set<string>` hydrated once

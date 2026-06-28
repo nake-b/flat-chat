@@ -31,18 +31,18 @@ export function ChatPane() {
           aria-label="Open conversation list"
           aria-expanded={open}
           aria-controls="conversation-sidebar"
-          className="absolute left-4 top-5 flex h-7 w-7 items-center justify-center text-ink-soft transition-colors hover:text-red"
+          className="absolute left-4 top-5 flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
         >
           {/* Inline SVG — the rest of the components also use inline icons,
               no icon library is in package.json. */}
           <svg
             viewBox="0 0 20 20"
-            width="18"
-            height="18"
+            width="29"
+            height="29"
             aria-hidden
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.75"
+            strokeWidth="1.9"
             strokeLinecap="round"
           >
             <line x1="3" y1="6" x2="17" y2="6" />
@@ -56,15 +56,16 @@ export function ChatPane() {
           aria-label="Open bookmarks"
           aria-expanded={bookmarkOpen}
           aria-controls="bookmark-sidebar"
-          className="absolute left-12 top-5 flex h-7 w-7 items-center justify-center text-ink-soft transition-colors hover:text-amber-500"
+          className="absolute left-16 top-5 flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-amber-500"
         >
-          {/* Folder with a yellow star — bookmark tab affordance. Folder strokes
-              follow currentColor so hover still recolours them; the star fill
-              is hard-coded amber to stay yellow across hover states. */}
+          {/* House with a big yellow star in the middle — bookmark tab
+              affordance. House strokes follow currentColor so hover still
+              recolours them; the star fill is hard-coded yellow to stay bright
+              across hover states. */}
           <svg
             viewBox="0 0 20 20"
-            width="18"
-            height="18"
+            width="29"
+            height="29"
             aria-hidden
             fill="none"
             stroke="currentColor"
@@ -72,12 +73,16 @@ export function ChatPane() {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <path d="M2.5 6.2V4.5a1 1 0 0 1 1-1h4l1.5 1.6h7.5a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V6.2z" />
+            {/* Tall roof (peak y=2) + base lowered to y=15.5 gives a longer,
+                un-squished house body. The star is centred in that body with
+                clear gaps below the roofline and above the base. */}
+            <path d="M3 7.5 10 2l7 5.5V14.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7.5z" />
             <polygon
-              points="10 8 11.2 10.5 14 10.7 11.9 12.5 12.5 15.2 10 13.8 7.5 15.2 8.1 12.5 6 10.7 8.8 10.5 10 8"
-              fill="#FBBF24"
-              stroke="#B7860B"
-              strokeWidth="0.9"
+              points="10 6.7 10.78 8.93 13.14 8.98 11.26 10.41 11.94 12.67 10 11.32 8.06 12.67 8.75 10.41 6.86 8.98 9.22 8.93"
+              fill="#FACC15"
+              stroke="#CA8A04"
+              strokeWidth="0.6"
+              strokeLinejoin="round"
             />
           </svg>
         </button>
