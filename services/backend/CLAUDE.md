@@ -19,6 +19,11 @@ src/flat_chat/
   chat/                → Agent orchestration domain
                           agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
                           tools.py        FunctionToolset[ChatDeps] + ListingsCapability
+                                          (search/open/page/locate_place/show_on_map/
+                                          hide_on_map/clear_map_overlays); get_toolset()
+                                          returns the toolset wrapped in StateEmittingToolset
+                          state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
+                                          on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
                           state.py        ChatSession (+ user_id) + ChatDeps
@@ -32,13 +37,22 @@ src/flat_chat/
                                           cookie+JWT backend, current_active_user)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total, facets)
-                          places.py       PlaceService — locate_place trigram lookup over world.named_places
+                          places.py       PlaceService — locate_place trigram lookup over
+                                          world.named_places + overlay_geometry (→ GeoJSON)
+                          transit_overlays.py TransitOverlayService — line name → route-shape
+                                          GeoJSON + served stations (world.transit_stops via
+                                          lines_served) as MapOverlay.points; display only,
+                                          NOT the transit filter (sits beside places.py as the
+                                          second agent-only overlay-geometry resolver)
                           schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
-                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places ORMs
+                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places
+                                          + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
                           types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py      ListingDetail + ListingCard + nested dataclasses
+                          overlays.py     MapOverlay + OverlayPoint + OVERLAY_* consts
+                                          (leaf-layer overlay vocab; both search/ resolvers import it)
                           projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
                           labels.py       bucket_*, walk_minutes, encode_modes, ...
                           thresholds.py   Single source of truth for numeric constants

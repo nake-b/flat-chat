@@ -236,6 +236,10 @@ data/scraped/
 # Protomaps tile extracts live alongside their README; only the README is tracked.
 data/tiles/*.pmtiles
 flat_chat_dump_*.pgdump
+
+# Local-only throwaway stack override (not part of the PR)
+docker-compose.overlays.yml
+
 # Local DB snapshot tarball (large; backup/restore artifact, never source).
 flat-chat-db-snapshot.tgz
 backup-pre-split-*.sql

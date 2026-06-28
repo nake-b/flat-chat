@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Map as MapLibreMap,
   Source,
@@ -12,11 +12,43 @@ import type {
   MapLayerMouseEvent,
   SymbolLayerSpecification,
 } from "maplibre-gl";
-import type { FeatureCollection, Point } from "geojson";
+import type { Feature, FeatureCollection, Point } from "geojson";
 
 import { useSessionState } from "../hooks/useSessionState";
 import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
+import {
+  BADGE_TEXT_COLOR,
+  FLOW_DASH_SEQUENCE,
+  OVERLAY_BREATH_PERIOD_MS,
+  OVERLAY_ENTRANCE_MS,
+  OVERLAY_FILL_OPACITY,
+  OVERLAY_FILL_OPACITY_MAX,
+  OVERLAY_FILL_OPACITY_MIN,
+  OVERLAY_FLOW_COLOR,
+  OVERLAY_FLOW_OPACITY,
+  OVERLAY_FLOW_STEP_MS,
+  OVERLAY_FLOW_WIDTH,
+  OVERLAY_HALO_BLUR,
+  OVERLAY_HALO_OPACITY_MAX,
+  OVERLAY_HALO_OPACITY_MIN,
+  OVERLAY_HALO_WIDTH,
+  OVERLAY_LINE_OPACITY,
+  OVERLAY_LINE_WIDTH,
+  OVERLAY_OUTLINE_WIDTH,
+  OVERLAY_POINT_RADIUS,
+  STATION_AURA_OPACITY,
+  STATION_AURA_RADIUS_MAX,
+  STATION_AURA_RADIUS_MIN,
+  STATION_FILL,
+  STATION_PULSE_PERIOD_MS,
+  STATION_RADIUS,
+  STATION_STROKE_WIDTH,
+  overlayColor,
+  overlayLineFlows,
+  overlayShape,
+} from "../state/overlayStyles";
+import { OverlayLegend } from "./OverlayLegend";
 import {
   REFRAME_MAX_ZOOM,
   REFRAME_MS,
@@ -134,6 +166,80 @@ function makeTeardropSDF(): { width: number; height: number; data: Uint8ClampedA
 function ensurePinImage(m: MaplibreGl): void {
   if (!m.isStyleLoaded() || m.hasImage(PIN_IMAGE_ID)) return;
   m.addImage(PIN_IMAGE_ID, makeTeardropSDF(), { sdf: true, pixelRatio: 2 });
+}
+
+// ── Transit line badge ("U8") ──────────────────────────────────────────────
+// A small coloured rounded-square badge in the BVG network-map idiom, drawn at
+// runtime with Canvas 2D (one image per line label, recolour-free since the
+// line colour is baked in). Width follows the label so "S41" and "U8" both fit.
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+const BADGE_FONT = "bold 13px Arial, sans-serif";
+const BADGE_SCALE = 2; // canvas px per CSS px → crisp at pixelRatio 2
+
+function badgeImageId(label: string): string {
+  return `badge-${label}`;
+}
+
+// Idempotent (guarded by hasImage); only runs once the style is loaded.
+function ensureBadgeImage(m: MaplibreGl, label: string, color: string): void {
+  const id = badgeImageId(label);
+  if (!m.isStyleLoaded() || m.hasImage(id)) return;
+
+  const measure = document.createElement("canvas").getContext("2d")!;
+  measure.font = BADGE_FONT;
+  const w = Math.ceil(measure.measureText(label).width) + 12;
+  const h = 19;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w * BADGE_SCALE;
+  canvas.height = h * BADGE_SCALE;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(BADGE_SCALE, BADGE_SCALE);
+  roundRect(ctx, 0.5, 0.5, w - 1, h - 1, 3);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.fillStyle = BADGE_TEXT_COLOR;
+  ctx.font = BADGE_FONT;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, w / 2, h / 2 + 0.5);
+
+  m.addImage(
+    id,
+    { width: w * BADGE_SCALE, height: h * BADGE_SCALE, data: ctx.getImageData(0, 0, w * BADGE_SCALE, h * BADGE_SCALE).data },
+    { pixelRatio: BADGE_SCALE },
+  );
+}
+
+// The two ends of a line — where we drop the line badge (BVG maps badge both
+// ends of a route). MultiLineString: first vertex of the first part, last of
+// the last. Empty for anything that isn't a line.
+function lineEndpoints(geom: GeoJSON.Geometry): [number, number][] {
+  if (geom.type === "LineString") {
+    const c = geom.coordinates;
+    return c.length ? [c[0] as [number, number], c[c.length - 1] as [number, number]] : [];
+  }
+  if (geom.type === "MultiLineString") {
+    const parts = geom.coordinates;
+    if (!parts.length) return [];
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    if (!first.length || !last.length) return [];
+    return [first[0] as [number, number], last[last.length - 1] as [number, number]];
+  }
+  return [];
 }
 
 const CLUSTER_LAYER: CircleLayerSpecification = {
@@ -337,6 +443,7 @@ export function MapPane() {
   }, []);
 
   return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
     <MapLibreMap
       id="apartments-map"
       initialViewState={BERLIN_CENTER}
@@ -381,8 +488,312 @@ export function MapPane() {
         compact
         customAttribution="© OpenStreetMap contributors"
       />
+      {/* Overlays render BEFORE the apartment pins so markers stay on top. */}
+      <OverlayLayer map={mapInstance} />
       <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
+      <OverlayLegend />
+    </div>
+  );
+}
+
+// Overlays are drawn BENEATH the apartment layers: inserting every overlay
+// layer `beforeId` the bottom-most apartment layer ("clusters") keeps them under
+// the pins/clusters regardless of mount timing. (Declarative child order alone
+// doesn't guarantee this — overlays mount when search state arrives, AFTER the
+// apartment layers, so without beforeId MapLibre would stack them on top.)
+const OVERLAY_BEFORE_ID = "clusters";
+
+// Render every agent-drawn geometry in `state.map_overlays`. Appearance is
+// resolved from `overlayStyles` by (kind, geometry type) — the backend only
+// supplied semantics. Hybrid treatment: area overlays (polygons) get a soft
+// blurred halo + translucent fill + outline; lines get a crisp stroke plus a
+// flowing dash shimmer; transit lines additionally get station dots + line
+// badges. A single rAF loop (below) breathes the halos, marches the dashes, and
+// pulses the stations — all gated on prefers-reduced-motion, with the
+// declarative paints here serving as the static fallback.
+function OverlayLayer({ map }: { map: MaplibreGl | null }) {
+  const { state } = useSessionState();
+  const overlays = state?.map_overlays ?? [];
+
+  // Latest overlays for the imperative loop without re-subscribing every frame.
+  const overlaysRef = useRef(overlays);
+  overlaysRef.current = overlays;
+
+  // Stable signature of the overlay SET so the imperative effects below re-arm
+  // only when an overlay is added/removed — not on every render (`state?.
+  // map_overlays ?? []` is a fresh array each time). "" ⇒ nothing drawn.
+  const overlayKey = useMemo(() => overlays.map((o) => o.id).join("|"), [overlays]);
+
+  // Register a badge image per transit line label (idempotent). addImage needs a
+  // loaded style; if the style isn't ready when overlays first arrive (cold map +
+  // an immediate transit overlay) `ensureBadgeImage` no-ops, so we also retry on
+  // `styledata` — otherwise the `-badge` symbol layer would reference a missing
+  // icon-image until the overlay set next changes.
+  useEffect(() => {
+    if (!map) return;
+    const register = () => {
+      for (const o of overlaysRef.current) {
+        if (o.kind === "transit_line") {
+          ensureBadgeImage(map, o.label, overlayColor(o, "line"));
+        }
+      }
+    };
+    register();
+    map.on("styledata", register);
+    return () => {
+      map.off("styledata", register);
+    };
+  }, [map, overlayKey]);
+
+  // One rAF loop drives all motion. Skipped entirely when nothing is drawn (no
+  // idle 60fps wakeup on an empty map) or under prefers-reduced-motion (the
+  // declarative paints stand as the static look). Reads geometry from
+  // overlaysRef; guards every set with getLayer so a layer mid-mount/unmount is
+  // a no-op. Re-arms on `overlayKey` so it starts when the first overlay appears.
+  const entranceStarts = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!map || overlayKey === "") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Drop entrance timers for overlays no longer drawn so the Map doesn't grow
+    // unbounded over a long session.
+    const liveIds = new Set(overlaysRef.current.map((o) => o.id));
+    for (const id of [...entranceStarts.current.keys()]) {
+      if (!liveIds.has(id)) entranceStarts.current.delete(id);
+    }
+
+    let raf = 0;
+    let prevFlowStep = -1;
+    const set = (layer: string, prop: string, val: unknown) => {
+      if (map.getLayer(layer)) map.setPaintProperty(layer, prop, val);
+    };
+
+    const frame = (now: number) => {
+      const breath =
+        0.5 - 0.5 * Math.cos((2 * Math.PI * now) / OVERLAY_BREATH_PERIOD_MS);
+      const pulse =
+        0.5 - 0.5 * Math.cos((2 * Math.PI * now) / STATION_PULSE_PERIOD_MS);
+      const flowStep =
+        Math.floor(now / OVERLAY_FLOW_STEP_MS) % FLOW_DASH_SEQUENCE.length;
+      const flowChanged = flowStep !== prevFlowStep;
+      prevFlowStep = flowStep;
+
+      for (const o of overlaysRef.current) {
+        const src = `overlay-${o.id}`;
+        let start = entranceStarts.current.get(o.id);
+        if (start === undefined) {
+          start = now;
+          entranceStarts.current.set(o.id, now);
+        }
+        const raw = Math.min(1, (now - start) / OVERLAY_ENTRANCE_MS);
+        const p = 1 - (1 - raw) * (1 - raw); // easeOutQuad fade-in
+
+        const shape = overlayShape(o.geojson);
+        if (shape === "fill") {
+          const halo =
+            (OVERLAY_HALO_OPACITY_MIN +
+              (OVERLAY_HALO_OPACITY_MAX - OVERLAY_HALO_OPACITY_MIN) * breath) *
+            p;
+          const fill =
+            (OVERLAY_FILL_OPACITY_MIN +
+              (OVERLAY_FILL_OPACITY_MAX - OVERLAY_FILL_OPACITY_MIN) * breath) *
+            p;
+          set(`${src}-halo`, "line-opacity", halo);
+          set(`${src}-fill`, "fill-opacity", fill);
+          set(`${src}-outline`, "line-opacity", 0.8 * p);
+        } else if (shape === "line") {
+          set(`${src}-line`, "line-opacity", OVERLAY_LINE_OPACITY * p);
+          if (overlayLineFlows(o, shape)) {
+            set(`${src}-flow`, "line-opacity", OVERLAY_FLOW_OPACITY * p);
+            if (flowChanged) {
+              set(`${src}-flow`, "line-dasharray", FLOW_DASH_SEQUENCE[flowStep]);
+            }
+          }
+          // Station aura expands + fades as it grows; dot + badge just fade in.
+          set(
+            `${src}-aura`,
+            "circle-radius",
+            STATION_AURA_RADIUS_MIN +
+              (STATION_AURA_RADIUS_MAX - STATION_AURA_RADIUS_MIN) * pulse,
+          );
+          set(`${src}-aura`, "circle-opacity", STATION_AURA_OPACITY * (1 - pulse) * p);
+          set(`${src}-dot`, "circle-opacity", p);
+          set(`${src}-dot`, "circle-stroke-opacity", p);
+          set(`${src}-badge`, "icon-opacity", p);
+        } else {
+          set(`${src}-point`, "circle-opacity", 0.85 * p);
+          set(`${src}-point`, "circle-stroke-opacity", p);
+        }
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [map, overlayKey]);
+
+  return (
+    <>
+      {overlays.map((o) => {
+        const shape = overlayShape(o.geojson);
+        const color = overlayColor(o, shape);
+        const srcId = `overlay-${o.id}`;
+        const data: FeatureCollection = {
+          type: "FeatureCollection",
+          features: [
+            { type: "Feature", geometry: o.geojson, properties: {} } as Feature,
+          ],
+        };
+
+        if (shape === "fill") {
+          return (
+            <Source key={srcId} id={srcId} type="geojson" data={data}>
+              {/* Blurred boundary halo — the breathing target. Drawn first so
+                  it sits beneath the fill/outline. */}
+              <Layer
+                id={`${srcId}-halo`}
+                type="line"
+                beforeId={OVERLAY_BEFORE_ID}
+                layout={{ "line-cap": "round", "line-join": "round" }}
+                paint={{
+                  "line-color": color,
+                  "line-width": OVERLAY_HALO_WIDTH,
+                  "line-blur": OVERLAY_HALO_BLUR,
+                  "line-opacity": OVERLAY_HALO_OPACITY_MAX,
+                }}
+              />
+              <Layer
+                id={`${srcId}-fill`}
+                type="fill"
+                beforeId={OVERLAY_BEFORE_ID}
+                paint={{ "fill-color": color, "fill-opacity": OVERLAY_FILL_OPACITY }}
+              />
+              <Layer
+                id={`${srcId}-outline`}
+                type="line"
+                beforeId={OVERLAY_BEFORE_ID}
+                paint={{
+                  "line-color": color,
+                  "line-width": OVERLAY_OUTLINE_WIDTH,
+                  "line-opacity": 0.8,
+                }}
+              />
+            </Source>
+          );
+        }
+
+        if (shape === "line") {
+          const flows = overlayLineFlows(o, shape);
+          const points = o.points ?? [];
+          const stationData: FeatureCollection = {
+            type: "FeatureCollection",
+            features: points.map((pt) => ({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [pt.lon, pt.lat] },
+              properties: { label: pt.label },
+            })),
+          };
+          const ends = lineEndpoints(o.geojson);
+          const badgeData: FeatureCollection = {
+            type: "FeatureCollection",
+            features: ends.map((c) => ({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: c },
+              properties: {},
+            })),
+          };
+
+          return (
+            <Fragment key={srcId}>
+              <Source id={srcId} type="geojson" data={data}>
+                <Layer
+                  id={`${srcId}-line`}
+                  type="line"
+                  beforeId={OVERLAY_BEFORE_ID}
+                  layout={{ "line-cap": "round", "line-join": "round" }}
+                  paint={{
+                    "line-color": color,
+                    "line-width": OVERLAY_LINE_WIDTH,
+                    "line-opacity": OVERLAY_LINE_OPACITY,
+                  }}
+                />
+                {flows && (
+                  <Layer
+                    id={`${srcId}-flow`}
+                    type="line"
+                    beforeId={OVERLAY_BEFORE_ID}
+                    layout={{ "line-cap": "butt", "line-join": "round" }}
+                    paint={{
+                      "line-color": OVERLAY_FLOW_COLOR,
+                      "line-width": OVERLAY_FLOW_WIDTH,
+                      "line-opacity": OVERLAY_FLOW_OPACITY,
+                      "line-dasharray": FLOW_DASH_SEQUENCE[0],
+                    }}
+                  />
+                )}
+              </Source>
+              {points.length > 0 && (
+                <Source id={`${srcId}-stations`} type="geojson" data={stationData}>
+                  <Layer
+                    id={`${srcId}-aura`}
+                    type="circle"
+                    beforeId={OVERLAY_BEFORE_ID}
+                    paint={{
+                      "circle-color": color,
+                      "circle-radius": STATION_AURA_RADIUS_MIN,
+                      "circle-opacity": STATION_AURA_OPACITY,
+                      "circle-blur": 0.6,
+                    }}
+                  />
+                  <Layer
+                    id={`${srcId}-dot`}
+                    type="circle"
+                    beforeId={OVERLAY_BEFORE_ID}
+                    paint={{
+                      "circle-color": STATION_FILL,
+                      "circle-radius": STATION_RADIUS,
+                      "circle-stroke-color": color,
+                      "circle-stroke-width": STATION_STROKE_WIDTH,
+                    }}
+                  />
+                </Source>
+              )}
+              {ends.length > 0 && o.kind === "transit_line" && (
+                <Source id={`${srcId}-badges`} type="geojson" data={badgeData}>
+                  <Layer
+                    id={`${srcId}-badge`}
+                    type="symbol"
+                    beforeId={OVERLAY_BEFORE_ID}
+                    layout={{
+                      "icon-image": badgeImageId(o.label),
+                      "icon-size": 1,
+                      "icon-allow-overlap": true,
+                    }}
+                  />
+                </Source>
+              )}
+            </Fragment>
+          );
+        }
+
+        return (
+          <Source key={srcId} id={srcId} type="geojson" data={data}>
+            <Layer
+              id={`${srcId}-point`}
+              type="circle"
+              beforeId={OVERLAY_BEFORE_ID}
+              paint={{
+                "circle-color": color,
+                "circle-radius": OVERLAY_POINT_RADIUS,
+                "circle-opacity": 0.85,
+                "circle-stroke-color": "#ffffff",
+                "circle-stroke-width": 2,
+              }}
+            />
+          </Source>
+        );
+      })}
+    </>
   );
 }
 

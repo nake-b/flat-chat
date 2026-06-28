@@ -3,9 +3,13 @@
 The Pydantic AI v2 upgrade moved tool binding from `toolsets=[toolset]` to
 `capabilities=[ListingsCapability()]` (ListingsCapability wraps the same
 `FunctionToolset` via `get_toolset()`). This guards that the indirection
-actually reaches the model: the agent must still advertise exactly the three
-tools to the LLM. If a future refactor drops the capability, marks it
+actually reaches the model: the agent must still advertise exactly its tool
+set to the LLM. If a future refactor drops the capability, marks it
 `defer_loading=True` by accident, or breaks `get_toolset()`, this fails.
+
+`get_toolset()` returns the toolset wrapped in `StateEmittingToolset` (the
+forget-proof state-emission wrapper) — this also confirms that wrapping a
+`WrapperToolset` inside the capability doesn't hide the tools from the model.
 
 Drives the real module-level `agent` with a `FunctionModel` that records the
 `AgentInfo.function_tools` it was handed, making no tool calls (so the `None`
@@ -28,6 +32,9 @@ EXPECTED_TOOLS = {
     "open_listing",
     "get_result_page",
     "locate_place",
+    "show_on_map",
+    "hide_on_map",
+    "clear_map_overlays",
 }
 
 
@@ -42,6 +49,7 @@ def test_agent_advertises_listing_tools_via_capability():
         search_service=None,  # type: ignore[arg-type]  # never called (no tool calls)
         listing_service=None,  # type: ignore[arg-type]
         place_service=None,  # type: ignore[arg-type]
+        transit_overlay_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-wiring"),
         state=SessionState(),
     )
