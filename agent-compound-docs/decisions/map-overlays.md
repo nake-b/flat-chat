@@ -58,6 +58,14 @@ They are kept separate on purpose: a U-Bahn line does **not** belong in the sear
 
 Geometry is simplified server-side (`ST_SimplifyPreserveTopology`, ~5 m tolerance + 5-digit coords; constants in `listings/context.py`) so the GeoJSON riding the snapshot stays small.
 
+### 7. Place geometry resolution (`PlaceService.overlay_geometry`)
+
+A `place_ref` rarely maps cleanly to one drawable shape, so resolution does three things (verified against live TU/FU Berlin data):
+
+- **Tiebreak** — `locate` orders by `similarity, ST_Dimension DESC`, so a polygon/line beats a coincident point at equal name-match (a seed-alias POINT no longer outranks the real footprint).
+- **Snap** — if the hit is a representative POINT (a seed alias like "TU Berlin"), snap to the nearest footprint (polygon/line, **any** kind) within `OVERLAY_SNAP_RADIUS_M` and use it as the anchor. The curated pin sits *on* its target, and the building's name never matches the alias ("Hauptgebäude der TU", not "TU Berlin"), so **proximity, not name**, is what finds it → "TU Berlin" draws the Hauptgebäude, "FU Berlin" the Rost-/Silberlaube, "Görli" the park. No footprint near → falls back to the point.
+- **Cluster-union** — union the anchor's same-kind, **same-name** footprints within `OVERLAY_CLUSTER_RADIUS_M`, keeping only the richest dimension, via `ST_Union` (not `ST_Collect`, which yields an unclassifiable GeometryCollection when mixing POLYGON+MULTIPOLYGON). A campus fragmented into identically-named rows → its local cluster; a unique place → itself. *Rejected:* fuzzy-name union (a similarity floor swallows neighbours — "Berlin" alone scores 0.70) and canonical-name-from-alias-description (the campus buildings carry diverse function names, so it missed the actual building). The complete-campus assembly needs ingestion-side grouping (shared campus id) — out of scope.
+
 ## Rejected / deferred
 
 - **Per-tool emit decorator** — rejected (forgettable; see decision 1).
