@@ -101,7 +101,7 @@ See [`agent-vs-http-data-flow.md`](agent-compound-docs/decisions/agent-vs-http-d
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
-- LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `FunctionToolset[ChatDeps]` for tools (no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection
+- LLM uses Pydantic AI **v2** with `instructions=` (not `system_prompt=`), a `FunctionToolset[ChatDeps]` bound to the Agent via a capability (`capabilities=[ListingsCapability()]`, `ListingsCapability.get_toolset()` returns the toolset — no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection. See [`pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md)
 - Conversation state lives in `ChatSession` (history + `SessionState` + `user_id`), held by a `SessionStore` Protocol (async `create`/`get`/`save`, sync `lock`). `DbSessionStore` (Postgres `app.*`) is the default — durable across restarts; `InMemorySessionStore` is kept for unit tests. The store owns its own `AsyncSessionLocal` sessions (persistence runs in `on_complete` at SSE-stream end, after the request scope is gone). Identity is a single hardcoded dummy user via the `get_user_id()` seam (no auth yet; stage 2 = anonymous cookie, stage 3 = real auth — only that function changes). The backend is **history-authoritative**: on a reload where the frontend sends only the new prompt (≤1 envelope message), `dispatch_agent_request` injects the DB-reconstructed history so the agent keeps context. See [`session-persistence.md`](agent-compound-docs/decisions/session-persistence.md)
 - **LLM-facing string composition is centralised in `chat/llm_context.py`** — `LlmResultSetView` (the active search wrapped with `summary` / `page` / `detail` formatting), `format_navigation_footer` (free function so the data class doesn't reference tool names), `format_geo_context_prose` (single-listing neighbourhood prose), and `build_dynamic_state_prompt` (per-turn `<current_state>` + `<user_focus>` XML blocks). Nothing outside this module composes prose for the LLM. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
 - **Three-layer prompt composition.** Pydantic AI assembles the system prompt as: agent `instructions=` (role-level, XML-tagged: `<role>` / `<ui_rendering>` / `<user_references>` / `<honesty>` / `<neutrality>`), then `@agent.instructions` (`build_dynamic_state_prompt` — per-turn `<current_state>` + optional `<user_focus>`), then `@toolset.instructions` (`<tool_protocol>` + `<phrase_map>` — co-located with the tools they describe). Renaming a tool is one atomic edit (function name + the protocol/phrase-map text in `tools.py`). The static layers are large enough for prompt caching to matter — verified: ~5600 cached prefix tokens per turn against Anthropic with `cache_instructions=True` + `cache_tool_definitions=True`.
@@ -192,7 +192,9 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 
 ## Pydantic AI Patterns
 
-Install: `pip install "pydantic-ai" "pydantic-ai-slim[ag-ui]"` — the AG-UI extra is on `pydantic-ai-slim`, not the meta package; install both to get all provider extras plus the `AGUIAdapter` for our `/api/agent` route.
+Install (Pydantic AI **v2**): `pydantic-ai-slim[ag-ui,anthropic,openai]>=2.0,<3.0`. v2's core no longer bundles every provider — declare only the extras you use (`ag-ui` for the `AGUIAdapter` on `/api/agent`, `anthropic` + `openai` for our two providers). Do NOT add the `pydantic-ai` metapackage; it pulls every provider extra back in. See [`agent-compound-docs/decisions/pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md).
+
+Tools are bound to the Agent via `capabilities=[...]` (v2's composition primitive) — a capability bundles tools + instructions + hooks + model settings. Our `ListingsCapability` wraps the existing `FunctionToolset`; see the Tools section below and the migration doc.
 
 ### Agent Definition
 
@@ -269,11 +271,20 @@ result = await agent.run("Hello", deps=MyDeps(db=db, user_id="123", http_client=
 ### Tools
 
 This project uses `FunctionToolset` so tools live in their own module without
-ever importing the `agent` object — kills the `agent.py ↔ tools.py` cycle.
+ever importing the `agent` object — kills the `agent.py ↔ tools.py` cycle. In
+v2 the toolset is bound to the Agent via a **capability** (`capabilities=[...]`)
+rather than `toolsets=[...]`: `ListingsCapability` wraps the toolset by
+returning it from `get_toolset()`. New agent-callable tool groups (map/frontend
+command tools, distance tools) land as their own capabilities — optionally
+`defer_loading=True` to keep them out of the cached prompt prefix until the
+model loads them (the ToolSearch lever).
 
 ```python
 # chat/tools.py
+from dataclasses import dataclass
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset
 from flat_chat.chat.state import ChatDeps
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
@@ -281,9 +292,14 @@ toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 @toolset.tool
 async def search_apartments(ctx: RunContext[ChatDeps], query: str) -> str: ...
 
+@dataclass
+class ListingsCapability(AbstractCapability[ChatDeps]):
+    def get_toolset(self) -> AgentToolset[ChatDeps] | None:
+        return toolset  # the existing toolset, unchanged
+
 # chat/agent.py
-from flat_chat.chat.tools import toolset
-agent = Agent(deps_type=ChatDeps, toolsets=[toolset], instructions=...)
+from flat_chat.chat.tools import ListingsCapability
+agent = Agent(deps_type=ChatDeps, capabilities=[ListingsCapability()], instructions=...)
 ```
 
 #### Toolset instructions

@@ -1,9 +1,13 @@
+from dataclasses import dataclass
 from datetime import date
 
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset
 
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.state_emission import StateEmittingToolset
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
@@ -694,3 +698,30 @@ async def get_result_page(
     return rs.page(
         cards, start=start, page=page, total_pages=total_pages, page_size=page_size
     )
+
+
+@dataclass
+class ListingsCapability(AbstractCapability[ChatDeps]):
+    """The apartment search + listing tools bundled as a v2 capability.
+
+    The tools (`search_apartments`, `open_listing`, `get_result_page`,
+    `locate_place`, `show_on_map`, `clear_map_overlays`) and their
+    `@toolset.instructions` protocol guidance are unchanged — this composes the
+    agent via `capabilities=[...]` (Pydantic AI v2's primary extension
+    primitive) instead of a bare `toolsets=[...]`. `get_toolset` is called once
+    at Agent construction, so the toolset's tools are all registered by then.
+
+    It returns the toolset wrapped in `StateEmittingToolset` so any `deps.state`
+    mutation a tool makes auto-emits a STATE_SNAPSHOT to the frontend — emission
+    stays structural (the wrapper intercepts `call_tool`), not something each
+    tool body has to remember. The old `_return_with_state` helper is gone for
+    the same reason. See `state_emission.py` and `map-overlays.md`.
+
+    New agent-callable tool groups (e.g. the map/frontend command tools and
+    distance tools) should land as their OWN capabilities — optionally with
+    `defer_loading=True` to keep them out of the cached prompt prefix until the
+    model loads them. See agent-compound-docs/decisions/pydantic-v2-migration.md.
+    """
+
+    def get_toolset(self) -> AgentToolset[ChatDeps] | None:
+        return StateEmittingToolset(toolset)

@@ -1,0 +1,29 @@
+# Build context for the backend + ingestion images is the repo ROOT (needed so
+# the build sees the workspace uv.lock). Keep that context lean: exclude VCS,
+# virtualenvs, caches, the frontend's node_modules/dist, and bulky data/dumps.
+# Do NOT exclude pyproject.toml, uv.lock, or services/*/src — the builds need them.
+.git
+.gitignore
+
+# Python
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# Frontend (built in its own image with its own context)
+services/frontend/node_modules
+services/frontend/dist
+
+# Bulky / irrelevant to the image
+data/
+*.sql
+*.png
+*.drawio
+
+# Local-only compose + env
+docker-compose.override.yml
+.env
+.env.*

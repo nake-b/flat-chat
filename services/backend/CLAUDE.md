@@ -16,9 +16,11 @@ src/flat_chat/
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(toolsets=[StateEmittingToolset(toolset)], ...)
-                          tools.py        FunctionToolset[ChatDeps] (search/open/page/
-                                          locate_place/show_on_map/clear_map_overlays)
+                          agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
+                          tools.py        FunctionToolset[ChatDeps] + ListingsCapability
+                                          (search/open/page/locate_place/show_on_map/
+                                          clear_map_overlays); get_toolset() returns the
+                                          toolset wrapped in StateEmittingToolset
                           state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
                                           on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
