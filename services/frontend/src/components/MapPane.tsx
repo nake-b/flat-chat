@@ -520,25 +520,48 @@ function OverlayLayer({ map }: { map: MaplibreGl | null }) {
   const overlaysRef = useRef(overlays);
   overlaysRef.current = overlays;
 
-  // Register a badge image per transit line label (idempotent). addImage needs
-  // a loaded style + the map instance — both true by the time overlays arrive.
+  // Stable signature of the overlay SET so the imperative effects below re-arm
+  // only when an overlay is added/removed — not on every render (`state?.
+  // map_overlays ?? []` is a fresh array each time). "" ⇒ nothing drawn.
+  const overlayKey = useMemo(() => overlays.map((o) => o.id).join("|"), [overlays]);
+
+  // Register a badge image per transit line label (idempotent). addImage needs a
+  // loaded style; if the style isn't ready when overlays first arrive (cold map +
+  // an immediate transit overlay) `ensureBadgeImage` no-ops, so we also retry on
+  // `styledata` — otherwise the `-badge` symbol layer would reference a missing
+  // icon-image until the overlay set next changes.
   useEffect(() => {
     if (!map) return;
-    for (const o of overlays) {
-      if (o.kind === "transit_line") {
-        ensureBadgeImage(map, o.label, overlayColor(o, "line"));
+    const register = () => {
+      for (const o of overlaysRef.current) {
+        if (o.kind === "transit_line") {
+          ensureBadgeImage(map, o.label, overlayColor(o, "line"));
+        }
       }
-    }
-  }, [map, overlays]);
+    };
+    register();
+    map.on("styledata", register);
+    return () => {
+      map.off("styledata", register);
+    };
+  }, [map, overlayKey]);
 
-  // One rAF loop drives all motion. Skipped entirely under prefers-reduced-
-  // motion (the declarative paints stand as the static look). Reads geometry
-  // from overlaysRef; guards every set with getLayer so a layer mid-mount/unmount
-  // is a no-op.
+  // One rAF loop drives all motion. Skipped entirely when nothing is drawn (no
+  // idle 60fps wakeup on an empty map) or under prefers-reduced-motion (the
+  // declarative paints stand as the static look). Reads geometry from
+  // overlaysRef; guards every set with getLayer so a layer mid-mount/unmount is
+  // a no-op. Re-arms on `overlayKey` so it starts when the first overlay appears.
   const entranceStarts = useRef<Map<string, number>>(new Map());
   useEffect(() => {
-    if (!map) return;
+    if (!map || overlayKey === "") return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Drop entrance timers for overlays no longer drawn so the Map doesn't grow
+    // unbounded over a long session.
+    const liveIds = new Set(overlaysRef.current.map((o) => o.id));
+    for (const id of [...entranceStarts.current.keys()]) {
+      if (!liveIds.has(id)) entranceStarts.current.delete(id);
+    }
 
     let raf = 0;
     let prevFlowStep = -1;
@@ -607,7 +630,7 @@ function OverlayLayer({ map }: { map: MaplibreGl | null }) {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [map]);
+  }, [map, overlayKey]);
 
   return (
     <>

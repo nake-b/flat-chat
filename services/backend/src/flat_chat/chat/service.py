@@ -293,6 +293,14 @@ def merge_incoming_state(
       (overlay content is agent-owned). This makes dismissal sticky and
       agent-visible without letting the UI inject geometry.
 
+      Subtlety: absence-from-incoming is read as *dismissal*, which is correct
+      only because CopilotKit applies the agent's `StateSnapshotEvent` (the
+      freshly-drawn overlay) during the SSE stream, and the composer is locked
+      until the stream ends — so the next envelope always reflects the latest
+      drawn set. A future "send while streaming" path would break that
+      invariant (a just-drawn overlay could be absent and get dropped); it would
+      need an explicit dismissed-id list rather than set-difference.
+
     `incoming is None` (parse failure / pre-overlay client) → persisted wins
     untouched.
     """
