@@ -543,7 +543,7 @@ requires-dist = [
 dev = [
     { name = "greenlet", specifier = ">=3.5.0" },
     { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.11" },
+    { name = "ruff", specifier = ">=0.15.12" },
     { name = "ty", specifier = ">=0.0.54" },
 ]
 
