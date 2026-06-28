@@ -176,8 +176,7 @@ def test_embed_pending_raises_on_cardinality_mismatch(monkeypatch):
         # Return one FEWER vector than requested → strict zip must raise.
         inputs = json.loads(request.content)["input"]
         data = [
-            {"index": i, "embedding": [0.0] * EMBED_DIM}
-            for i in range(len(inputs) - 1)
+            {"index": i, "embedding": [0.0] * EMBED_DIM} for i in range(len(inputs) - 1)
         ]
         return httpx.Response(200, json={"data": data})
 

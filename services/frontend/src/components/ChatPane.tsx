@@ -29,7 +29,7 @@ export function ChatPane({
           Flat<span className="px-1 text-red">·</span>Chat
         </h1>
         <span className="mt-2.5 inline-block font-mono text-[10px] uppercase tracking-[0.18em] text-ink-soft">
-          Berlin apartment search
+          the Berlin Real Estate (AI) Agent
         </span>
       </header>
 

@@ -96,6 +96,10 @@ def schema_at_head(test_db_url: str) -> None:
     with engine.connect() as conn:
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # pg_trgm backs the `%` name search behind world.named_places — the
+        # 0007 migration creates GIN trigram indexes assuming this exists
+        # (mirrors services/postgres/init/01-bootstrap.sql).
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS world"))
         conn.execute(sa.text("CREATE SCHEMA IF NOT EXISTS app"))
     engine.dispose()

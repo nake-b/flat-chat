@@ -28,7 +28,10 @@ services:
       start_period: 5s
 
   backend:
-    build: services/backend/
+    # Root context so the build sees the workspace `uv.lock` (frozen install).
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,7 +101,9 @@ services:
       retries: 5
 
   ingestion:
-    build: services/ingestion/
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
     profiles:
       - ingestion
     depends_on:
@@ -109,6 +114,11 @@ services:
       # Forwarded for `silver.embed`, the Jina v3 backfill CLI.
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
+      # Forwarded for the geocoding pass inside `silver.transform` (backfills
+      # coordinates for listings that arrived without a scraped point).
+      - NOMINATIM_BASE_URL=${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
+      - GEOCODER_USER_AGENT=${GEOCODER_USER_AGENT:-flat-chat-geocoder/1.0 (+https://github.com/nake-b/flat-chat)}
+      - GEOCODER_RATE_LIMIT_S=${GEOCODER_RATE_LIMIT_S:-1.0}
 
   # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
   # Opt-in via `--profile geo-context`; does not run on `docker compose up`.
@@ -116,7 +126,9 @@ services:
   # so the agent's search results reflect the refreshed truth without a
   # manual `gold.run`. See services/ingestion/src/geo_context/README.md.
   geo-context:
-    build: services/ingestion/
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
     profiles:
       - geo-context
     depends_on:
@@ -131,7 +143,9 @@ services:
   # need to re-enrich without scraping or refreshing geo-context.
   # Auto-chained at the end of `silver.run` and `geo_context.run`.
   gold:
-    build: services/ingestion/
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
     profiles:
       - gold
     depends_on:
@@ -145,7 +159,9 @@ services:
   # JINA_API_KEY to call Jina v3. Auto-chained at the end of `silver.run`
   # (best-effort; skipped silently if no key).
   platinum:
-    build: services/ingestion/
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
     profiles:
       - platinum
     depends_on:

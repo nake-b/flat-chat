@@ -14,10 +14,17 @@ src/
   db.py                 → engine (search_path=world,public), SessionLocal, get_session()
   iron/, bronze/        → (iron + bronze tiers; raw scraper output)
   scraper/              → Per-source Node scrapers (NEVER run automatically)
+    _lib/stealth.js     → Shared browser stealth: puppeteer-extra + stealth
+                          plugin, rotating CURRENT Chrome UA pool + matching
+                          client hints. See "Scraper anti-bot" below.
   silver/               → Bronze → typed Listing rows
     run.py              → `python -m silver.run` — chains gold + platinum at end
-    transformer.py      → Dispatcher by source; UPSERT logic
-    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht)
+    transformer.py      → Dispatcher by source; UPSERT logic + `deduplicate`
+                          (collapses reposted same-title+address flats) +
+                          geocoding pass that backfills NULL coordinates via
+                          Nominatim (tail of `transform()`)
+    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
+                          housinganywhere, wohninberlin)
   geo_context/          → Berlin GDI WFS + VBB GTFS → silver geo tables
     run.py              → CLI with --only / --skip-wfs / --skip-gtfs
     extract/, transform/, load/
@@ -47,6 +54,34 @@ docker compose run --rm ingestion uv run alembic upgrade head
 (`to_sql`/`to_postgis`, enrich UPSERTs) resolves unqualified names to `world`.
 Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/schema-ownership-split.md).
 
+## Scraper anti-bot / stealth
+
+All Node scrapers share `scraper/_lib/stealth.js` (`require('scraper-lib/stealth')`):
+
+- `makeStealthPuppeteer(require('puppeteer'))` wraps the engine with
+  puppeteer-extra + puppeteer-extra-plugin-stealth — hides `navigator.webdriver`,
+  gives a real `PluginArray` (the old hand patch set it to `[1,2,3,4,5]`, an
+  integer tell), patches the `Runtime.enable` CDP leak, etc.
+- `applyStealthToPage(page, {userAgent, profile, acceptLanguage, timeoutMs})`
+  replaces every old per-scraper `preparePage`. It rotates a CURRENT
+  desktop-Chrome UA **per run** (not per request — real browsers don't change UA
+  mid-session) with a MATCHING `userAgentMetadata`, so the UA string and the
+  `sec-ch-ua` client hints agree, and aligns `navigator.languages` to
+  `Accept-Language`. Returns the chosen `{userAgent, metadata}` so a multi-tab
+  scraper reuses one UA across tabs via `profile:`.
+- `detectChallenge(page)` covers Cloudflare + DataDome + visible captcha iframes.
+
+Search-page `goto` uses `waitUntil: 'domcontentloaded'` (not `networkidle2`) so a
+challenge interstitial fails fast and `detectChallenge` can report it, instead of
+silently eating the full timeout.
+
+**Maintenance: bump `CHROME_BUILDS` in `_lib/stealth.js` every few Chrome
+releases.** A stale UA pool is the exact failure this module exists to prevent —
+the scrapers shipped pinned to Chrome 124 (April 2024), and by mid-2026 that
+version alone was a bot signal. Deps live in `_lib/package.json` only; each
+scraper keeps its own `puppeteer` and passes it in. `USER_AGENT=` pins a UA;
+`HEADLESS=false` runs headful for debugging.
+
 ## Medallion tiers in this service
 
 | Tier | Tables | Cadence | Module |
@@ -54,7 +89,7 @@ Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/s
 | **Iron** | `iron_cards` | Daily | `iron/` (filled by `scraper/`) |
 | **Bronze** | `raw_listings` | Daily | `bronze/` (filled by `scraper/`) |
 | **Silver — listings** | `listings` | Daily | `silver/` (reads bronze) |
-| **Silver — geo-context** | `transit_stops`, `parks`, `schools`, `social_monitoring_2025`, ... | Monthly | `geo_context/` |
+| **Silver — geo-context** | `transit_stops`, `parks`, `schools`, `kitas`, `landmarks`, `bezirke`, `ortsteile`, `inner_city_zone`, ... | Monthly | `geo_context/` |
 | **Gold** | `listings_geo_context` | Chained after silver listings + chained after geo-context | `gold/` |
 | **Platinum** | `listings_embeddings` | Chained after silver listings (best-effort) | `platinum/` |
 
@@ -62,9 +97,25 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
 
 ## Chain triggers
 
-- `silver.run` → calls `gold.run.main([])` at the end. Then attempts
-  `platinum.run.main([])` best-effort (skipped silently if `JINA_API_KEY`
-  isn't set — semantic search degrades to recency, no fatal failure).
+- `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then
+  attempts `platinum.run.main([])` best-effort (skipped silently if
+  `JINA_API_KEY` isn't set — semantic search degrades to recency, no fatal
+  failure). **`transform` itself** ends with a best-effort geocoding pass
+  (`_geocode_missing`) that fills NULL coordinates by geocoding the listing's
+  address (Nominatim by default) — so coordinate-less sources (e.g.
+  wohninberlin) become visible to search + gold. Only `location IS NULL` rows
+  are touched (idempotent), and `upsert.py` preserves the backfilled point
+  across re-transforms; a geocoder outage warns but never fails silver.
+  Configure via `NOMINATIM_BASE_URL` / `GEOCODER_USER_AGENT` /
+  `GEOCODER_RATE_LIMIT_S`. `deduplicate` (in `transformer.py`) runs a single
+  window-function
+  DELETE that collapses listings sharing a `(title, address)` — any source —
+  down to one survivor (geocoded-first, then newest `scraped_at`). It runs
+  **before** gold so deleted rows are never enriched, and runs on **every**
+  silver run rather than once: bronze `raw_listings` rows survive a silver
+  delete (FK is `ON DELETE SET NULL`) and `transform` reprocesses all of bronze,
+  so a one-off cleanup would be re-undone next run. See
+  [`silver-deduplication.md`](../../agent-compound-docs/decisions/silver-deduplication.md).
 - `geo_context.run` → if any WFS/GTFS family succeeded, calls
   `gold.run.main([])`. Geo-context refreshes invalidate every listing's
   gold row, so the chain ensures fresh enrichment without manual
@@ -80,16 +131,15 @@ Local development uses existing bronze data — `silver.run` → `gold.run`
 (which chains gold + platinum); scraper is in a separate compose
 profile that must be invoked explicitly.
 
-## Silver MSS English translation
+## Landmarks: ALKIS (WFS) + OSM (Overpass)
 
-`geo_context/transform/wfs.py` translates German labels in the MSS
-(Sozialmonitoring) dataset to English at silver-transform time. The
-single source of truth for the German→English mapping is the
-`_VALUE_TRANSLATIONS` table at the top of that file.
-
-Why silver, not gold: silver is the canonical clean form. If the
-publisher renames a label, this file changes; nothing downstream sees
-German.
+`landmarks` is the one named-place class with no pre-existing table. It is
+seeded from ALKIS named building footprints (a WFS layer, `source='alkis'`,
+`category='building'`, named-only filter in `transform/wfs.py`) and then
+APPENDED to from OSM via a separate Overpass step (`extract/osm.py`,
+`source='osm'`, `category` from the matched tag). Geometry is mixed
+(`geometry(Geometry, 4326)`) and native — OSM nodes stay points, bridges
+stay lines, areas stay polygons. OSM is ODbL; ALKIS/GDI is `dl-de/zero-2-0`.
 
 Decision doc: [`geo-context-pipeline.md`](../../agent-compound-docs/decisions/geo-context-pipeline.md).
 
@@ -109,18 +159,22 @@ Family names (in `CHIP_FAMILIES` run order):
 **Junction-table fillers** — populate `listings_nearby_*` with top-K=5 ∪
 all-within-R per listing:
 - `nearby_transit` (R=5 km), `nearby_schools` (R=5 km),
-  `nearby_hospitals` (R=12 km), `nearby_parks` (R=5 km, cemeteries
-  excluded), `nearby_playgrounds` (R=3 km), `nearby_water` (R=6 km).
+  `nearby_kitas` (R=3 km), `nearby_hospitals` (R=12 km),
+  `nearby_parks` (R=5 km, cemeteries excluded),
+  `nearby_playgrounds` (R=3 km), `nearby_water` (R=6 km),
+  `nearby_landmarks` (R=2 km, notable categories only).
 
 **Derived chip scalars** — read from the junction tables:
 - `chip_scalars` (nearest_transit_* + nearest_park_* on
   `listings_geo_context`).
 
 **Scalar / field fillers** — properties of the listing's location:
-- `noise` (50 m coverage gate; out → NULL; search optimistic-includes),
-  `greenery` (300 m composite m²), `density` (LOR ppl/ha),
-  `mss` (Sozialmonitoring labels), `school_catchment` (polygon
-  membership), `disabled_parking` (count within 300 m).
+- `noise` (50 m coverage gate; out → NULL; search optimistic-includes;
+  writes Lden + Lnight), `greenery` (300 m composite m²),
+  `density` (LOR ppl/ha), `admin_areas` (smallest-containing Bezirk +
+  Ortsteil via `ST_Covers`), `inside_ring` (inside the Umweltzone polygon),
+  `school_catchment` (polygon membership),
+  `disabled_parking` (count within 300 m).
 
 Threshold constants (radii, gate distances) are duplicated inline at
 the top of `enrich_listings.py` — same values as

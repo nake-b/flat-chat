@@ -1,0 +1,215 @@
+# Curated landmark / area / alias seed for the `landmarks` table (source='seed').
+#
+# WHY this exists: OSM tags iconic places inconsistently (the East Side Gallery
+# is `tourism=information` + a bare node, so our curated OSM selectors skip it),
+# and pg_trgm can't bridge abbreviations ("TU Berlin" shares ~no trigrams with
+# "Technische Universität Berlin"). This file is the small, version-controlled
+# backstop: hand-verified rows that `locate_place` (trigram over `named_places`)
+# resolves directly. See agent-compound-docs/decisions/named-place-search.md.
+#
+# Each row: name, category, optional description, geometry (WKT, EPSG:4326 —
+# "lon lat" order). geometry may be a POINT / LINESTRING / POLYGON.
+#
+# category drives behaviour:
+#   notable (monument/attraction/tower/bridge/stadium) → searchable AND shown in
+#     the nearby-landmarks card display (listings_nearby_landmarks).
+#   area  → search-only (informal Kieze; an area isn't a card "landmark").
+#   alias → search-only abbreviation pointing at the target's geometry.
+# Only seed places genuinely ABSENT from ALKIS/OSM — duplicates add noise.
+
+seeds:
+  # ---- Missing iconic landmarks (notable) ----
+  - name: East Side Gallery
+    category: attraction
+    description: "Open-air gallery on the longest surviving Berlin Wall segment, along the Spree in Friedrichshain."
+    geometry: "LINESTRING(13.4330 52.5075, 13.4395 52.5050, 13.4452 52.5018)"
+  - name: Denkmal für die ermordeten Juden Europas
+    category: monument
+    description: "Holocaust Memorial (Memorial to the Murdered Jews of Europe), Mitte."
+    geometry: "POINT(13.3789 52.5139)"
+  - name: Alexanderplatz
+    category: attraction
+    description: "Central square in Mitte (TV Tower, Weltzeituhr)."
+    geometry: "POINT(13.4132 52.5219)"
+  - name: Kottbusser Tor
+    category: attraction
+    description: "Landmark square/junction in Kreuzberg."
+    geometry: "POINT(13.4180 52.4992)"
+
+  # ---- Iconic attractions formerly pulled via OSM tourism=attraction ----
+  # That selector was dropped (it was ~90% zoo/garden/art noise); these are the
+  # genuinely-recognisable places it surfaced, re-curated here with geometry
+  # harvested from the OSM rows (centroid POINT, lon lat). All verified ABSENT
+  # from ALKIS. See agent-compound-docs/decisions/named-place-search.md.
+  - name: Gendarmenmarkt
+    category: attraction
+    description: "Landmark square in Mitte framed by the Konzerthaus and the German & French cathedrals."
+    geometry: "POINT(13.39229 52.51361)"
+  - name: Französischer Dom
+    category: attraction
+    description: "French Cathedral on the Gendarmenmarkt, Mitte."
+    geometry: "POINT(13.39239 52.51440)"
+  - name: Konzerthaus Berlin
+    category: attraction
+    description: "Schinkel's concert hall on the Gendarmenmarkt, Mitte."
+    geometry: "POINT(13.39182 52.51358)"
+  - name: Museumsinsel
+    category: attraction
+    description: "Museum Island — the UNESCO ensemble of five museums on the Spree, Mitte."
+    geometry: "POINT(13.39770 52.52021)"
+  - name: Neue Synagoge
+    category: attraction
+    description: "New Synagogue with its golden dome on Oranienburger Straße, Mitte."
+    geometry: "POINT(13.39435 52.52497)"
+  - name: Nikolaiviertel
+    category: attraction
+    description: "Reconstructed medieval old town around the Nikolaikirche, Mitte."
+    geometry: "POINT(13.40667 52.51689)"
+  - name: St. Hedwigs-Kathedrale Berlin
+    category: attraction
+    description: "St. Hedwig's Cathedral, the Catholic cathedral on Bebelplatz, Mitte."
+    geometry: "POINT(13.39486 52.51576)"
+  - name: Neptunbrunnen
+    category: attraction
+    description: "Neptune Fountain between the Rotes Rathaus and the TV Tower, Mitte."
+    geometry: "POINT(13.40684 52.51960)"
+  - name: Tränenpalast
+    category: attraction
+    description: "'Palace of Tears' — the former Friedrichstraße border-crossing hall, Mitte."
+    geometry: "POINT(13.38708 52.52086)"
+  - name: Freiheits- und Einheitsdenkmal
+    category: attraction
+    description: "Monument to Freedom and Unity ('Einheitswippe') by the Schlossplatz, Mitte."
+    geometry: "POINT(13.39999 52.51648)"
+  - name: Checkpoint Charlie
+    category: attraction
+    description: "Former Cold War border crossing on Friedrichstraße, Kreuzberg/Mitte."
+    geometry: "POINT(13.39038 52.50743)"
+  - name: Topographie des Terrors
+    category: attraction
+    description: "Documentation centre on the former Gestapo/SS site, Kreuzberg."
+    geometry: "POINT(13.38402 52.50630)"
+  - name: Hackesche Höfe
+    category: attraction
+    description: "Interlinked Art-Nouveau courtyards off Rosenthaler Straße, Mitte."
+    geometry: "POINT(13.40148 52.52457)"
+  - name: Kulturbrauerei
+    category: attraction
+    description: "Former brewery, now a cultural & events complex in Prenzlauer Berg."
+    geometry: "POINT(13.41370 52.53916)"
+  - name: Wasserturm Prenzlauer Berg
+    category: attraction
+    description: "Berlin's oldest water tower ('Dicker Hermann'), Prenzlauer Berg."
+    geometry: "POINT(13.41860 52.53418)"
+  - name: Stadtbad Oderberger Straße
+    category: attraction
+    description: "Historic indoor swimming bath, now a hotel pool, Prenzlauer Berg."
+    geometry: "POINT(13.41039 52.53782)"
+  - name: Märchenbrunnen
+    category: attraction
+    description: "Fairy-tale fountain at the entrance to Volkspark Friedrichshain."
+    geometry: "POINT(13.42673 52.52795)"
+  - name: RAW-Gelände
+    category: attraction
+    description: "Former railway-repair yard, now a nightlife & culture site in Friedrichshain."
+    geometry: "POINT(13.45445 52.50708)"
+  - name: Kulturforum
+    category: attraction
+    description: "Cluster of museums and concert halls (Philharmonie, Neue Nationalgalerie) in Tiergarten."
+    geometry: "POINT(13.36844 52.50852)"
+  - name: Schloss Bellevue
+    category: attraction
+    description: "The Federal President's official residence, Tiergarten."
+    geometry: "POINT(13.35298 52.51739)"
+  - name: AEG Turbinenfabrik
+    category: attraction
+    description: "Peter Behrens' 1909 turbine hall, an industrial-architecture landmark in Moabit."
+    geometry: "POINT(13.32452 52.52858)"
+  - name: Corbusierhaus
+    category: attraction
+    description: "Le Corbusier's Unité d'Habitation 'Typ Berlin' near the Olympiastadion, Charlottenburg."
+    geometry: "POINT(13.24389 52.51026)"
+  - name: Schlosspark Charlottenburg
+    category: attraction
+    description: "Baroque palace gardens behind Schloss Charlottenburg."
+    geometry: "POINT(13.29288 52.52447)"
+  - name: Zitadelle Spandau
+    category: attraction
+    description: "Renaissance fortress with the Juliusturm, Spandau."
+    geometry: "POINT(13.21275 52.54106)"
+  - name: Botanischer Garten
+    category: attraction
+    description: "Botanical Garden & Museum in Lichterfelde (Steglitz-Zehlendorf), one of the world's largest."
+    geometry: "POINT(13.30516 52.45427)"
+  - name: Ehemaliger Flughafen Berlin-Tempelhof
+    category: attraction
+    description: "Former Tempelhof airport; its apron and hangars now front Tempelhofer Feld park."
+    geometry: "POINT(13.39114 52.48142)"
+  - name: Schloss Britz
+    category: attraction
+    description: "Baroque manor house with park in Neukölln."
+    geometry: "POINT(13.43789 52.44691)"
+  - name: Schloss Köpenick
+    category: attraction
+    description: "Baroque palace on an island in the Dahme, now a decorative-arts museum, Köpenick."
+    geometry: "POINT(13.57279 52.44387)"
+  - name: Brecht-Haus
+    category: attraction
+    description: "Bertolt Brecht's last residence and archive, Chausseestraße, Mitte."
+    geometry: "POINT(13.38452 52.52883)"
+
+  # ---- Aliases (search-only) → point at the target's location ----
+  - name: TU Berlin
+    category: alias
+    description: "Alias → Technische Universität Berlin (Hauptgebäude, Charlottenburg)."
+    geometry: "POINT(13.3269 52.5125)"
+  - name: HU Berlin
+    category: alias
+    description: "Alias → Humboldt-Universität (Unter den Linden, Mitte)."
+    geometry: "POINT(13.3935 52.5179)"
+  - name: FU Berlin
+    category: alias
+    description: "Alias → Freie Universität Berlin (Dahlem)."
+    geometry: "POINT(13.2926 52.4527)"
+  - name: Charité
+    category: alias
+    description: "Alias → Charité – Universitätsmedizin (Campus Mitte)."
+    geometry: "POINT(13.3765 52.5266)"
+  - name: Alex
+    category: alias
+    description: "Alias → Alexanderplatz."
+    geometry: "POINT(13.4132 52.5219)"
+  - name: Kotti
+    category: alias
+    description: "Alias → Kottbusser Tor."
+    geometry: "POINT(13.4180 52.4992)"
+  - name: Görli
+    category: alias
+    description: "Alias → Görlitzer Park (Kreuzberg)."
+    geometry: "POINT(13.4407 52.4979)"
+
+  # ---- Informal Kieze / important areas (search-only points) ----
+  - name: Bergmannkiez
+    category: area
+    description: "Lively Kiez in Kreuzberg around Bergmannstraße."
+    geometry: "POINT(13.3880 52.4890)"
+  - name: Graefekiez
+    category: area
+    description: "Kiez in Kreuzberg around Graefestraße."
+    geometry: "POINT(13.4200 52.4930)"
+  - name: Kreuzkölln
+    category: area
+    description: "Kreuzberg/Neukölln border area around the Landwehrkanal."
+    geometry: "POINT(13.4240 52.4920)"
+  - name: Reuterkiez
+    category: area
+    description: "Kiez in northern Neukölln."
+    geometry: "POINT(13.4300 52.4880)"
+  - name: Simon-Dach-Kiez
+    category: area
+    description: "Nightlife Kiez in Friedrichshain around Simon-Dach-Straße."
+    geometry: "POINT(13.4540 52.5100)"
+  - name: Sprengelkiez
+    category: area
+    description: "Quiet Kiez in Wedding (Mitte)."
+    geometry: "POINT(13.3600 52.5460)"

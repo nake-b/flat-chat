@@ -1,9 +1,10 @@
 """CLI orchestrator for the gold layer.
 
-Populates `listings_geo_context` (scalar / field facts) + six junction
+Populates `listings_geo_context` (scalar / field facts) + eight junction
 tables (`listings_nearby_transit`, `listings_nearby_schools`,
-`listings_nearby_hospitals`, `listings_nearby_parks`,
-`listings_nearby_playgrounds`, `listings_nearby_water`) — see
+`listings_nearby_kitas`, `listings_nearby_hospitals`,
+`listings_nearby_parks`, `listings_nearby_playgrounds`,
+`listings_nearby_water`, `listings_nearby_landmarks`) — see
 `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
 
 Usage:
@@ -31,8 +32,9 @@ import logging
 import sys
 import traceback
 
-from db import engine
 from sqlalchemy import text
+
+from db import engine
 
 from . import enrich_listings as gold
 
@@ -46,12 +48,16 @@ REQUIRED_TABLES: list[str] = [
     "transit_stops",
     "parks",
     "schools",
+    "kitas",
     "school_catchments",
     "hospitals",
     "water_bodies",
-    "street_noise_2022",
+    "landmarks",
+    "strategic_noise_2022",
     "population_density_2025",
-    "social_monitoring_2025",
+    "bezirke",
+    "ortsteile",
+    "inner_city_zone",
     "playgrounds",
     "disabled_parking",
 ]
@@ -101,8 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     ok, empty_tables = _check_prerequisites()
     if not ok:
         logger.error(
-            "Cannot run gold: required `listings` table is empty. "
-            "Run silver.run first."
+            "Cannot run gold: required `listings` table is empty. Run silver.run first."
         )
         return 1
 

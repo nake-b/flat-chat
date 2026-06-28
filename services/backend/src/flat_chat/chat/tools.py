@@ -1,7 +1,10 @@
+from dataclasses import dataclass
 from datetime import date
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import FunctionToolset, RunContext, ToolReturn
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset
 
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
@@ -13,7 +16,7 @@ from flat_chat.listings.types import (
 )
 from flat_chat.search.geo_filters import (
     HospitalFilter,
-    MssFilter,
+    KitaFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -39,14 +42,30 @@ Tools:
   - `search_apartments(...)` — run or REPLACE the active result set. To
     refine, call again with ALL filters you want to keep (omitted args are
     dropped). Never volunteer a filter the user did not explicitly ask for.
+  - `locate_place(place_name=...)` — resolve a SPECIFIC named place (a
+    landmark, park, lake/river, school, kita, hospital) to candidate
+    references. Returns a numbered list, each with an opaque `place_ref`.
   - `open_listing(indices=[k])` — open the detail panel for listing #k AND
-    attach the neighbourhood-context blob (transit, schools, parks, noise,
-    MSS, hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
-    prose; UI focus anchors to the first index. NEVER pass UUIDs, external
-    IDs, or anything that isn't a 1-based number visible on the cards.
+    attach the neighbourhood-context blob (transit, schools, kitas, parks,
+    landmarks, noise, hospitals). Pass `indices=[k, m, …]` for side-by-side
+    comparison prose; UI focus anchors to the first index. NEVER pass
+    UUIDs, external IDs, or anything that isn't a 1-based number visible on
+    the cards.
   - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
     Indices in the CSV are absolute (1..N of the whole result set), not
     page-local.
+
+Named-place search — the 2-tool flow. When the user names a SPECIFIC place
+("near TU Berlin", "near the Spree", "by the Brandenburger Tor", "near
+Schlachtensee"):
+  1. call `locate_place(place_name="…")`,
+  2. pick the best candidate (ask the user only if genuinely ambiguous),
+  3. call `search_apartments(near_place_ref="<that candidate's place_ref>",
+     radius_km=…)`. This matches against the place's EXACT shape (a river
+     line, a campus polygon), which a coordinate radius cannot.
+Generic proximity ("near A park", "near A lake/kita/school") is NOT a named
+place — use the category filter directly (`near_park`, `near_water`, `kita`,
+`school`), no `locate_place`.
 
 After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight
 of what stands out (transit, noise, neighbourhood character) — the detail
@@ -69,16 +88,25 @@ filters for `search_apartments`:
   - "park nearby"               → near_park: "near"
   - "family-friendly" /
     "good for kids"             → near_park: "near", near_playground: "near",
-                                  max_noise: "quiet"
-  - "affluent neighbourhood"    → mss: {status_min: "affluent"}
-  - "stable affluent area"      → mss: {status_min: "affluent",
-                                        dynamics: "stable"}
-  - "up-and-coming" /
-    "gentrifying"               → mss: {status_min: "disadvantaged",
-                                        dynamics: "improving"}
+                                  kita: {distance: "near"}, max_noise: "quiet"
+  - "near a kita" / "daycare
+    nearby"                     → kita: {distance: "near"}
   - "near a Grundschule"        → school: {school_type: "Grundschule"}
   - "near a lake" /
     "by the water"              → near_water: "near"
+  - "inside the ring" /
+    "innerhalb des Rings" /
+    "city center" / "central" /
+    "Innenstadt" / "Zentrum"    → inside_ring: true
+  - "outside the ring"          → inside_ring: false
+  - "in Tiergarten" (the Ortsteil,
+    i.e. the neighbourhood)     → districts: ["Tiergarten"]
+  - "near the Tiergarten"
+    (the park itself)           → locate_place("Tiergarten") → near_place_ref
+  - "near TU Berlin" /
+    "by the Spree" /
+    "near Brandenburger Tor" /
+    "near Schlachtensee"        → locate_place("…") → near_place_ref
   - "arty / queer-friendly /
     nightlife / loft vibe"      → query: "<the user's words>"
 </phrase_map>
@@ -114,7 +142,9 @@ async def search_apartments(
     districts: list[str] | None = None,
     near_lat: float | None = None,
     near_lon: float | None = None,
+    near_place_ref: str | None = None,
     radius_km: float = 2.0,
+    inside_ring: bool | None = None,
     # Building / availability
     floor_min: int | None = None,
     floor_max: int | None = None,
@@ -127,11 +157,11 @@ async def search_apartments(
     has_kitchen: bool | None = None,
     has_elevator: bool | None = None,
     has_images: bool | None = None,
-    # Geo-context (Berlin Sozialmonitoring / transit / parks / noise / ...)
+    # Geo-context (transit / schools / kitas / parks / noise / ring / ...)
     transit: TransitFilter | None = None,
     school: SchoolFilter | None = None,
     hospital: HospitalFilter | None = None,
-    mss: MssFilter | None = None,
+    kita: KitaFilter | None = None,
     near_park: NearSpec | None = None,
     near_playground: NearSpec | None = None,
     near_water: NearSpec | None = None,
@@ -173,7 +203,19 @@ async def search_apartments(
             ("Kreuzberg", "Prenzlauer Berg", "Wedding", "Schöneberg", ...) work.
         near_lat: Latitude for proximity search.
         near_lon: Longitude for proximity search.
-        radius_km: Search radius in km (used with near_lat/near_lon).
+        near_place_ref: Opaque reference to ONE named place, obtained from
+            `locate_place`. Restricts results to listings within `radius_km`
+            of that place's exact geometry (line/polygon-precise — correct
+            for rivers and campuses). NEVER invent this token; only pass a
+            `place_ref` that `locate_place` returned this conversation. For
+            generic "near a park/lake/kita" use the category filters instead.
+        radius_km: Search radius in km (used with near_lat/near_lon AND with
+            near_place_ref).
+        inside_ring: Berlin "inside the ring" (the S-Bahn ring ≈ the
+            Umweltzone low-emission zone — Berlin's closest thing to a
+            "city centre"). True = only listings inside the ring, False =
+            only outside, unset = don't filter. Map "city center" /
+            "central" / "Innenstadt" / "Zentrum" to True.
 
         floor_min: Minimum floor number (0 = Erdgeschoss).
         floor_max: Maximum floor number.
@@ -229,18 +271,11 @@ async def search_apartments(
             clinics too. Example: "hospital nearby" →
             `{"distance": "walking_distance"}`.
 
-        mss: Filter by neighbourhood socioeconomic character
-            (Sozialmonitoring). Fields:
-              - `status_min`: minimum status floor — one of
-                `"disadvantaged"`, `"lower-income"` (default), `"mixed"`,
-                `"affluent"`. `"mixed"` matches mixed AND affluent areas.
-              - `dynamics`: exact trend match — one of `"improving"`,
-                `"stable"`, `"slipping"` (the last is counterintuitive — it
-                means improving slower than the citywide trend).
-            Neutral labels, not value judgements. Examples:
-            "affluent neighbourhood" → `{"status_min": "affluent"}`.
-            "up-and-coming" → `{"status_min": "disadvantaged",
-            "dynamics": "improving"}` (the classic gentrification signature).
+        kita: Filter by proximity to a daycare (Kita). Pass as
+            `{"distance": "near"}`. Kitas have no sub-type, so distance is
+            the only field. Example: "near a kita" → `{"distance": "near"}`.
+            For a SPECIFIC named kita ("near Kita Sonnenschein") use
+            `locate_place` → `near_place_ref` instead.
 
         near_park: Require a non-cemetery park within this distance.
             Same `NearSpec` ladder as `transit.distance` — `"next_to"` /
@@ -283,7 +318,9 @@ async def search_apartments(
         districts=districts,
         near_lat=near_lat,
         near_lon=near_lon,
+        near_place_ref=near_place_ref,
         radius_km=radius_km,
+        inside_ring=inside_ring,
         floor_min=floor_min,
         floor_max=floor_max,
         listing_type=listing_type,
@@ -297,7 +334,7 @@ async def search_apartments(
         transit=transit,
         school=school,
         hospital=hospital,
-        mss=mss,
+        kita=kita,
         near_park=near_park,
         near_playground=near_playground,
         near_water=near_water,
@@ -326,6 +363,53 @@ async def search_apartments(
     return _return_with_state(return_value=summary, session_state=ctx.deps.state)
 
 
+@toolset.tool
+async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
+    """Resolve a SPECIFIC named place to candidate references.
+
+    Use this ONLY when the user names a specific place — a landmark
+    ("Brandenburger Tor", "TU Berlin", "Siegessäule"), a named park
+    ("Tiergarten", "Görlitzer Park"), a named lake/river ("the Spree",
+    "Schlachtensee"), a named school/kita, or a named hospital ("Charité").
+    Do NOT use it for generic proximity ("near a park", "near a lake") —
+    those are category filters on `search_apartments` (`near_park`,
+    `near_water`, `kita`, `school`).
+
+    Returns a short numbered list of candidates, each with an opaque
+    `place_ref`. Pick the best one and pass its `place_ref` to
+    `search_apartments(near_place_ref="…", radius_km=…)`, which matches
+    listings against that place's exact geometry. If several candidates fit
+    and the choice matters, ask the user which they meant.
+
+    This is a PURE LOOKUP — it does not change the result set or the map.
+
+    Args:
+        place_name: The place name to look up, in the user's words (German
+            or English). Substring/fuzzy match — partial names are fine.
+    """
+    candidates = await ctx.deps.place_service.locate(place_name)
+    if not candidates:
+        return (
+            f'No place named "{place_name}" found. Try a different spelling or a '
+            "broader name; otherwise fall back to a district filter (districts=[…]) "
+            "or a generic category filter (near_park / near_water / kita)."
+        )
+
+    lines = [f'Candidates for "{place_name}" (pick one place_ref):']
+    for i, c in enumerate(candidates, start=1):
+        bits = [c.name or "(unnamed)", f"[{c.kind}]"]
+        if c.description:
+            bits.append(c.description)
+        coords = (
+            f" @ {c.lat:.4f},{c.lon:.4f}"
+            if c.lat is not None and c.lon is not None
+            else ""
+        )
+        lines.append(f"  {i}. {' — '.join(bits)}{coords}  place_ref={c.place_ref}")
+    lines.append('Then: search_apartments(near_place_ref="<place_ref>", radius_km=…).')
+    return "\n".join(lines)
+
+
 # TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
 # `select_listing` / `pan_map_to` pair, called in parallel by the LLM, once
 # the Generative-UI pattern-3 frontend tools land. See CLAUDE.md "Deferred /
@@ -347,10 +431,10 @@ async def open_listing(
     until the next `search_apartments` call.
 
     Single-index call (`indices=[k]`) opens the detail panel for listing #k
-    AND attaches the neighbourhood-context blob (transit, schools, parks,
-    noise, MSS, hospitals). Multi-index calls (`indices=[k, m, …]`) anchor
-    UI focus to the first index but return prose for all; no geo-context
-    fetch (use it for side-by-side comparison).
+    AND attaches the neighbourhood-context blob (transit, schools, kitas,
+    parks, landmarks, noise, hospitals). Multi-index calls (`indices=[k,
+    m, …]`) anchor UI focus to the first index but return prose for all; no
+    geo-context fetch (use it for side-by-side comparison).
 
     Args:
         indices: 1-based positions referring to the most recent search/page
@@ -481,3 +565,24 @@ def _return_with_state(*, return_value: str, session_state) -> ToolReturn:
             ),
         ],
     )
+
+
+@dataclass
+class ListingsCapability(AbstractCapability[ChatDeps]):
+    """The apartment search + listing tools bundled as a v2 capability.
+
+    The tools (`search_apartments`, `open_listing`, `get_result_page`) and
+    their `@toolset.instructions` protocol guidance are unchanged — this only
+    wraps the existing `FunctionToolset` so the agent is composed via
+    `capabilities=[...]` (Pydantic AI v2's primary extension primitive) instead
+    of a bare `toolsets=[...]`. `get_toolset` is called once at Agent
+    construction, so the toolset's tools are all registered by then.
+
+    New agent-callable tool groups (e.g. the map/frontend command tools and
+    distance tools) should land as their OWN capabilities — optionally with
+    `defer_loading=True` to keep them out of the cached prompt prefix until the
+    model loads them. See agent-compound-docs/decisions/pydantic-v2-migration.md.
+    """
+
+    def get_toolset(self) -> AgentToolset[ChatDeps] | None:
+        return toolset

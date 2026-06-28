@@ -59,6 +59,7 @@ def _is_terminal_auth(exc: BaseException) -> bool:
         and exc.response.status_code in _TERMINAL_STATUS
     )
 
+
 # Jina v3 — 1024 dims, 8K token window. `retrieval.passage` is the listing-
 # side LoRA; the query side uses `retrieval.query` in the backend's search
 # service. Keeping the two task-side values aligned is what gives the
@@ -100,7 +101,9 @@ def _build_text(row: dict) -> str:
     retry=retry_if_exception(_is_retriable),
     reraise=True,
 )
-def _embed_batch(client: httpx.Client, texts: list[str], api_key: str) -> list[list[float]]:
+def _embed_batch(
+    client: httpx.Client, texts: list[str], api_key: str
+) -> list[list[float]]:
     """POST a batch of texts to Jina /v1/embeddings and return their vectors.
 
     Retries on 429 / 5xx and transport errors with exponential backoff +
@@ -147,7 +150,9 @@ def backfill_embeddings(
         with httpx.Client(base_url=base_url) as client:
             while True:
                 batch_limit = (
-                    min(batch_size, limit - total_embedded) if limit is not None else batch_size
+                    min(batch_size, limit - total_embedded)
+                    if limit is not None
+                    else batch_size
                 )
                 if batch_limit <= 0:
                     break
@@ -172,7 +177,7 @@ def backfill_embeddings(
                 # zero-content vector and confuse cosine ranking. The cursor
                 # above already advanced past them, so the next iteration
                 # picks up fresh rows instead of looping.
-                payload_rows = [(r, t) for r, t in zip(rows, texts) if t]
+                payload_rows = [(r, t) for r, t in zip(rows, texts, strict=True) if t]
                 if not payload_rows:
                     logger.warning(
                         "Skipping batch of %d rows: no embeddable text", len(rows)
@@ -207,7 +212,7 @@ def backfill_embeddings(
                     # rows on the next pass. Don't crash mid-backfill.
                     continue
 
-                for (row, _), vector in zip(payload_rows, vectors):
+                for (row, _), vector in zip(payload_rows, vectors, strict=True):
                     session.execute(
                         update(listings)
                         .where(listings.c.id == row["id"])
@@ -230,7 +235,9 @@ def backfill_embeddings(
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument(

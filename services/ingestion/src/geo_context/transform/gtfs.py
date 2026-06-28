@@ -67,9 +67,7 @@ def build_stops(
         stops[["stop_id", "effective_id"]], on="stop_id", how="left"
     )
     # 3. trip → route, with the route_type and short_name we need.
-    st = st.merge(
-        trips[["trip_id", "route_id"]], on="trip_id", how="left"
-    )
+    st = st.merge(trips[["trip_id", "route_id"]], on="trip_id", how="left")
     st = st.merge(
         routes[["route_id", "route_type", "route_short_name"]],
         on="route_id",
@@ -85,11 +83,7 @@ def build_stops(
     )
     lines_served = (
         grouped["route_short_name"]
-        .apply(
-            lambda s: sorted(
-                {str(v).strip() for v in s.dropna() if str(v).strip()}
-            )
-        )
+        .apply(lambda s: sorted({str(v).strip() for v in s.dropna() if str(v).strip()}))
         .rename("lines_served")
     )
     aggs = pd.concat([modes_served, lines_served], axis=1).reset_index()
@@ -99,23 +93,22 @@ def build_stops(
     #    For the canonical rows effective_id == stop_id (the filter below
     #    guarantees this) so we drop the redundant effective_id column to
     #    avoid the merge below producing effective_id_x / effective_id_y.
-    canonical = (
-        stops.sort_values(by="location_type", ascending=False)
-        .drop_duplicates(subset="effective_id", keep="first")
+    canonical = stops.sort_values(by="location_type", ascending=False).drop_duplicates(
+        subset="effective_id", keep="first"
     )
-    canonical = canonical[
-        canonical["effective_id"] == canonical["stop_id"]
-    ].drop(columns="effective_id").copy()
+    canonical = (
+        canonical[canonical["effective_id"] == canonical["stop_id"]]
+        .drop(columns="effective_id")
+        .copy()
+    )
 
     # 6. Merge aggregates. Stops with no stop_times rows get dropped.
-    out = canonical.merge(
-        aggs, left_on="stop_id", right_on="effective_id", how="inner"
-    )
+    out = canonical.merge(aggs, left_on="stop_id", right_on="effective_id", how="inner")
 
     # 7. Build geometry + final column set.
     geom = [
         Point(float(lon), float(lat))
-        for lat, lon in zip(out["stop_lat"], out["stop_lon"])
+        for lat, lon in zip(out["stop_lat"], out["stop_lon"], strict=True)
     ]
     gdf = gpd.GeoDataFrame(
         {
@@ -151,12 +144,12 @@ def _maybe_prefix_hash(s: pd.Series | None) -> pd.Series | None:
     """GTFS publishes route_color without the leading '#'. Add it."""
     if s is None:
         return None
-    return s.apply(lambda v: f"#{v}" if pd.notna(v) and not str(v).startswith("#") else v)
+    return s.apply(
+        lambda v: f"#{v}" if pd.notna(v) and not str(v).startswith("#") else v
+    )
 
 
-def build_route_shapes(
-    shapes: pd.DataFrame, trips: pd.DataFrame
-) -> gpd.GeoDataFrame:
+def build_route_shapes(shapes: pd.DataFrame, trips: pd.DataFrame) -> gpd.GeoDataFrame:
     """Pick one canonical shape per (route_id, direction_id) and convert
     its point sequence into a single LineString."""
     if shapes.empty:
@@ -179,18 +172,17 @@ def build_route_shapes(
         .size()
         .reset_index(name="trip_count")
     )
-    winners = (
-        counts.sort_values(
-            ["route_id", "direction_id", "trip_count"], ascending=[True, True, False]
-        )
-        .drop_duplicates(subset=["route_id", "direction_id"], keep="first")
-    )
+    winners = counts.sort_values(
+        ["route_id", "direction_id", "trip_count"], ascending=[True, True, False]
+    ).drop_duplicates(subset=["route_id", "direction_id"], keep="first")
 
     # Build a LineString per winning shape_id, then join back.
     shapes_sorted = shapes.sort_values(["shape_id", "shape_pt_sequence"])
     lines = (
         shapes_sorted.groupby("shape_id")
-        .apply(lambda g: LineString(zip(g["shape_pt_lon"], g["shape_pt_lat"])))
+        .apply(
+            lambda g: LineString(zip(g["shape_pt_lon"], g["shape_pt_lat"], strict=True))
+        )
         .rename("geom")
         .reset_index()
     )
@@ -218,7 +210,5 @@ def transform_gtfs(
             tables["stops"], tables["stop_times"], tables["trips"], tables["routes"]
         ),
         "transit_routes": build_routes(tables["routes"]),
-        "transit_route_shapes": build_route_shapes(
-            tables["shapes"], tables["trips"]
-        ),
+        "transit_route_shapes": build_route_shapes(tables["shapes"], tables["trips"]),
     }

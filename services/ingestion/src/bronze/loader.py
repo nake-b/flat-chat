@@ -20,7 +20,9 @@ from sqlalchemy.orm import Session
 from db import get_session, get_table
 
 
-def _lookup_iron_card_id(session: Session, source_name: str, external_id: str) -> str | None:
+def _lookup_iron_card_id(
+    session: Session, source_name: str, external_id: str
+) -> str | None:
     iron = get_table("iron_cards")
     stmt = select(iron.c.id).where(
         iron.c.source_name == source_name,

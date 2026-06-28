@@ -21,10 +21,14 @@ import logging
 import sys
 import traceback
 
+from sqlalchemy import text
+
 from db import engine
 
 from .config import Catalog, WfsDataset, load_catalog
 from .extract.gtfs import VbbGtfsClient
+from .extract.osm import OverpassClient
+from .extract.seed import load_seed_frame
 from .extract.wfs import BerlinGdiWfsClient
 from .load.postgis import _write_append, _write_dataframe, _write_replace, to_pg_array
 from .transform.gtfs import transform_gtfs
@@ -70,9 +74,7 @@ def _run_wfs(
                 for ds in entries:
                     extra = dict(ds.extra) if ds.extra else None
                     layer_rows = 0
-                    for page_gdf in wfs_client.iter_layer_pages(
-                        ds.dataset, ds.layer
-                    ):
+                    for page_gdf in wfs_client.iter_layer_pages(ds.dataset, ds.layer):
                         if page_gdf.empty:
                             continue
                         transformed = transform_wfs_layer(
@@ -98,14 +100,10 @@ def _run_wfs(
                             )
                         layer_rows += len(transformed)
                     if layer_rows == 0:
-                        logger.warning(
-                            "%s/%s: empty, skipping", ds.dataset, ds.layer
-                        )
+                        logger.warning("%s/%s: empty, skipping", ds.dataset, ds.layer)
                         continue
                     family_ok += 1
-                    logger.info(
-                        "OK %s → %s (%d rows)", ds.key, ds.table, layer_rows
-                    )
+                    logger.info("OK %s → %s (%d rows)", ds.key, ds.table, layer_rows)
             ok += family_ok
         except Exception:
             # Whole family rolled back — count every layer in the family as
@@ -119,6 +117,60 @@ def _run_wfs(
                 traceback.format_exc(),
             )
     return ok, fail
+
+
+def _run_osm(osm_client: OverpassClient) -> tuple[int, int]:
+    """APPEND OSM landmarks into the `landmarks` table. Returns (ok, fail).
+
+    Its own step (not a WFS layer) because the source is the Overpass API,
+    not the Berlin GDI WFS. Runs AFTER the WFS `alkis_buildings` family has
+    seeded `landmarks` (which TRUNCATEs), so OSM purely appends `source='osm'`
+    rows. If the ALKIS family didn't run this pass, the rows still append
+    cleanly — gold re-enrichment reads whatever is present.
+    """
+    try:
+        gdf = osm_client.fetch_landmarks()
+        if gdf.empty:
+            logger.warning("osm: zero landmarks returned, skipping")
+            return 0, 0
+        # Tag the source discriminator on the frame (WFS does the equivalent
+        # via the YAML `extra` block; the append loader takes no extras).
+        gdf = gdf.assign(source="osm")
+        with engine.begin() as conn:
+            # Idempotent like the seed step: clear prior source='osm' rows so an
+            # OSM-only / --skip-wfs re-run (no ALKIS TRUNCATE) doesn't duplicate.
+            conn.execute(text("DELETE FROM landmarks WHERE source = 'osm'"))
+            # `landmarks` is mixed-geometry (geometry(Geometry, 4326)).
+            _write_append(conn, gdf, "landmarks", geom_type="Geometry")
+        logger.info("OK osm → landmarks (%d rows appended)", len(gdf))
+        return 1, 0
+    except Exception:
+        logger.error("FAIL osm (rolled back):\n%s", traceback.format_exc())
+        return 0, 1
+
+
+def _run_seed() -> tuple[int, int]:
+    """APPEND curated seed landmarks (source='seed') into `landmarks`.
+
+    Hand-verified iconic places / informal areas / abbreviation aliases that
+    OSM+ALKIS miss or tag inconsistently (see landmark_seed.yaml). Its own step
+    like OSM; idempotent — deletes prior source='seed' rows first so a re-run
+    doesn't duplicate. Runs AFTER OSM so it survives the ALKIS TRUNCATE.
+    """
+    try:
+        gdf = load_seed_frame()
+        if gdf.empty:
+            logger.warning("seed: no valid rows, skipping")
+            return 0, 0
+        gdf = gdf.assign(source="seed")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM landmarks WHERE source = 'seed'"))
+            _write_append(conn, gdf, "landmarks", geom_type="Geometry")
+        logger.info("OK seed → landmarks (%d rows)", len(gdf))
+        return 1, 0
+    except Exception:
+        logger.error("FAIL seed (rolled back):\n%s", traceback.format_exc())
+        return 0, 1
 
 
 def _run_gtfs(catalog: Catalog) -> tuple[int, int]:
@@ -174,6 +226,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-wfs", action="store_true", help="skip every WFS dataset"
     )
+    parser.add_argument(
+        "--skip-osm", action="store_true", help="skip the OSM landmark extractor"
+    )
+    parser.add_argument(
+        "--skip-seed", action="store_true", help="skip the curated landmark seed"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -188,24 +246,39 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_wfs:
         wfs_ok, wfs_fail = _run_wfs(catalog, only, BerlinGdiWfsClient())
 
+    # OSM landmarks APPEND into `landmarks` AFTER WFS seeds it, so it runs
+    # after the WFS pass (the ALKIS `alkis_buildings` family TRUNCATEs the
+    # table on its first page).
+    osm_ok, osm_fail = (0, 0)
+    if not args.skip_osm and (only is None or "osm" in only):
+        osm_ok, osm_fail = _run_osm(OverpassClient())
+
+    seed_ok, seed_fail = (0, 0)
+    if not args.skip_seed and (only is None or "seed" in only):
+        seed_ok, seed_fail = _run_seed()
+
     gtfs_ok, gtfs_fail = (0, 0)
     if not args.skip_gtfs and (only is None or "gtfs" in only):
         gtfs_ok, gtfs_fail = _run_gtfs(catalog)
 
-    total_ok = wfs_ok + gtfs_ok
-    total_fail = wfs_fail + gtfs_fail
+    total_ok = wfs_ok + osm_ok + seed_ok + gtfs_ok
+    total_fail = wfs_fail + osm_fail + seed_fail + gtfs_fail
     logger.info(
-        "geo_context: %d ok, %d failed (wfs=%d/%d, gtfs=%d/%d)",
+        "geo_context: %d ok, %d failed (wfs=%d/%d, osm=%d/%d, seed=%d/%d, gtfs=%d/%d)",
         total_ok,
         total_fail,
         wfs_ok,
         wfs_ok + wfs_fail,
+        osm_ok,
+        osm_ok + osm_fail,
+        seed_ok,
+        seed_ok + seed_fail,
         gtfs_ok,
         gtfs_ok + gtfs_fail,
     )
 
     # Chain gold re-enrichment if any silver geo-context family succeeded.
-    # When geo-context refreshes (e.g. updated noise raster, new MSS year),
+    # When geo-context refreshes (e.g. updated noise raster, new landmarks),
     # every listing's gold row needs to be re-computed against the new data
     # — chaining here ensures the agent's search results reflect the
     # refreshed truth without manual intervention. Skipped if everything

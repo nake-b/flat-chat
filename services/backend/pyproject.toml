@@ -13,11 +13,18 @@ dependencies = [
     "asyncpg>=0.30",
     "pgvector>=0.3",
     "pydantic-settings>=2.7",
-    "pydantic-ai>=1.97,<2.0",
-    "pydantic-ai-slim[ag-ui]>=1.97,<2.0",
+    # Pydantic AI v2: use slim + explicit extras (v2's core no longer bundles
+    # every provider). We only need ag-ui (the AGUIAdapter), anthropic
+    # (AnthropicModel — preferred, native prompt caching), and openai
+    # (OpenAIChatModel — Azure fallback). See agent-compound-docs/decisions/
+    # pydantic-v2-migration.md.
+    "pydantic-ai-slim[ag-ui,anthropic,openai]>=2.0,<3.0",
     "geoalchemy2>=0.17",
     "httpx>=0.28",
     "arize-phoenix-otel>=0.16,<0.17",
+    # No v2-aware openinference release yet (latest is 0.1.x, built for
+    # instrumentation version 4). We pin Pydantic AI's emitted instrumentation
+    # to version 4 in core/observability.py so this enrichment still renders.
     "openinference-instrumentation-pydantic-ai>=0.1,<0.2",
     "fastapi-users[sqlalchemy]>=15.0.5",
 ]

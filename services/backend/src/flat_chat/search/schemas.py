@@ -3,8 +3,7 @@
 `SearchParams` is the tool-arg surface for `search_apartments`. Wide and
 flat by design — LLMs handle ~30 flat optional fields better than deep
 nesting. Geo-context filters that have internal combinatorial structure
-(transit modes ∧ lines ∧ stop name, MSS status floor + dynamics) are
-allowed one level of nesting.
+(transit modes ∧ lines ∧ stop name) are allowed one level of nesting.
 
 Bucket labels (NoiseLabel, GreeneryLabel, DensityLabel) live in
 `listings.types` — single source of truth across the project.
@@ -24,7 +23,7 @@ from flat_chat.listings.types import (
 
 from .geo_filters import (
     HospitalFilter,
-    MssFilter,
+    KitaFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -47,10 +46,11 @@ class SearchParams(BaseModel):
     SearchService translates `True/False` into the corresponding WHERE
     clause; `None` is a no-op.
 
-    Geo-context fields (transit / school / hospital / mss / near_* / max_noise
-    / min_greenery / density) are bundled or flat depending on whether they
-    take multiple inputs. See `agent-compound-docs/decisions/
-    geo-context-thresholds.md` for the threshold spec.
+    Geo-context fields (transit / school / hospital / kita / near_* /
+    max_noise / min_greenery / density / inside_ring) are bundled or flat
+    depending on whether they take multiple inputs. See
+    `agent-compound-docs/decisions/geo-context-thresholds.md` for the
+    threshold spec.
     """
 
     query: str | None = None
@@ -71,7 +71,14 @@ class SearchParams(BaseModel):
     districts: list[str] | None = None
     near_lat: float | None = None
     near_lon: float | None = None
+    # Opaque `kind:src_id` token from `locate_place` — proximity to ONE named
+    # place's exact geometry (line/polygon-precise) via ST_DWithin. Reuses
+    # `radius_km`. The backend knows only the token FORMAT, never the tables.
+    near_place_ref: str | None = None
     radius_km: float = Field(default=2.0, gt=0, le=50)
+    # "Inside the ring" / city-centre — the Umweltzone (S-Bahn ring) flag on
+    # gold. True = inside, False = outside; None = don't filter.
+    inside_ring: bool | None = None
 
     # Building / availability
     floor_min: int | None = None
@@ -93,7 +100,7 @@ class SearchParams(BaseModel):
     transit: TransitFilter | None = None
     school: SchoolFilter | None = None
     hospital: HospitalFilter | None = None
-    mss: MssFilter | None = None
+    kita: KitaFilter | None = None
     # Flat (single concept each):
     near_park: NearSpec | None = None
     near_playground: NearSpec | None = None

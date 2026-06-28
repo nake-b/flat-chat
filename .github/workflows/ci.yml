@@ -23,7 +23,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: services/backend/uv.lock
+          # Root workspace lock is the single source of truth — `uv sync` from
+          # services/backend resolves against it (this is a uv workspace). The
+          # old per-service locks were deleted in the v2 migration.
+          cache-dependency-glob: uv.lock
 
       - name: Sync dependencies
         run: uv sync --all-extras --dev
@@ -73,3 +76,28 @@ jobs:
         run: uv run pytest
         env:
           TEST_DATABASE_URL: postgresql://flat_chat:flat_chat@localhost:5432/flat_chat_test
+
+  frontend:
+    name: Frontend (typecheck, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: typecheck (tsc -b)
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm run test:run

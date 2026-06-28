@@ -30,6 +30,8 @@ from flat_chat.listings.models import (
     Listing,
     ListingGeoContext,
     ListingNearbyHospital,
+    ListingNearbyKita,
+    ListingNearbyLandmark,
     ListingNearbyPark,
     ListingNearbyPlayground,
     ListingNearbySchool,
@@ -184,6 +186,40 @@ def nearby_water_row(
     }
 
 
+def nearby_kita_row(
+    listing_id: uuid.UUID,
+    kita_id: str | None = None,
+    distance_m: int = 180,
+    name: str | None = "Kita Sonnenschein",
+    rank: int = 1,
+) -> dict:
+    return {
+        "listing_id": listing_id,
+        "kita_id": kita_id or str(uuid.uuid4()),
+        "distance_m": distance_m,
+        "name": name,
+        "rank": rank,
+    }
+
+
+def nearby_landmark_row(
+    listing_id: uuid.UUID,
+    landmark_id: str | None = None,
+    distance_m: int = 650,
+    category: str | None = "bridge",
+    name: str | None = "Oberbaumbrücke",
+    rank: int = 1,
+) -> dict:
+    return {
+        "listing_id": listing_id,
+        "landmark_id": landmark_id or str(uuid.uuid4()),
+        "distance_m": distance_m,
+        "category": category,
+        "name": name,
+        "rank": rank,
+    }
+
+
 # Map model class → row helper name for cleaner test seeds.
 JUNCTION_MODELS = {
     "transit": ListingNearbyTransit,
@@ -192,6 +228,8 @@ JUNCTION_MODELS = {
     "parks": ListingNearbyPark,
     "playgrounds": ListingNearbyPlayground,
     "water": ListingNearbyWater,
+    "kitas": ListingNearbyKita,
+    "landmarks": ListingNearbyLandmark,
 }
 
 

@@ -9,10 +9,11 @@ Three callers, one accessor:
 
 Data sources:
   - `listings ⨝ listings_geo_context` for the listing row + scalar /
-    field geo-context (noise, greenery, density, MSS, school catchment,
-    disabled parking).
+    field geo-context (noise, greenery, density, admin area / ring,
+    school catchment, disabled parking).
   - `listings_nearby_*` junction tables for POI sets (top-N by rank for
-    transit / schools / hospitals / parks / playgrounds / water).
+    transit / schools / hospitals / parks / playgrounds / water / kitas /
+    landmarks).
 
 This service does NOT filter or rank — that's `SearchService`'s job.
 Here we're just looking up specific listings by ID. See
@@ -35,8 +36,9 @@ from .context import (
     GreeneryProfile,
     ListingCard,
     ListingDetail,
-    MssProfile,
     NearestHospital,
+    NearestKita,
+    NearestLandmark,
     NearestPark,
     NearestPlayground,
     NearestSchool,
@@ -69,6 +71,8 @@ _PARKS_TOP_N = 2
 _PLAYGROUNDS_TOP_N = 1
 _HOSPITALS_TOP_N = 2
 _WATER_TOP_N = 1
+_KITAS_TOP_N = 3
+_LANDMARKS_TOP_N = 3
 
 
 # Single round-trip for all six neighbour families. Each column is a
@@ -115,7 +119,19 @@ SELECT
      FROM world.listings_nearby_water
      WHERE listing_id = :listing_id
      ORDER BY rank LIMIT {_WATER_TOP_N}
-   ) w) AS water
+   ) w) AS water,
+  (SELECT json_agg(k ORDER BY k.rank) FROM (
+     SELECT name, distance_m, rank
+     FROM world.listings_nearby_kitas
+     WHERE listing_id = :listing_id
+     ORDER BY rank LIMIT {_KITAS_TOP_N}
+   ) k) AS kitas,
+  (SELECT json_agg(lm ORDER BY lm.rank) FROM (
+     SELECT name, category, distance_m, rank
+     FROM world.listings_nearby_landmarks
+     WHERE listing_id = :listing_id
+     ORDER BY rank LIMIT {_LANDMARKS_TOP_N}
+   ) lm) AS landmarks
 """
 )
 
@@ -191,6 +207,8 @@ class ListingService:
         playgrounds = _as_rows(row.playgrounds)
         hospitals = _as_rows(row.hospitals)
         water = _as_rows(row.water)
+        kitas = _as_rows(row.kitas)
+        landmarks = _as_rows(row.landmarks)
 
         detail.nearest_transit_stops = [
             NearestTransitStop(
@@ -239,6 +257,17 @@ class ListingService:
             if water
             else None
         )
+        detail.nearest_kitas = [
+            NearestKita(name=r["name"] or "", distance_m=r["distance_m"]) for r in kitas
+        ]
+        detail.nearest_landmarks = [
+            NearestLandmark(
+                name=r["name"] or "",
+                category=r["category"],
+                distance_m=r["distance_m"],
+            )
+            for r in landmarks
+        ]
         return detail
 
     async def get_cards(self, ids: list[str]) -> list[ListingCard]:
@@ -304,6 +333,9 @@ class ListingService:
             postal_code=listing.postal_code,
             latitude=listing.latitude,
             longitude=listing.longitude,
+            inside_ring=lgc.inside_ring if lgc is not None else None,
+            listing_bezirk=lgc.listing_bezirk if lgc is not None else None,
+            listing_ortsteil=lgc.listing_ortsteil if lgc is not None else None,
             price_warm_eur=listing.warm_rent_eur,
             price_cold_eur=listing.cold_rent_eur,
             nebenkosten_eur=listing.nebenkosten_eur,
@@ -344,10 +376,9 @@ class ListingService:
             if lgc.school_catchment
             else None
         )
-        detail.noise = _build_noise_profile(lgc.noise_profile)
+        detail.noise = _build_noise_profile(lgc.noise_profile, lgc.noise_total_lnight)
         detail.greenery = _build_greenery_profile(lgc.greenery_profile)
         detail.density = _build_density_profile(lgc.density_profile)
-        detail.mss = MssProfile(**lgc.mss_profile) if lgc.mss_profile else None
         detail.disabled_parking_count = lgc.disabled_parking_count or 0
         return detail
 
@@ -377,15 +408,24 @@ def _image_urls(images: list | None) -> list[str]:
     return out
 
 
-def _build_noise_profile(blob: dict | None) -> NoiseProfile | None:
+def _build_noise_profile(
+    blob: dict | None, total_lnight: float | None = None
+) -> NoiseProfile | None:
     """Parse the gold `noise_profile` JSONB blob into a typed NoiseProfile,
-    applying the fresh bucket label from `listings.labels`."""
-    if not blob:
+    applying the fresh bucket label from `listings.labels`.
+
+    `total_lnight` is the Lnight scalar off the `listings_geo_context` column
+    (detail-only; the filter still works on Lden). When only Lnight is
+    present we still surface a profile so the night-noise value renders.
+    """
+    if not blob and total_lnight is None:
         return None
+    blob = blob or {}
     total = blob.get("total_lden")
     return NoiseProfile(
         label=bucket_noise(total),
         total_lden=total,
+        total_lnight=total_lnight,
         street_lden=blob.get("street_lden"),
         rail_lden=blob.get("rail_lden"),
         distance_m=blob.get("distance_m"),

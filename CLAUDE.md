@@ -14,7 +14,9 @@ load-bearing ones to read first:
 - [`backend-architecture.md`](agent-compound-docs/decisions/backend-architecture.md) — layered architecture overview
 - [`dynamic-prompt-instructions.md`](agent-compound-docs/decisions/dynamic-prompt-instructions.md) — where state-dependent vs cached instructions live
 - [`async-database-layer.md`](agent-compound-docs/decisions/async-database-layer.md) — sync + async engines coexisting
-- [`geo-context-pipeline.md`](agent-compound-docs/decisions/geo-context-pipeline.md) — geo ETL design (incl. MSS English translation in silver)
+- [`geo-context-pipeline.md`](agent-compound-docs/decisions/geo-context-pipeline.md) — geo ETL design (separate WFS/GTFS cadence, DE→EN aliases in silver)
+- [`named-place-search.md`](agent-compound-docs/decisions/named-place-search.md) — `locate_place` → opaque `place_ref` → geometry-precise `ST_DWithin`; the `world.named_places` view; ALKIS+OSM landmarks
+- [`bezirk-ortsteil-resolution.md`](agent-compound-docs/decisions/bezirk-ortsteil-resolution.md) — polygon-derived districts, the district OR-union, no-geocoding reality, Umweltzone = "inside the ring"
 - [`geo-context-thresholds.md`](agent-compound-docs/decisions/geo-context-thresholds.md) — single source of truth for numeric thresholds
 - [`schema-ownership-split.md`](agent-compound-docs/decisions/schema-ownership-split.md) — two Postgres schemas (`world` = ingestion-owned, `app` = backend-owned); who migrates what
 - [`domain-context-map.md`](agent-compound-docs/decisions/domain-context-map.md) — bounded contexts + the shared-kernel / ACL / conformist relationships
@@ -62,7 +64,7 @@ agent-compound-docs/decisions/ → Architecture decision records.
 
 ```bash
 docker compose up --build                                  # Start all services at http://localhost
-docker compose --profile ingestion run --rm ingestion      # silver.run (chains gold + platinum)
+docker compose --profile ingestion run --rm ingestion      # silver.run (transform geocodes missing coords, then chains gold + platinum)
 docker compose --profile geo-context run --rm geo-context  # WFS + GTFS (chains gold re-enrichment)
 docker compose --profile gold run --rm gold                # Standalone gold rebuild (no scraping)
 docker compose --profile platinum run --rm platinum        # Standalone re-embed
@@ -99,24 +101,27 @@ See [`agent-vs-http-data-flow.md`](agent-compound-docs/decisions/agent-vs-http-d
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
-- LLM uses Pydantic AI with `instructions=` (not `system_prompt=`), `FunctionToolset[ChatDeps]` for tools (no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection
+- LLM uses Pydantic AI **v2** with `instructions=` (not `system_prompt=`), a `FunctionToolset[ChatDeps]` bound to the Agent via a capability (`capabilities=[ListingsCapability()]`, `ListingsCapability.get_toolset()` returns the toolset — no module-level cycle between `agent.py` and `tools.py`), `RunContext[ChatDeps]` for dependency injection. See [`pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md)
 - Conversation state lives in `ChatSession` (history + `SessionState` + `user_id`), held by a `SessionStore` Protocol (async `create`/`get`/`save`, sync `lock`). `DbSessionStore` (Postgres `app.*`) is the default — durable across restarts; `InMemorySessionStore` is kept for unit tests. The store owns its own `AsyncSessionLocal` sessions (persistence runs in `on_complete` at SSE-stream end, after the request scope is gone). Identity is real password auth via **fastapi-users** — `get_user_id()` resolves the authenticated user from a signed httpOnly JWT cookie (login at `/api/auth/login`; dev user via `python -m flat_chat.users.seed`). `get_user_id()` remains the single seam — call sites never change; a future Logto migration would touch only that function. See [`AUTH.md`](AUTH.md). The backend is **history-authoritative**: on a reload where the frontend sends only the new prompt (≤1 envelope message), `dispatch_agent_request` injects the DB-reconstructed history so the agent keeps context. See [`session-persistence.md`](agent-compound-docs/decisions/session-persistence.md)
 - **LLM-facing string composition is centralised in `chat/llm_context.py`** — `LlmResultSetView` (the active search wrapped with `summary` / `page` / `detail` formatting), `format_navigation_footer` (free function so the data class doesn't reference tool names), `format_geo_context_prose` (single-listing neighbourhood prose), and `build_dynamic_state_prompt` (per-turn `<current_state>` + `<user_focus>` XML blocks). Nothing outside this module composes prose for the LLM. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
 - **Three-layer prompt composition.** Pydantic AI assembles the system prompt as: agent `instructions=` (role-level, XML-tagged: `<role>` / `<ui_rendering>` / `<user_references>` / `<honesty>` / `<neutrality>`), then `@agent.instructions` (`build_dynamic_state_prompt` — per-turn `<current_state>` + optional `<user_focus>`), then `@toolset.instructions` (`<tool_protocol>` + `<phrase_map>` — co-located with the tools they describe). Renaming a tool is one atomic edit (function name + the protocol/phrase-map text in `tools.py`). The static layers are large enough for prompt caching to matter — verified: ~5600 cached prefix tokens per turn against Anthropic with `cache_instructions=True` + `cache_tool_definitions=True`.
 - `UiState` (in `chat/ui_state.py`) is the parallel frontend mirror — a Pydantic model of typed apartments + `active_id` + `active_listing_context`. `ChatDeps` exposes it as a `state: UiState` dataclass field so it satisfies the Pydantic AI `StateHandler` protocol; `AGUIAdapter` sets it per request from the AG-UI envelope. Tools mutate both `LlmResultSetView` (LLM-facing prose) and `state` (UI-facing structured data) on every call.
 - Status-pill copy ("Searching Kreuzberg…", "Found 12 listings…", "Thinking…") is NOT mirrored in `UiState`. The frontend derives lifecycle labels directly from AG-UI tool-call events via a tool-name → label registry (`services/frontend/src/state/toolStatus.ts`) consumed by `useCopilotAction` per backend tool; the Thinking phase is rendered via `useCoAgentStateRender` and suppresses itself while any tool pill is executing. See `agent-compound-docs/decisions/frontend-stack.md` §Status-pill lifecycle.
 - **State events are not auto-emitted** by Pydantic AI's AG-UI adapter — `deps.state` mutations alone are invisible to the frontend. To push state to the UI, tools must return `ToolReturn(return_value=…, metadata=[StateSnapshotEvent(snapshot=state.model_dump())])`. The adapter yields any `BaseEvent` in `ToolReturn.metadata` into the SSE stream alongside the regular `TOOL_CALL_RESULT`. See the `_return_with_state` helper in `chat/tools.py` and `agent-compound-docs/decisions/frontend-stack.md`.
+- **Tool retry/validation errors are neutralized in the AG-UI stream.** The adapter unconditionally emits a `RetryPromptPart` (a failed-validation retry) as a `TOOL_CALL_RESULT` with the raw error text as content — which our wildcard status pill would otherwise render. `chat/service.py` subclasses the event stream (`_QuietRetryEventStream` via a `_FlatChatAGUIAdapter.build_event_stream()` override) to emit **empty content** for `RetryPromptPart`, so the failed attempt shows nothing and the successful retry renders normally. The error/no-error decision is made by *type* in the backend (the only place the type survives) — the frontend stays dumb. See [`ag-ui-tool-retry-suppression.md`](agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md).
 - All cross-layer wiring goes through FastAPI `Depends` (`core/dependencies.py`) — no module-level singletons in the request path other than the session store
 - LLM provider selection lives in `chat/providers/__init__.py:build_chat_model()` — the single provider seam. Two providers wired today: Anthropic-direct (preferred when its key is set, for native prompt caching) and Azure OpenAI. The orchestrator only checks key presence; each builder (`providers/anthropic.py`, `providers/azure.py`) owns its own validation and provider-specific model settings (cache breakpoints live in `anthropic.py`, not on the Agent). When both keys are set, Anthropic wins — Azure is the fallback. See the docstring in `providers/__init__.py` for the four-layer rule and the "add a provider" recipe
 - Phoenix observability runs as a compose service in dev (UI at `http://localhost:6006`, SQLite persisted to the `phoenix_data` volume). `core/observability.py` builds the OTel pipeline explicitly — `opentelemetry.sdk.trace.TracerProvider` (not `phoenix.otel.TracerProvider`, which eagerly installs a default `SimpleSpanProcessor` and prints noisy "tracing details" on stdout) with two span processors attached via `add_span_processor()`: `OpenInferenceSpanProcessor` (enrichment — tags Pydantic AI's native spans with `llm.*` / `tool.*` attributes so Phoenix renders them as chat UI) and `BatchSpanProcessor(HTTPSpanExporter(...))` (transport — batches and flushes over OTLP/HTTP to the Phoenix collector). The provider is registered globally via `trace.set_tracer_provider()`, then `Agent.instrument_all()` enables Pydantic AI's native span emission. Per-conversation grouping comes from `with using_session(session_id)` around the agent run in `chat/service.py`. Enable per-env via `PHOENIX_ENABLED` (defaults to true in dev compose; off everywhere else)
 - **No side effects at module import.** Process-wide setup (observability, connection pools, HTTPX clients, model warm-up) goes in the FastAPI `lifespan` context manager in `main.py`, with a paired teardown after `yield` if the resource needs flushing/closing. Module-level calls on import are surprising for tests and scripts that import `flat_chat.main` for non-serving purposes
 - **Debugging the agent ↔ search ↔ SQL path.** Per-request session + run ids live in ContextVars (`session_id_var` / `run_id_var` in `core/observability.py`, set at the top of `ChatService.dispatch_agent_request`) and surface in two places: a `[session=… run=…]` prefix on every backend log line (via `_RequestContextFilter`) and a `/* session=… run=… */` comment on every SQL statement *fired from inside a request* (via the `before_cursor_execute` hook in `core/database.py` — startup queries, Alembic, and pool pre-pings carry no comment because the contextvars are unset). `pool_pre_ping=True` plus a `handle_error` event listener in `core/database.py` make a postgres restart survivable: dead-pool connections are dropped on checkout and the error is logged through our handler with full session/run prefix. To find a stuck query and map it back to the conversation, use `just psql-active` / `just psql-session <id>` — full playbook in the **Debugging** section of `services/backend/README.md`.
 - **Shared dev DB: local-first, tailnet for refresh.** Everyone runs the full stack locally via the base `docker-compose.yml` (including their own Postgres on the docker bridge) — fast, offline-friendly, plain `docker compose up`. When their local DB gets stale they refresh from the team's canonical DB via `./scripts/refresh-db.sh`, which streams `pg_dump` from `flat-chat-db` on the tailnet into their local postgres container. **Only the host** loads the `docker-compose.host.yml` overlay (via `COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml` in their `.env`), which wraps the host's existing postgres with a Tailscale sidecar that registers as `flat-chat-db` on the tailnet. Teammates never spin up the sidecar and never spawn `flat-chat-db-N` collisions. See `agent-compound-docs/decisions/shared-dev-database.md`.
-- **Geo-context ETL is a separate pipeline.** `services/ingestion/src/geo_context/` ingests Berlin GDI WFS (schools, parks, noise, population density, hospitals, social monitoring, water bodies) + VBB GTFS (transit_stops, transit_routes, transit_route_shapes) on a different cadence (yearly → weekly) than listings (daily). It runs via a separate compose profile (`--profile geo-context`) and does not auto-run on `docker compose up`. See `services/ingestion/src/geo_context/README.md` and `agent-compound-docs/decisions/geo-context-pipeline.md`.
+- **Geo-context ETL is a separate pipeline.** `services/ingestion/src/geo_context/` ingests Berlin GDI WFS (schools, kitas, parks, playgrounds, strategic noise, population density, hospitals, water bodies, landmarks (ALKIS named footprints), bezirke/ortsteile admin polygons, inner_city_zone (Umweltzone ≈ S-Bahn ring)) + OSM/Overpass (landmark Bauwerke — Brandenburger Tor, stadiums, bridges) + VBB GTFS (transit_stops, transit_routes, transit_route_shapes) on a different cadence (yearly → weekly) than listings (daily). It runs via a separate compose profile (`--profile geo-context`) and does not auto-run on `docker compose up`. **MSS/Sozialmonitoring was removed entirely (geo-context v2) on ethical grounds** — the `social_monitoring_2025` source table, `mss_*` columns, and `enrich_mss` are gone. See `services/ingestion/src/geo_context/README.md`, `agent-compound-docs/decisions/geo-context-pipeline.md`, `named-place-search.md`, and `bezirk-ortsteil-resolution.md`.
+- **Named-place search + admin/ring geo fields (geo-context v2).** A two-tool flow handles "near a *specific* named place": `locate_place(name)` → opaque `place_ref` → `search_apartments(near_place_ref=…)` → geometry-precise `ST_DWithin` against the resolved shape (correct for the Spree line and the TU campus polygon, not just a centroid). `place_ref` is composed by the ingestion-owned `world.named_places` VIEW (UNION over landmarks ∪ parks ∪ water ∪ schools ∪ kitas ∪ hospitals; the backend reads it via `PlaceService` and knows only the token format). Generic "near *a* park/lake/kita" stays a junction-table category filter (no name field). New gold fields on `listings_geo_context`: `inside_ring` (Umweltzone membership), `listing_bezirk` / `listing_ortsteil` (ALKIS polygon `ST_Covers`), `noise_total_lnight` (the noise table was renamed `street_noise_2022` → `strategic_noise_2022`). District search OR-unions `Listing.district ∪ listing_bezirk ∪ listing_ortsteil`. See `named-place-search.md` + `bezirk-ortsteil-resolution.md`.
 - **Migrations: keep schema and data fixes in separate files.** Pure-schema migrations have clean `head → down → head` cycles. Mixing data fixes (e.g. `ST_MakeValid` repairs) into the same migration breaks the cycle because the data side is intentionally irreversible. `0004_geo_context_hardening` is the existing exception — DROP COLUMNs reverse cleanly, but the geometry repairs on `green_volume_2020` / `water_bodies` stay applied after `downgrade()`. New migrations should keep these concerns separate so the round-trip test stays meaningful (now `services/ingestion/tests/integration/test_alembic_round_trip.py` — see below).
 - **Schema ownership: `world` (ingestion) + `app` (backend), one DB.** All medallion + geo-context tables live in the `world` schema, owned and migrated by the **ingestion** service (`services/ingestion/alembic/`, tracked in `world.alembic_version`). The backend owns only the `app` schema (users/sessions/bookmarks — not built yet; `app.alembic_version`) and keeps **read-only** ORM over `world.*`. Extensions + schemas are created by the postgres bootstrap (`services/postgres/init/`), not migrations. Migrations stay **manual**; required order is bootstrap → ingestion `upgrade head` → backend `upgrade head`. Full record: [`schema-ownership-split.md`](agent-compound-docs/decisions/schema-ownership-split.md); migration playbook: [`agent-compound-docs/runbooks/schema-split-migration.md`](agent-compound-docs/runbooks/schema-split-migration.md).
 - **TODO — listings are not auto-embedded.** Silver transformers don't populate the `embedding` column on the `Listing` table; semantic ranking via `sort_by=relevance` therefore degrades to recency. Run `python -m silver.embed` after `silver.run` to backfill embeddings. Replace with an inline step once we trust the throughput.
-- **TODO — immowelt and wohninberlin scrapers exist but have no silver transformer.** Their bronze rows accumulate but never enter `listings`. Add transformers in `services/ingestion/src/silver/sources/` and wire them into `_TRANSFORMERS` in `silver/transformer.py`.
+- **TODO — immowelt scraper exists but has no silver transformer.** Its bronze rows accumulate but never enter `listings`. Add a transformer in `services/ingestion/src/silver/sources/` and wire it into `_TRANSFORMERS` in `silver/transformer.py`. (wohninberlin is now wired — it's a single-step source: the scraper writes cards straight into `raw_listings` with no detail-scrape phase.)
+- **TODO — `near_lat`/`near_lon` is wired in `SearchParams` but not yet exposed as an agent tool argument.** The flat raw-coordinate proximity filter (`ST_DWithin` against `(near_lon, near_lat)`) exists on `SearchParams` and in `search/service.py`, but `search_apartments` doesn't currently take it. Three intended uses, all wanted: (a) **"search where I'm looking"** — a map-driven AG-UI pattern-3 frontend tool that feeds the map center/viewport into the search; (b) **"near this address"** — needs a geocoding step (none exists today, see `bezirk-ortsteil-resolution.md`); (c) the **raw-coord primitive** that `near_place_ref` resolves down to. Ship (a) first once pattern-3 frontend tools land.
 - **TODO — CopilotKit Web Inspector is hidden.** Because we use `agents__unsafe_dev_only` (direct AG-UI via `HttpAgent`) instead of a CopilotRuntime middleware, `/api/agent/info` returns 422 and the inspector renders a "Runtime error" banner. `services/frontend/src/main.tsx` passes `showDevConsole={false}` *and* a `MutationObserver` actively removes any `<cpk-web-inspector>` element from the DOM. To re-enable it for live debugging of AG-UI flows we either (a) add a CopilotRuntime middleware (Next.js-only today; Vite would need a custom server) or (b) stub `GET /api/agent/info` with a payload that satisfies CopilotKit's parser. Either is a non-trivial side project; the inspector is *not* needed for the chat to function — Phoenix at `:6006` covers most of the debugging needs.
 - The architecture is evolving iteratively — question choices, suggest improvements, flag concerns
 
@@ -171,7 +176,7 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 - **Resolved (0006): spatial junction tables.** Six `listings_nearby_*` tables (transit / schools / hospitals / parks / playgrounds / water) populated by gold ETL with top-K=5 ∪ all-within-R per listing. POI filters (`transit.modes`, `transit.lines`, `school_type`, `hospital.tier`, etc.) work end-to-end again. `max_noise` got its 50 m coverage gate back, optimistic-include semantics restored. `GET /api/health?extended=true` surfaces `gold_orphans` for drift detection. Full doc + sources: [`spatial-neighbor-tables.md`](agent-compound-docs/decisions/spatial-neighbor-tables.md).
 - **In-memory refinement of the active result set.** Today, every refinement (adding a filter to a result that's already loaded) re-runs `search_apartments` against the gold table. That's fast (~50ms) so we ship it that way. If refinement-latency ever becomes a UX issue, the path forward is documented in [`session-state-design.md`](agent-compound-docs/decisions/session-state-design.md): integrate pandas into `SessionState` and add a `state.refine(params)` method that filters the snapshot in memory. The snapshot already exists; only the refinement plumbing is new.
 - **Listings without embeddings** still happen — `platinum.run` requires `JINA_API_KEY`. Without it, semantic-search ranking degrades to recency. Set the env var and run `platinum.run` to backfill.
-- **immowelt + wohninberlin scrapers exist but no silver transformer.** Their bronze rows accumulate but never reach listings. Add transformers in `services/ingestion/src/silver/sources/`.
+- **immowelt scraper exists but no silver transformer.** Its bronze rows accumulate but never reach listings. Add a transformer in `services/ingestion/src/silver/sources/`. (wohninberlin is wired — single-step: card → `raw_listings` directly, no detail phase.)
 
 ## Deferred / nice-to-have (post-MVP)
 
@@ -186,7 +191,9 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 
 ## Pydantic AI Patterns
 
-Install: `pip install "pydantic-ai" "pydantic-ai-slim[ag-ui]"` — the AG-UI extra is on `pydantic-ai-slim`, not the meta package; install both to get all provider extras plus the `AGUIAdapter` for our `/api/agent` route.
+Install (Pydantic AI **v2**): `pydantic-ai-slim[ag-ui,anthropic,openai]>=2.0,<3.0`. v2's core no longer bundles every provider — declare only the extras you use (`ag-ui` for the `AGUIAdapter` on `/api/agent`, `anthropic` + `openai` for our two providers). Do NOT add the `pydantic-ai` metapackage; it pulls every provider extra back in. See [`agent-compound-docs/decisions/pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md).
+
+Tools are bound to the Agent via `capabilities=[...]` (v2's composition primitive) — a capability bundles tools + instructions + hooks + model settings. Our `ListingsCapability` wraps the existing `FunctionToolset`; see the Tools section below and the migration doc.
 
 ### Agent Definition
 
@@ -263,11 +270,20 @@ result = await agent.run("Hello", deps=MyDeps(db=db, user_id="123", http_client=
 ### Tools
 
 This project uses `FunctionToolset` so tools live in their own module without
-ever importing the `agent` object — kills the `agent.py ↔ tools.py` cycle.
+ever importing the `agent` object — kills the `agent.py ↔ tools.py` cycle. In
+v2 the toolset is bound to the Agent via a **capability** (`capabilities=[...]`)
+rather than `toolsets=[...]`: `ListingsCapability` wraps the toolset by
+returning it from `get_toolset()`. New agent-callable tool groups (map/frontend
+command tools, distance tools) land as their own capabilities — optionally
+`defer_loading=True` to keep them out of the cached prompt prefix until the
+model loads them (the ToolSearch lever).
 
 ```python
 # chat/tools.py
+from dataclasses import dataclass
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset
 from flat_chat.chat.state import ChatDeps
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
@@ -275,9 +291,14 @@ toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 @toolset.tool
 async def search_apartments(ctx: RunContext[ChatDeps], query: str) -> str: ...
 
+@dataclass
+class ListingsCapability(AbstractCapability[ChatDeps]):
+    def get_toolset(self) -> AgentToolset[ChatDeps] | None:
+        return toolset  # the existing toolset, unchanged
+
 # chat/agent.py
-from flat_chat.chat.tools import toolset
-agent = Agent(deps_type=ChatDeps, toolsets=[toolset], instructions=...)
+from flat_chat.chat.tools import ListingsCapability
+agent = Agent(deps_type=ChatDeps, capabilities=[ListingsCapability()], instructions=...)
 ```
 
 #### Toolset instructions
@@ -309,7 +330,8 @@ you want to keep (omitted args are dropped). ...
 
 <phrase_map>
   - "near U-Bahn" → transit: {modes: ["u_bahn"]}
-  - "up-and-coming" → mss: {status_min: "disadvantaged", dynamics: "improving"}
+  - "inside the ring" / "city center" → inside_ring: true
+  - "near the Tiergarten" → locate_place("Tiergarten") → near_place_ref
   ...
 </phrase_map>
 """
@@ -345,7 +367,7 @@ def calculate_commute(origin: str, destination: str) -> str:
 # Carve-out: one level of nesting is acceptable when a single concept has
 # internal combinatorial structure that would otherwise inflate the parameter
 # count 4–5×. Example: this project's `transit: TransitFilter` (modes, lines,
-# stop_name, distance) and `mss: MssFilter` (status_min, dynamics) — flat
+# stop_name, distance) and `school: SchoolFilter` (school_type, distance) — flat
 # alternatives would add ~20 prefixed params. Compensate with rich
 # docstrings + a phrase-map on the toolset (see "Toolset instructions"
 # below).

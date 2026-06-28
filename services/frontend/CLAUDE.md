@@ -84,8 +84,10 @@ Note: `result_markers` mirrors the SERIALIZED COLUMNAR shape
 in-memory `list[Marker]`. Decode it with `decodeMarkers(...)` before
 use.
 
-Label literal vocab (`NoiseLabel`, `MssStatus`, etc.) traces to
+Label literal vocab (`NoiseLabel`, `DensityLabel`, `GreeneryLabel`, etc.)
+traces to
 [`geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md).
+(MSS/Sozialmonitoring labels were removed entirely in geo-context v2.)
 
 No automation — top-of-file comment is the contract. If drift becomes
 costly, add `pydantic-to-typescript` or a small in-repo codegen step.
@@ -96,12 +98,25 @@ Status-pill copy ("Searching Kreuzberg…", "Found 12 listings…") is NOT
 in `SessionState`. The frontend derives lifecycle labels directly from
 AG-UI tool-call events via the tool-name → label registry in
 `state/toolStatus.ts`, consumed by `useCopilotAction` per backend tool.
-The "Thinking" phase is rendered via `useCoAgentStateRender` and
-suppresses itself while any tool pill is executing.
+
+Which indicator shows at all is decided by one derived **phase**
+(`hooks/useAgentPhase.ts`): `idle` → nothing, `tool` → the per-tool pill,
+`streaming` → nothing (the answer is the indicator), `reasoning` → the
+"Thinking" pill. Exactly one phase is active at a time, so the Thinking
+pill never sits on top of a streaming answer or a running tool. The pill
+itself is a DOM portal pinned to the end of `.copilotKitMessagesContainer`
+(not `useCoAgentStateRender`, whose stale message-id claim mis-anchors it).
+See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/frontend-status-lifecycle.md).
 
 Adding a new backend tool: register a label in `toolStatus.ts` and a
 `useCopilotAction` handler. Zero backend churn — tools stay pure data
 mutators.
+
+Because the wildcard pill echoes the tool `result`, a tool **retry/
+validation error** would otherwise print its raw error text. That's
+neutralized on the backend (empty-content `TOOL_CALL_RESULT` for a
+`RetryPromptPart`), not string-matched here — see
+[`ag-ui-tool-retry-suppression.md`](../../agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md).
 
 ## Card-strip / Map / Detail rendering
 
@@ -124,9 +139,13 @@ mutators.
   `apt` tier-2 prop is now optional; the active card is resolved from
   the card cache ∪ preview by `CardsPane`, falling back to
   `active_listing_detail`). Renders image gallery + amenity chips + full
-  stat grid + geo-context block (transit, schools, parks, playground,
-  hospitals, water, noise with sub-numerics, greenery + m², density +
-  persons/hectare, MSS + social_inequality, disabled parking).
+  stat grid + geo-context block (transit, schools, kitas, parks, playground,
+  landmarks (nearby, e.g. "near the Siegessäule · 300 m"), hospitals, water,
+  noise with sub-numerics incl. night Lnight, greenery + m², density +
+  persons/hectare, Bezirk/Ortsteil, inside-ring yes/no, disabled parking).
+  (MSS/Sozialmonitoring cell removed in geo-context v2.) A `⭕ inside ring`
+  chip shows on the card strip; the map carries an ODbL
+  `© OpenStreetMap contributors` attribution for OSM landmark data.
 
 ## Performance — windowing up to MARKER_CAP=5000
 

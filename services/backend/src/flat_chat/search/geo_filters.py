@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from flat_chat.listings.types import GtfsMode, MssDynamics, MssStatus, NearSpec
+from flat_chat.listings.types import GtfsMode, NearSpec
 
 
 class TransitFilter(BaseModel):
@@ -77,28 +77,12 @@ class HospitalFilter(BaseModel):
     tier: Literal["plan_hospital", "any"] = "plan_hospital"
 
 
-class MssFilter(BaseModel):
-    """Filter listings by neighbourhood socioeconomic character (Sozialmonitoring).
+class KitaFilter(BaseModel):
+    """Filter listings by proximity to a daycare (Kita).
 
-    `status_min` is a *minimum* status floor — `"mixed"` matches mixed
-    AND affluent areas. `dynamics` is exact — `"improving"` only matches
-    areas trending up faster than Berlin overall.
-
-    These are neighbourhood-character labels, NOT a desirability score.
-    A renter seeking "up-and-coming" wants `status_min="disadvantaged"`
-    + `dynamics="improving"` (the classic gentrification signature).
+    A Kita has no sub-type to filter on (unlike schools, where
+    `SchoolFilter.school_type` selects Grundschule / Gymnasium / …), so
+    this is purely a distance filter. "near a kita" → `{"distance": "near"}`.
     """
 
-    status_min: MssStatus = "lower-income"
-    dynamics: MssDynamics | None = None
-
-
-# Used by `SearchService` to translate `mss.status_min` into a SQL
-# threshold — higher value = more affluent. Co-located here because it's
-# inherent to the MSS status enum (not a tweakable threshold).
-MSS_STATUS_RANK: dict[MssStatus, int] = {
-    "disadvantaged": 0,
-    "lower-income": 1,
-    "mixed": 2,
-    "affluent": 3,
-}
+    distance: NearSpec = "near"

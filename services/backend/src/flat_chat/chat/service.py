@@ -3,9 +3,11 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
+from ag_ui.core import BaseEvent, EventType, ToolCallResultEvent
 from pydantic import ValidationError
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.ui.ag_ui import AGUIAdapter
+from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -16,6 +18,7 @@ from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
+from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 
 try:
@@ -32,6 +35,55 @@ class InvalidAgentRequestError(Exception):
 
 class LlmProviderUnavailableError(Exception):
     """No LLM provider is configured / could be built for this run."""
+
+
+class _QuietRetryEventStream(AGUIEventStream[ChatDeps, str]):
+    """AG-UI event stream that hides tool-retry / validation errors from the UI.
+
+    When the LLM emits invalid tool args (or a tool raises ModelRetry), Pydantic
+    AI builds a `RetryPromptPart` and the stock `AGUIEventStream._handle_tool_result`
+    unconditionally streams its `model_response()` — the raw "N validation errors…
+    Fix the errors and try again." dump — as the tool-call result content. Our
+    wildcard status pill echoes that content, so the error leaks into the chat.
+
+    The agent retries the call (a *new* tool_call_id) and usually succeeds, so the
+    failure is a transient internal correction the user should never see. We can
+    only tell a retry from a real result by *type* (`RetryPromptPart`), and that
+    type survives only here on the backend — the frontend receives a flat content
+    string with no error flag. So we make the decision here: emit an EMPTY-content
+    result for a retry (the frontend renders nothing for an empty result) and let
+    real `ToolReturnPart` results flow through untouched.
+
+    Empty content rather than dropping the event entirely keeps CopilotKit's tool
+    lifecycle intact (the call still completes → no stuck/pulsing pill).
+
+    Full rationale + why this isn't fixable upstream:
+    `agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md`.
+    """
+
+    async def _handle_tool_result(
+        self, result: ToolReturnPart | RetryPromptPart
+    ) -> AsyncIterator[BaseEvent]:
+        if isinstance(result, RetryPromptPart):
+            yield ToolCallResultEvent(
+                message_id=self.new_message_id(),
+                type=EventType.TOOL_CALL_RESULT,
+                role="tool",
+                tool_call_id=result.tool_call_id,
+                content="",
+            )
+            return
+        async for event in super()._handle_tool_result(result):
+            yield event
+
+
+class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
+    """AG-UI adapter wired to use the retry-suppressing event stream."""
+
+    def build_event_stream(self) -> _QuietRetryEventStream:
+        return _QuietRetryEventStream(
+            self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version
+        )
 
 
 def _summarise_prompt(run_input: Any) -> str:
@@ -69,10 +121,12 @@ class ChatService:
         self,
         search_service: SearchService,
         listing_service: ListingService,
+        place_service: PlaceService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
+        self.place_service = place_service
         self.store = store
 
     async def dispatch_agent_request(
@@ -83,12 +137,11 @@ class ChatService:
         # subsequently runs the agent, streams events back, and reads
         # `deps.state` to emit JSON-Patch deltas to the frontend.
         try:
-            # Subscript the adapter with our deps type — `AgentDepsT` defaults
-            # to `None`, so the bare-class classmethod would otherwise type the
-            # adapter (and `run_stream(deps=)`) as `None`-deps.
-            adapter = await AGUIAdapter[ChatDeps, str].from_request(
-                request, agent=agent
-            )
+            # `_FlatChatAGUIAdapter` already binds `AGUIAdapter[ChatDeps, str]`,
+            # so deps are typed as ChatDeps (not the `AgentDepsT=None` default)
+            # without subscripting — the subclass is concrete, so subscripting it
+            # would raise `TypeError: not subscriptable`.
+            adapter = await _FlatChatAGUIAdapter.from_request(request, agent=agent)
         except ValidationError as exc:
             raise InvalidAgentRequestError(str(exc)) from exc
 
@@ -154,6 +207,7 @@ class ChatService:
         deps = ChatDeps(
             search_service=self.search_service,
             listing_service=self.listing_service,
+            place_service=self.place_service,
             session=session,
             state=deps_state,
         )
