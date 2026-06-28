@@ -11,6 +11,7 @@ src/flat_chat/
   main.py              → FastAPI app + lifespan + router registration
   core/                → DB engines (sync + async), config, observability, deps
   api/                 → HTTP routes — thin
+                          auth.py     fastapi-users routers mounted under /api/auth
                           chat.py     POST /api/conversations + GET messages + GET state
                           agent.py    POST /api/agent (AG-UI SSE)
                           listings.py GET /api/listings/{id} (detail)
@@ -29,9 +30,6 @@ src/flat_chat/
                           models.py       User ORM (fastapi-users columns)
                           auth.py         fastapi-users wiring (UserManager,
                                           cookie+JWT backend, current_active_user)
-                          service.py      UserService (app-domain policy;
-                                          future LLM rate-limit / cost-control seam)
-                          seed.py         python -m flat_chat.users.seed (dev user)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total)
                           places.py       PlaceService — locate_place trigram lookup over world.named_places
@@ -264,9 +262,10 @@ When adding a new search filter, add a test in the same change.
 - Auth: real password login via **fastapi-users** (`users/auth.py`). `get_user_id()`
   (`core/dependencies.py`) resolves the authenticated user from a signed httpOnly
   JWT cookie — still the single seam, so call sites never change. Argon2 via
-  `pwdlib`. Dev login seeded by `python -m flat_chat.users.seed`. `JWT_SECRET` is
+  `pwdlib`. Dev login seeded by `scripts/seed_users.py`. `JWT_SECRET` is
   required. `POST /api/agent` is now ownership-checked (404-not-403). Per-user LLM
-  rate-limiting / cost-control belongs on `UserService` when added. Logto is the
+  rate-limiting / cost-control gets its own service when built (not yet — no empty
+  placeholder). Logto is the
   documented future migration; Authlib (social) deferred. See
   [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - Bookmarks not implemented; slot ready (`listings/bookmarks_service.py`

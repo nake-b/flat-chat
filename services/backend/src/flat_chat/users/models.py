@@ -8,7 +8,8 @@ keep the existing primary key (`gen_random_uuid()` server default) so the `0001`
 migration's `id` column is unchanged — no FK re-keying of conversations.
 
 `email` / `hashed_password` are **NOT NULL** — every user is a real account
-(created by registration or `users.seed`). There are no dummy / placeholder rows:
+(created by the seed script, `scripts/seed_users.py`). There are no dummy /
+placeholder rows:
 `DbSessionStore.create` no longer fabricates a user, so a conversation can only
 reference a user that already exists. `DUMMY_USER_ID` survives solely as a fixed id
 for `InMemorySessionStore` unit tests (no DB).
@@ -66,9 +67,7 @@ class User(Base):
             String(length=320), unique=True, index=True, nullable=False
         )
         hashed_password = mapped_column(String(length=1024), nullable=False)
-        is_active = mapped_column(
-            Boolean, nullable=False, server_default=text("true")
-        )
+        is_active = mapped_column(Boolean, nullable=False, server_default=text("true"))
         is_superuser = mapped_column(
             Boolean, nullable=False, server_default=text("false")
         )

@@ -26,13 +26,15 @@ Companion decision doc: [`agent-compound-docs/decisions/session-persistence.md`]
   depends on `Depends(get_user_id)` — but it now resolves the authenticated
   fastapi-users `current_active_user` from the cookie (401 when absent) instead of
   returning a constant. One function changed; no call sites did.
-- **Accounts are seed-only.** `python -m flat_chat.users.seed` is the ONLY way
-  users are created (no public signup). It idempotently creates the admin
-  (`DEV_USER_EMAIL` / `DEV_USER_PASSWORD`, defaults `dev@flat-chat.dev` / `dev`,
-  `is_superuser`) and, when both `PROF_USER_EMAIL` / `PROF_USER_PASSWORD` are set,
-  a regular reviewer account. A dev script, **not** a migration (migrations stay
-  pure-schema). To add a user later: set env + re-run the seed, or create one via
-  the `UserManager` in a one-off script.
+- **Accounts are seed-only.** `scripts/seed_users.py` is the ONLY way users are
+  created (no public signup) — run it with
+  `uv run --project services/backend python scripts/seed_users.py`. It idempotently
+  creates the admin (`DEV_USER_EMAIL` / `DEV_USER_PASSWORD`, defaults
+  `dev@flat-chat.dev` / `dev`, `is_superuser`) and, when both `PROF_USER_EMAIL` /
+  `PROF_USER_PASSWORD` are set, a regular reviewer account. A standalone
+  operational script, **not** a migration (migrations stay pure-schema). To add a
+  user later: set env + re-run the seed, or create one via the `UserManager` in a
+  one-off script.
 - **Frontend.** A `LoginGate` wraps the app: it checks the session once, shows a
   login form when anonymous, and only mounts the conversation bring-up once
   authenticated. Sign-out lives in the chat header. See
@@ -40,15 +42,12 @@ Companion decision doc: [`agent-compound-docs/decisions/session-persistence.md`]
 
 ### App-domain user policy vs auth lifecycle
 
-Two layers, kept separate on purpose:
-
-- **fastapi-users (`users/auth.py`)** owns the *auth lifecycle* — register /
-  login / logout / password / JWT.
-- **`users/service.py:UserService(db)`** owns *app-domain user policy* — `get(id)`
-  today, and the deliberate home for the next per-user-but-not-auth concern:
-  **LLM rate-limiting / cost-control** (usage counters + a budget check the chat
-  path consults before an agent run). Adding it later is a method on an existing
-  service, not a new cross-cutting concern.
+`users/auth.py` owns only the *auth lifecycle* — register / login / logout /
+password / JWT. Everything *about a user that isn't auth* (profile reads, and the
+next per-user-but-not-auth concern: **LLM rate-limiting / cost-control** — usage
+counters + a budget check the chat path consults before an agent run) is a
+separate concern that gets its own service when it's actually built. It isn't yet
+— we deliberately didn't add an empty placeholder service ahead of need.
 
 ### The user model
 
@@ -62,7 +61,7 @@ required) so the primary key keeps its `gen_random_uuid()` server default from
 `email` / `hashed_password` are **NOT NULL**: every user is a real account.
 There are no dummy / placeholder rows — `DbSessionStore.create` no longer
 fabricates a user, so a conversation can only reference a user that already exists
-(registration or `users.seed`). Because the columns are NOT NULL with no default,
+(created by `scripts/seed_users.py`). Because the columns are NOT NULL with no default,
 migration `0002` must run against an **empty `app.users` table** (a fresh /
 refreshed dev DB) — a deliberate dev-only stance, since the only accounts are a
 seeded dev user and the reviewer's. `DUMMY_USER_ID` survives only as a fixed id for
@@ -139,7 +138,8 @@ Deferred (tracked, not yet built):
   `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Rotating it logs
   everyone out. Tests set a sentinel in `conftest.py`.
 - Bring-up order: **start from a fresh/empty `app.users`** → `alembic upgrade head`
-  → `python -m flat_chat.users.seed` → run. Migration `0002` adds NOT-NULL columns
+  → `uv run --project services/backend python scripts/seed_users.py` → run.
+  Migration `0002` adds NOT-NULL columns
   with no default, so a DB still holding pre-auth rows must be cleared first
   (`./scripts/refresh-db.sh`, or drop/recreate the DB, or `DELETE FROM app.users`
   which cascades to its conversations). No production data exists to preserve.

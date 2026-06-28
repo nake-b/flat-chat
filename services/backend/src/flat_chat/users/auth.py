@@ -6,13 +6,14 @@ and exposes the pieces the rest of the app needs:
   - `current_active_user` — the FastAPI dependency that resolves the logged-in
     `User` from the session cookie (401 when absent/invalid). `get_user_id()` in
     `core/dependencies.py` wraps it as the single identity seam.
-  - `fastapi_users` — the instance whose `get_*_router()` factories `main.py`
-    mounts under `/api/auth`.
-  - `UserManager` / schemas / `get_user_db` — used by `users/seed.py` to create
-    the dev user with a properly hashed password.
+  - `fastapi_users` — the instance whose `get_*_router()` factories `api/auth.py`
+    wires into a router (mounted under `/api/auth` in `main.py`).
+  - `UserManager` / schemas / `get_user_db` — used by `scripts/seed_users.py` to
+    create the dev user with a properly hashed password.
 
-Auth lifecycle (this module) is deliberately separate from app-domain user
-policy (`users/service.py:UserService` — reads, future rate-limit / cost-control).
+This module owns only the auth lifecycle. App-domain user policy that isn't
+authentication (profile reads, future per-user LLM rate-limiting / cost-control)
+will get its own service when it's actually needed — it isn't built yet.
 
 Transport is a **cookie** (httpOnly, SameSite=Lax) carrying a JWT signed with
 `settings.jwt_secret`. Same-origin via nginx / the Vite proxy, so the browser

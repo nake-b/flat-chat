@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # still talk plain HTTP to the backend). See AUTH.md.
     cookie_secure: bool = False
 
-    # Seeded accounts (created by `python -m flat_chat.users.seed`). There is NO
+    # Seeded accounts (created by `scripts/seed_users.py`). There is NO
     # public registration — users exist only via this script. The dev account is
     # an admin (superuser); the optional professor account is a regular user and
     # is only created when BOTH prof vars are set. Override in any deployment.

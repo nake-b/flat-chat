@@ -129,9 +129,7 @@ class ChatService:
         self.place_service = place_service
         self.store = store
 
-    async def dispatch_agent_request(
-        self, request: Request, user_id: str
-    ) -> Response:
+    async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
         # Parse the AG-UI request envelope first so we can resolve the
         # session from its `thread_id` / conversation_id. The adapter
         # subsequently runs the agent, streams events back, and reads

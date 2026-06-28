@@ -12,7 +12,7 @@ seeded dev + reviewer account). On a DB that still holds pre-auth rows, clear
 `app.users` (or refresh the DB) before upgrading.
 
 Pure schema — clean `head → down → head` round-trip (every op reverses). No data
-seed; the dev user is created by `python -m flat_chat.users.seed`. See AUTH.md and
+seed; the dev user is created by `scripts/seed_users.py`. See AUTH.md and
 agent-compound-docs/decisions/session-persistence.md.
 
 Revision ID: 0002_user_auth_columns

@@ -30,8 +30,8 @@ Status: **implemented** (this is the as-built record; supersedes the former
   is_superuser, is_verified)` — the auth columns (migration `0002`) are **NOT NULL**
   for `email`/`hashed_password`: every user is a real account, no dummy/placeholder
   rows. `DbSessionStore.create` no longer fabricates a user — a conversation can
-  only reference a user that already exists (registration or `users.seed`). The dev
-  user is created by `python -m flat_chat.users.seed` (idempotent dev script), NOT a
+  only reference a user that already exists (created by the seed script). The dev
+  user is created by `scripts/seed_users.py` (idempotent operational script), NOT a
   migration — keeps migrations pure-schema. `0002` adds NOT-NULL columns with no
   default, so it runs against an empty `app.users` (fresh/refreshed dev DB).
 - `conversations(id pk, user_id fk→app.users CASCADE, title, archived_at, created_at, updated_at)`

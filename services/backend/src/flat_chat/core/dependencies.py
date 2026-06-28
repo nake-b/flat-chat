@@ -18,7 +18,6 @@ from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.users.auth import current_active_user
 from flat_chat.users.models import User
-from flat_chat.users.service import UserService
 
 # Process-lifetime singleton — survives across requests, dies with the worker.
 # Owns its own DB sessions (via AsyncSessionLocal), independent of the request
@@ -43,10 +42,6 @@ async def get_user_id(user: User = Depends(current_active_user)) -> str:
     to run as an arbitrary user without minting a real cookie.
     """
     return str(user.id)
-
-
-def get_user_service(db: AsyncSession = Depends(get_async_db)) -> UserService:
-    return UserService(db)
 
 
 def get_listing_service(

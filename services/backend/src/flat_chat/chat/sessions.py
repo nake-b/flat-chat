@@ -133,7 +133,7 @@ class DbSessionStore:
         conv_id = uuid4()
         user_uuid = UUID(user_id)
         async with self._session_factory() as db, db.begin():
-            # The user must already exist (created by registration / `users.seed`);
+            # The user must already exist (created by `scripts/seed_users.py`);
             # the conversation just references it. We don't fabricate users here —
             # the FK enforces that. Tests create the user row first.
             db.add(Conversation(id=conv_id, user_id=user_uuid))

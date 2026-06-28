@@ -16,6 +16,8 @@ the session store are bound to that connection via savepoints. Gated on
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+from pathlib import Path
 
 import httpx
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -23,7 +25,6 @@ from httpx import ASGITransport
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import flat_chat.users.seed as seed_mod
 from flat_chat.chat.sessions import DbSessionStore
 from flat_chat.core.database import get_async_db
 from flat_chat.core.dependencies import get_session_store
@@ -34,6 +35,21 @@ from flat_chat.users.models import User
 from ..conftest import DB_REQUIRED
 
 pytestmark = DB_REQUIRED
+
+
+def _load_seed_module():
+    """Import the standalone `scripts/seed_users.py` by path.
+
+    Seeding lives in a repo-root operational script (not a package module), so
+    there's no import path for it — load it from disk to test its idempotency.
+    """
+    path = Path(__file__).resolve().parents[4] / "scripts" / "seed_users.py"
+    spec = importlib.util.spec_from_file_location("seed_users", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 EMAIL = "tester@flat-chat.dev"
 PASSWORD = "s3cret-pw"
@@ -163,13 +179,14 @@ def test_public_registration_is_closed(async_db_url):
 
 
 def test_seed_is_idempotent(async_db_url):
-    """`python -m flat_chat.users.seed` is safe to re-run.
+    """`scripts/seed_users.py` is safe to re-run.
 
-    Exercises the seed's own per-account helper (`seed._create`) — the function
-    that owns the `UserAlreadyExists` skip — twice with the same email. The second
-    call must NOT raise and must NOT create a duplicate. Bound to the test
-    connection (fresh session per call, like `_create_user`) so it rolls back.
+    Exercises the seed's own per-account helper (`_create`) — the function that
+    owns the `UserAlreadyExists` skip — twice with the same email. The second call
+    must NOT raise and must NOT create a duplicate. Bound to the test connection
+    (fresh session per call, like `_create_user`) so it rolls back.
     """
+    seed_mod = _load_seed_module()
 
     async def _seed_once(factory) -> None:
         async with factory() as session:

@@ -1,16 +1,22 @@
-"""Seed the application's accounts — `python -m flat_chat.users.seed`.
+#!/usr/bin/env python
+"""Seed the application's accounts — the ONLY way users are created.
 
-This is the ONLY way users are created: there is no public registration endpoint
-(see AUTH.md). Idempotent — each account is created with an Argon2-hashed password
-via the fastapi-users UserManager, or skipped if its email already exists.
+There is no public registration endpoint (see AUTH.md), so this script is how the
+dev/admin and (optionally) a reviewer account come into existence. Idempotent:
+each account is created with an Argon2-hashed password via the fastapi-users
+`UserManager`, or skipped if its email already exists.
 
   - dev  — admin (superuser), from `DEV_USER_EMAIL` / `DEV_USER_PASSWORD`.
   - prof — regular user, created ONLY when both `PROF_USER_EMAIL` /
            `PROF_USER_PASSWORD` are set (e.g. the reviewer's login).
 
-NOT a schema migration (migrations stay pure-schema). Run after
-`alembic upgrade head`. Requires the same env as the app (`DATABASE_URL`,
-`JWT_SECRET`, the account vars).
+Standalone operational script (lives in `scripts/`, alongside `seed_listings.py`),
+not a package module — but it depends on the backend package for the real auth
+wiring (so we don't reimplement password hashing). Run it in the backend's env,
+after `alembic upgrade head`, with the same env as the app (`DATABASE_URL`,
+`JWT_SECRET`, the account vars):
+
+    uv run --project services/backend python scripts/seed_users.py
 """
 
 from __future__ import annotations

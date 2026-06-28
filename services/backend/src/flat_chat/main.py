@@ -6,19 +6,13 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.api import agent, chat, listings
+from flat_chat.api import agent, auth, chat, listings
 from flat_chat.core.database import get_async_db
 from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import (
     setup_logging,
     setup_observability,
     shutdown_observability,
-)
-from flat_chat.users.auth import (
-    UserRead,
-    UserUpdate,
-    auth_backend,
-    fastapi_users,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,18 +31,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="flat-chat API", lifespan=lifespan)
 
-# Auth (fastapi-users) — login/logout (cookie) + the user routes (/me), all under
-# /api/auth. `get_user_id()` reads the cookie these set. There is deliberately NO
-# register router: accounts are provisioned only by `python -m flat_chat.users.seed`
-# (no public signup — see AUTH.md). Re-add `get_register_router` (ideally gated)
-# if self-service signup is ever wanted.
+# Auth (fastapi-users) — login/logout (cookie) + the user routes (/me), under
+# /api/auth. `get_user_id()` reads the cookie these set. No register router:
+# accounts are seed-only (`scripts/seed_users.py` — see AUTH.md). Router wiring
+# lives in `api/auth.py`, mirroring the other route modules.
 app.include_router(
-    fastapi_users.get_auth_router(auth_backend),
-    prefix="/api/auth",
-    tags=["auth"],
-)
-app.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
+    auth.router,
     prefix="/api/auth",
     tags=["auth"],
 )
