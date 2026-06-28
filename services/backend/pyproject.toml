@@ -19,6 +19,7 @@ dependencies = [
     "httpx>=0.28",
     "arize-phoenix-otel>=0.16,<0.17",
     "openinference-instrumentation-pydantic-ai>=0.1,<0.2",
+    "fastapi-users[sqlalchemy]>=15.0.5",
 ]
 
 [dependency-groups]

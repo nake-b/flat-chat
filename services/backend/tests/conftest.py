@@ -29,6 +29,9 @@ from alembic.config import Config
 # do need the module to import — set a sentinel so collection works even
 # without env setup. Integration tests overwrite this via ``TEST_DATABASE_URL``.
 os.environ.setdefault("DATABASE_URL", "postgresql://unset:unset@unset/unset")
+# `jwt_secret` is a required Settings field (no insecure default ships). Tests
+# never verify real tokens against this, so a fixed sentinel is fine.
+os.environ.setdefault("JWT_SECRET", "test-secret-not-for-prod")
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 
@@ -120,3 +123,25 @@ def schema_at_head(test_db_url: str) -> None:
 def async_db_url(test_db_url: str, schema_at_head: None) -> str:
     """asyncpg-flavoured URL for AsyncEngine."""
     return _async_url(test_db_url)
+
+
+async def ensure_app_users(conn, *user_ids: str) -> None:
+    """Insert real `app.users` rows for the given ids (idempotent).
+
+    `email` / `hashed_password` are NOT NULL and `DbSessionStore.create` no longer
+    fabricates users, so any test that creates a conversation for a fixed user id
+    must materialize that user first. Synthetic but valid values — the DB only
+    enforces NOT NULL + unique email, not real hashes. Runs on the test's outer
+    connection so it rolls back with everything else.
+    """
+    import sqlalchemy as sa
+
+    for uid in user_ids:
+        await conn.execute(
+            sa.text(
+                "INSERT INTO app.users (id, email, hashed_password) "
+                "VALUES (CAST(:id AS uuid), :email, '!') "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": uid, "email": f"user-{uid}@flat-chat.dev"},
+        )

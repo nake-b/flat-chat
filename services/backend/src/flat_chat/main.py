@@ -14,6 +14,13 @@ from flat_chat.core.observability import (
     setup_observability,
     shutdown_observability,
 )
+from flat_chat.users.auth import (
+    UserCreate,
+    UserRead,
+    UserUpdate,
+    auth_backend,
+    fastapi_users,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="flat-chat API", lifespan=lifespan)
+
+# Auth (fastapi-users) — all under /api/auth: login/logout (cookie), register,
+# and the user routes (/me). `get_user_id()` reads the cookie these set.
+app.include_router(
+    fastapi_users.get_auth_router(auth_backend),
+    prefix="/api/auth",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_register_router(UserRead, UserCreate),
+    prefix="/api/auth",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate),
+    prefix="/api/auth",
+    tags=["auth"],
+)
 
 app.include_router(
     chat.router,

@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"
 
+    # Auth (fastapi-users). `jwt_secret` signs the session cookie's JWT and is
+    # REQUIRED — there is deliberately no insecure default that could ship. Tests
+    # set a sentinel in conftest; dev/prod set it in `.env`. Rotating it logs
+    # everyone out (existing cookies fail to verify). See AUTH.md.
+    jwt_secret: str = Field(...)
+    jwt_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days — generous for the MVP
+
+    # Seeded dev user (created by `python -m flat_chat.users.seed`). The login
+    # handed to reviewers; override both in any non-local deployment.
+    dev_user_email: str = "dev@flat-chat.dev"
+    dev_user_password: str = "dev"
+
     phoenix_enabled: bool = False
     phoenix_endpoint: str = "http://localhost:6006/v1/traces"
 
