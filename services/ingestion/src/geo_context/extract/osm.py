@@ -13,6 +13,12 @@ flattening), and returns a GeoDataFrame ready to APPEND into the same
 `landmarks` table the WFS loader seeds, tagged `source='osm'` with a
 `category` derived from the matched tag.
 
+The selectors are deliberately narrow — monuments, towers, bridges, stadiums:
+the free-standing *Bauwerke* ALKIS's named footprints miss. The broad
+`tourism=attraction` tag was dropped (it was ~90% zoo/garden/art noise in
+Berlin); the genuinely-iconic attractions are hand-curated in
+`landmark_seed.yaml` instead. See `_TAG_CATEGORIES` below.
+
 Attribution: OSM data is ODbL — the frontend surfaces
 "© OpenStreetMap contributors".
 
@@ -54,15 +60,23 @@ _BERLIN_AREA_ID = 3_600_000_000 + _BERLIN_RELATION_ID
 # Landmark tag selectors → the `category` stored on each row. Each maps one
 # OSM key=value to a canonical category; the Overpass query unions a clause
 # per entry across nodes / ways / relations.
+#
+# NOTE: `tourism=attraction` was deliberately REMOVED. In Berlin it is ~90%
+# noise for an apartment search — zoo enclosures and individual animals
+# ("Affenhaus", "Bartgeier"), garden micro-labels ("Duftecke Apfelminze",
+# "Alpinum"), art trivia and outright junk ("CMYK Ventile", "american car").
+# The genuinely-iconic attractions it *did* surface (Checkpoint Charlie,
+# Gendarmenmarkt, Museumsinsel, the Schlösser, …) are now hand-curated in
+# `landmark_seed.yaml` (source='seed') with verified geometry — quality over
+# the 178-row dragnet. The four selectors below are precise: each names a
+# free-standing Bauwerk class ALKIS's named building footprints genuinely miss.
+# `historic=memorial` stays excluded — in Berlin it is ~99% Stolpersteine
+# (named after individual Holocaust victims), both noise and tasteless to
+# surface as "nearby landmarks"; iconic memorials come via the monument seed.
 _TAG_CATEGORIES: dict[tuple[str, str], str] = {
     ("historic", "monument"): "monument",
-    # NOTE: historic=memorial intentionally excluded — in Berlin it is ~99%
-    # Stolpersteine (named after individual Holocaust victims), which are both
-    # noise for an apartment search and tasteless to surface as "nearby
-    # landmarks". Iconic memorials (Holocaust-Mahnmal, …) come via tourism=attraction.
     ("man_made", "tower"): "tower",
     ("man_made", "bridge"): "bridge",
-    ("tourism", "attraction"): "attraction",
     ("leisure", "stadium"): "stadium",
 }
 
