@@ -4,10 +4,11 @@ Design:
   - Joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` and
     filters with plain B-tree predicates on the gold scalars plus EXISTS
     subqueries against the per-listing junction tables.
-  - `search()` returns `(markers, preview_cards, total)`: EVERY match as a
-    thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered result
-    set), plus the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
-    LLM + the card strip). The rest of the cards hydrate on demand via
+  - `search()` returns `(markers, preview_cards, total, facets)`: EVERY match
+    as a thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered
+    result set), the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
+    LLM + the card strip), the count, and whole-set `ResultFacets` (price/area
+    ranges + per-Ortsteil counts). The rest of the cards hydrate on demand via
     `ListingService.get_cards`.
   - The only spatial predicate is `ST_DWithin` on the listing's own location
     for `near_lat/near_lon` proximity search — a single condition that hits
