@@ -2,6 +2,8 @@
 
 **Status:** Implemented in `feat/spatial-junction-tables`. Migration 0006 + 6 junction tables + ETL + search rewire + tests landed June 2026.
 
+> **Superseded in part by geo-context v2 (June 2026):** two more junction tables (`listings_nearby_kitas`, `listings_nearby_landmarks`) were added on the same pattern in migration 0007, and **MSS / Sozialmonitoring was removed entirely** — so the `mss.*` / `mss_status` / `mss_dynamics` references below (which were live scalar filters at the time) no longer exist. See [`named-place-search.md`](named-place-search.md) and [`bezirk-ortsteil-resolution.md`](bezirk-ortsteil-resolution.md).
+
 The names "junction tables" / "POI features" / "scalar features" come from the discussion below and are now the canonical vocabulary in this codebase.
 
 **Related docs:**

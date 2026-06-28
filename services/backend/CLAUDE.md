@@ -29,11 +29,12 @@ src/flat_chat/
                           models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total)
-                          schemas.py      SearchParams + SortBy
+                          places.py       PlaceService — locate_place trigram lookup over world.named_places
+                          schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
-                          models.py       Listing + ListingGeoContext + ListingEmbedding ORMs
-                          types.py        Literal types (NoiseLabel, MssStatus, ...)
+                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places ORMs
+                          types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py      ListingDetail + ListingCard + nested dataclasses
                           projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
                           labels.py       bucket_*, walk_minutes, encode_modes, ...
@@ -152,19 +153,26 @@ The 12-query `open_listing` fan-out is gone — replaced by one PK lookup
 through `ListingService.get_detail(id)` + 6 small top-N reads from the
 junction tables.
 
-**POI filters** (transit / schools / hospitals / parks / playgrounds /
-water) use EXISTS-against the matching `listings_nearby_*` junction
-table. Attribute filters (transit modes/lines/stop_name, school_type,
-hospital tier) work end-to-end. **Scalar/field filters** (mss /
-max_noise / min_greenery / density) read chip columns on
+**POI filters** (transit / schools / hospitals / kitas / parks /
+playgrounds / water) use EXISTS-against the matching `listings_nearby_*`
+junction table. Attribute filters (transit modes/lines/stop_name,
+school_type, hospital tier) work end-to-end. **Scalar/field filters**
+(inside_ring / max_noise / min_greenery / density) read chip columns on
 `listings_geo_context`. `max_noise` is optimistic-include via
 `or_(IS NULL, < cutoff)` — paired with the 50 m coverage gate inside
-`enrich_noise`. See
-[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+`enrich_noise`. **Named-place proximity** (`near_place_ref`, from
+`locate_place`) resolves ONE geometry via the `world.named_places` view
+and runs a geometry-precise `ST_DWithin`. **District** search OR-unions
+`Listing.district ∪ listing_bezirk ∪ listing_ortsteil` (scraped freetext
++ ALKIS polygon assignments). **MSS/Sozialmonitoring was removed entirely
+(geo-context v2).** See
+[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md),
+[`named-place-search.md`](../../agent-compound-docs/decisions/named-place-search.md),
+[`bezirk-ortsteil-resolution.md`](../../agent-compound-docs/decisions/bezirk-ortsteil-resolution.md).
 
 `GET /api/health?extended=true` reports `gold_orphans` for drift detection.
 
-Decision docs: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md), [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+Decision docs: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md), [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md), [`named-place-search.md`](../../agent-compound-docs/decisions/named-place-search.md), [`bezirk-ortsteil-resolution.md`](../../agent-compound-docs/decisions/bezirk-ortsteil-resolution.md).
 
 ## LLM prompt assembly
 

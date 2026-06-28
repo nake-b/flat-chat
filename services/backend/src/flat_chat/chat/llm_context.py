@@ -268,18 +268,51 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
             f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
         )
 
+    parts.extend(
+        _format_list_section(
+            detail.nearest_kitas,
+            "Nearby kitas:",
+            lambda k: f"{k.name or 'unnamed'} — {k.distance_m}m",
+        )
+    )
+
+    parts.extend(
+        _format_list_section(
+            detail.nearest_landmarks,
+            "Nearby landmarks:",
+            lambda lm: (
+                f"{lm.name or 'unnamed'}"
+                + (f" ({lm.category})" if lm.category else "")
+                + f" — {lm.distance_m}m"
+            ),
+        )
+    )
+
+    # Admin-area context — ring membership + Bezirk/Ortsteil polygon labels.
+    area_bits: list[str] = []
+    if detail.inside_ring is not None:
+        area_bits.append(
+            "inside the S-Bahn ring"
+            if detail.inside_ring
+            else "outside the S-Bahn ring"
+        )
+    if detail.listing_bezirk:
+        area_bits.append(f"Bezirk {detail.listing_bezirk}")
+    if detail.listing_ortsteil:
+        area_bits.append(f"Ortsteil {detail.listing_ortsteil}")
+    if area_bits:
+        parts.append("Location: " + ", ".join(area_bits))
+
     character_bits: list[str] = []
     if detail.noise and detail.noise.label:
-        character_bits.append(f"street noise: {detail.noise.label}")
+        noise_txt = f"noise: {detail.noise.label}"
+        if detail.noise.total_lnight is not None:
+            noise_txt += f" ({detail.noise.total_lnight:.0f} dB at night)"
+        character_bits.append(noise_txt)
     if detail.greenery and detail.greenery.label:
         character_bits.append(f"greenery: {detail.greenery.label}")
     if detail.density and detail.density.label:
         character_bits.append(f"density: {detail.density.label}")
-    if detail.mss and detail.mss.status:
-        mss_bits: list[str] = [detail.mss.status]
-        if detail.mss.dynamics:
-            mss_bits.append(detail.mss.dynamics)
-        character_bits.append(f"Sozialmonitoring: {' · '.join(mss_bits)}")
     if character_bits:
         parts.append("Neighbourhood character: " + ", ".join(character_bits))
 
@@ -390,8 +423,8 @@ def _format_card_prose(apt: ListingCard, idx: int) -> str:
         parts.append(f"{apt.nearest_transit_line} {apt.walk_min_to_transit}min")
     if apt.noise_label:
         parts.append(apt.noise_label)
-    if apt.mss_status_label:
-        parts.append(apt.mss_status_label)
+    if apt.inside_ring:
+        parts.append("inside ring")
     return f"  {idx}. " + " | ".join(parts)
 
 

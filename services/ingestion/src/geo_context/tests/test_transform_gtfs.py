@@ -92,7 +92,12 @@ def _trips() -> pd.DataFrame:
             {"trip_id": "t2", "route_id": "U2", "direction_id": 0, "shape_id": "s1"},
             {"trip_id": "t3", "route_id": "U2", "direction_id": 0, "shape_id": "s2"},
             {"trip_id": "t4", "route_id": "U5", "direction_id": 1, "shape_id": "s3"},
-            {"trip_id": "t5", "route_id": "bus100", "direction_id": 0, "shape_id": None},
+            {
+                "trip_id": "t5",
+                "route_id": "bus100",
+                "direction_id": 0,
+                "shape_id": None,
+            },
         ]
     )
 
@@ -135,19 +140,50 @@ def test_route_shapes_picks_most_used_per_direction() -> None:
     shapes = pd.DataFrame(
         [
             # s1 is a 2-point line, used by 2 trips (winner for U2 dir 0)
-            {"shape_id": "s1", "shape_pt_sequence": 1, "shape_pt_lat": 52.5, "shape_pt_lon": 13.4},
-            {"shape_id": "s1", "shape_pt_sequence": 2, "shape_pt_lat": 52.6, "shape_pt_lon": 13.5},
+            {
+                "shape_id": "s1",
+                "shape_pt_sequence": 1,
+                "shape_pt_lat": 52.5,
+                "shape_pt_lon": 13.4,
+            },
+            {
+                "shape_id": "s1",
+                "shape_pt_sequence": 2,
+                "shape_pt_lat": 52.6,
+                "shape_pt_lon": 13.5,
+            },
             # s2 is a different shape, used by 1 trip
-            {"shape_id": "s2", "shape_pt_sequence": 1, "shape_pt_lat": 52.5, "shape_pt_lon": 13.4},
-            {"shape_id": "s2", "shape_pt_sequence": 2, "shape_pt_lat": 52.7, "shape_pt_lon": 13.6},
+            {
+                "shape_id": "s2",
+                "shape_pt_sequence": 1,
+                "shape_pt_lat": 52.5,
+                "shape_pt_lon": 13.4,
+            },
+            {
+                "shape_id": "s2",
+                "shape_pt_sequence": 2,
+                "shape_pt_lat": 52.7,
+                "shape_pt_lon": 13.6,
+            },
             # s3 is U5 direction 1
-            {"shape_id": "s3", "shape_pt_sequence": 1, "shape_pt_lat": 52.5, "shape_pt_lon": 13.4},
-            {"shape_id": "s3", "shape_pt_sequence": 2, "shape_pt_lat": 52.4, "shape_pt_lon": 13.3},
+            {
+                "shape_id": "s3",
+                "shape_pt_sequence": 1,
+                "shape_pt_lat": 52.5,
+                "shape_pt_lon": 13.4,
+            },
+            {
+                "shape_id": "s3",
+                "shape_pt_sequence": 2,
+                "shape_pt_lat": 52.4,
+                "shape_pt_lon": 13.3,
+            },
         ]
     )
     out = build_route_shapes(shapes, _trips())
     keys = {(r["route_id"], r["direction_id"]) for _, r in out.iterrows()}
-    # U2/0 (winner: s1) and U5/1 (only shape: s3). bus100's trip has no shape_id → no row.
+    # U2/0 (winner: s1) and U5/1 (only shape: s3).
+    # bus100's trip has no shape_id → no row.
     assert keys == {("U2", 0), ("U5", 1)}
 
 
@@ -159,13 +195,27 @@ def test_transform_gtfs_returns_all_three_outputs() -> None:
         "stop_times": _stop_times(),
         "shapes": pd.DataFrame(
             [
-                {"shape_id": "s1", "shape_pt_sequence": 1, "shape_pt_lat": 52.5, "shape_pt_lon": 13.4},
-                {"shape_id": "s1", "shape_pt_sequence": 2, "shape_pt_lat": 52.6, "shape_pt_lon": 13.5},
+                {
+                    "shape_id": "s1",
+                    "shape_pt_sequence": 1,
+                    "shape_pt_lat": 52.5,
+                    "shape_pt_lon": 13.4,
+                },
+                {
+                    "shape_id": "s1",
+                    "shape_pt_sequence": 2,
+                    "shape_pt_lat": 52.6,
+                    "shape_pt_lon": 13.5,
+                },
             ]
         ),
     }
     out = transform_gtfs(tables)
-    assert set(out.keys()) == {"transit_stops", "transit_routes", "transit_route_shapes"}
+    assert set(out.keys()) == {
+        "transit_stops",
+        "transit_routes",
+        "transit_route_shapes",
+    }
     assert len(out["transit_stops"]) > 0
     assert len(out["transit_routes"]) == 3
 

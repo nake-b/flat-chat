@@ -84,8 +84,10 @@ Note: `result_markers` mirrors the SERIALIZED COLUMNAR shape
 in-memory `list[Marker]`. Decode it with `decodeMarkers(...)` before
 use.
 
-Label literal vocab (`NoiseLabel`, `MssStatus`, etc.) traces to
+Label literal vocab (`NoiseLabel`, `DensityLabel`, `GreeneryLabel`, etc.)
+traces to
 [`geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md).
+(MSS/Sozialmonitoring labels were removed entirely in geo-context v2.)
 
 No automation — top-of-file comment is the contract. If drift becomes
 costly, add `pydantic-to-typescript` or a small in-repo codegen step.
@@ -137,9 +139,13 @@ neutralized on the backend (empty-content `TOOL_CALL_RESULT` for a
   `apt` tier-2 prop is now optional; the active card is resolved from
   the card cache ∪ preview by `CardsPane`, falling back to
   `active_listing_detail`). Renders image gallery + amenity chips + full
-  stat grid + geo-context block (transit, schools, parks, playground,
-  hospitals, water, noise with sub-numerics, greenery + m², density +
-  persons/hectare, MSS + social_inequality, disabled parking).
+  stat grid + geo-context block (transit, schools, kitas, parks, playground,
+  landmarks (nearby, e.g. "near the Siegessäule · 300 m"), hospitals, water,
+  noise with sub-numerics incl. night Lnight, greenery + m², density +
+  persons/hectare, Bezirk/Ortsteil, inside-ring yes/no, disabled parking).
+  (MSS/Sozialmonitoring cell removed in geo-context v2.) A `⭕ inside ring`
+  chip shows on the card strip; the map carries an ODbL
+  `© OpenStreetMap contributors` attribution for OSM landmark data.
 
 ## Performance — windowing up to MARKER_CAP=5000
 

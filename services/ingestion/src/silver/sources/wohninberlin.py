@@ -88,7 +88,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "external_object_id": dump.get("objectId")
         or (str(dump["id"]) if dump.get("id") is not None else None),
         "listing_url": dump.get("url") or dump.get("scrapeUrl"),
-
         "title": dump.get("title"),
         "headline": dump.get("headline"),
         "description": None,
@@ -97,7 +96,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "bathrooms": None,
         "area_sqm": parse_sqm(dump.get("areaSqm")),
         "apartment_type": None,
-
         "cold_rent_eur": _num(dump.get("coldRentEur")),
         "warm_rent_eur": _num(dump.get("warmRentEur")),
         "nebenkosten_eur": _num(dump.get("nebenkostenEur")),
@@ -105,7 +103,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         # source's Bruttokaltmiete is preserved in key_facts.rentGrossEur.
         "rent_gross_eur": _num(dump.get("warmRentEur")),
         "kaution_eur": None,
-
         "address": address,
         "postal_code": postal,
         "district": district,
@@ -113,7 +110,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         # No coordinates on the cards -> NULL -> skips gold enrichment.
         "latitude": None,
         "longitude": None,
-
         "floor": parse_int_str(dump.get("floor")),
         # floorsTotal == 0 is the source's "unknown" sentinel.
         "floors_total": _positive(dump.get("floorsTotal")),
@@ -122,13 +118,11 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "available_until": None,
         "min_stay_months": None,
         "max_stay_months": None,
-
         "heating": dump.get("heating"),
         "main_energy_source": _main_energy_source(dump.get("mainEnergySource")),
         "energy_consumption_kwh": _positive(dump.get("energyConsumptionKwh")),
         "final_energy_value_kwh": _positive(dump.get("finalEnergyValueKwh")),
         "energy_pass_type": dump.get("energyPassType"),
-
         # The card exposes only elevator / balcony / basement as flags.
         "is_furnished": None,
         "has_kitchen": None,
@@ -140,12 +134,10 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "has_basement": bool(dump.get("basement")),
         # NOT NULL in listings; the card reports WBS status explicitly.
         "wbs_required": bool(dump.get("wbsRequired")),
-
         # inberlinwohnen aggregates the municipal housing companies.
         "lister_type": "commercial" if dump.get("company") else None,
         "company_name": dump.get("company"),
         "company_website": dump.get("companyWebsite"),
-
         "features": _features(dump),
         "images": [],
         "key_facts": {

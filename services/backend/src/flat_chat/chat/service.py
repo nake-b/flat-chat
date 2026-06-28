@@ -18,6 +18,7 @@ from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
+from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 
 try:
@@ -120,10 +121,12 @@ class ChatService:
         self,
         search_service: SearchService,
         listing_service: ListingService,
+        place_service: PlaceService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
+        self.place_service = place_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request) -> Response:
@@ -200,6 +203,7 @@ class ChatService:
         deps = ChatDeps(
             search_service=self.search_service,
             listing_service=self.listing_service,
+            place_service=self.place_service,
             session=session,
             state=deps_state,
         )

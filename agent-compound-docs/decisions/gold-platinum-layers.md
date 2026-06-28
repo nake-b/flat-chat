@@ -51,8 +51,8 @@ to re-enrich without scraping.
 | Concern | Layer | Why |
 |---|---|---|
 | Raw apartment data (price, rooms, location) | silver (`listings`) | Source-faithful per-entity |
-| Berlin geo-context raw (transit, parks, MSS polygons, ...) | silver | Source-faithful per-entity |
-| MSS German→English label translation | silver (transform step) | Canonical clean form is English; the data layer is language-agnostic |
+| Berlin geo-context raw (transit, parks, landmarks, admin polygons, ...) | silver | Source-faithful per-entity |
+| German→English column-name translation (WFS aliases) | silver (transform step) | Canonical clean form is English; the data layer is language-agnostic |
 | Per-listing chip scalars (`nearest_transit_m`, `noise_total_lden`, ...) | gold | Denormalised joins of silver tables |
 | Per-listing detail JSONB (top-K schools/parks, greenery profile, ...) | gold | Same |
 | Vector embeddings | platinum | Separate from listings; the HNSW index stays with its consumer |

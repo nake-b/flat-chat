@@ -5,11 +5,16 @@ client paginates via ``count`` / ``startIndex`` and terminates when a page
 returns fewer features than ``PAGE_SIZE``. These tests fake the HTTP layer
 with a configurable page sequence and assert the request mechanics +
 result concatenation.
+
+The client issues requests through a retrying ``requests.Session`` (mounted
+with a backoff adapter), so the tests mock the *instance's* ``_session.get``
+rather than module-level ``requests.get`` — otherwise the call escapes the
+mock and hits the real network.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -47,9 +52,9 @@ def test_fetch_layer_paginates_until_short_page() -> None:
     client.PAGE_SIZE = 3
     # Two full pages of 3, then a short page of 1 → loop terminates.
     pages = [_page(3, start=0), _page(3, start=3), _page(1, start=6)]
-    with patch("geo_context.extract.wfs.requests.get") as mock_get:
-        mock_get.side_effect = [_fake_response(p) for p in pages]
-        gdf = client.fetch_layer("dataset_x", "layer_y")
+    mock_get = MagicMock(side_effect=[_fake_response(p) for p in pages])
+    client._session.get = mock_get
+    gdf = client.fetch_layer("dataset_x", "layer_y")
 
     assert len(gdf) == 7
     # Three HTTP calls with correctly stepping startIndex.
@@ -64,9 +69,9 @@ def test_fetch_layer_paginates_until_short_page() -> None:
 def test_fetch_layer_terminates_on_empty_first_page() -> None:
     client = BerlinGdiWfsClient()
     client.PAGE_SIZE = 5
-    with patch("geo_context.extract.wfs.requests.get") as mock_get:
-        mock_get.return_value = _fake_response(_page(0))
-        gdf = client.fetch_layer("dataset_x", "empty_layer")
+    mock_get = MagicMock(return_value=_fake_response(_page(0)))
+    client._session.get = mock_get
+    gdf = client.fetch_layer("dataset_x", "empty_layer")
 
     assert gdf.empty
     # One call, then the loop saw zero features and broke.
@@ -78,10 +83,10 @@ def test_fetch_layer_raises_when_exceeding_max_features() -> None:
     client.PAGE_SIZE = 5
     client.MAX_FEATURES = 10  # second page would push us *to* the cap → must raise
     pages = [_page(5, start=0), _page(5, start=5)]
-    with patch("geo_context.extract.wfs.requests.get") as mock_get:
-        mock_get.side_effect = [_fake_response(p) for p in pages]
-        with pytest.raises(RuntimeError, match="MAX_FEATURES"):
-            client.fetch_layer("dataset_x", "huge_layer")
+    mock_get = MagicMock(side_effect=[_fake_response(p) for p in pages])
+    client._session.get = mock_get
+    with pytest.raises(RuntimeError, match="MAX_FEATURES"):
+        client.fetch_layer("dataset_x", "huge_layer")
 
 
 def test_fetch_layer_terminates_when_exact_multiple_of_page_size() -> None:
@@ -91,9 +96,9 @@ def test_fetch_layer_terminates_when_exact_multiple_of_page_size() -> None:
     client = BerlinGdiWfsClient()
     client.PAGE_SIZE = 3
     pages = [_page(3, start=0), _page(3, start=3), _page(0, start=6)]
-    with patch("geo_context.extract.wfs.requests.get") as mock_get:
-        mock_get.side_effect = [_fake_response(p) for p in pages]
-        gdf = client.fetch_layer("dataset_x", "exact_multiple_layer")
+    mock_get = MagicMock(side_effect=[_fake_response(p) for p in pages])
+    client._session.get = mock_get
+    gdf = client.fetch_layer("dataset_x", "exact_multiple_layer")
 
     assert len(gdf) == 6
     assert mock_get.call_count == 3

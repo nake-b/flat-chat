@@ -56,9 +56,7 @@ class VbbGtfsClient:
             names = {n.replace(".txt", ""): n for n in zf.namelist()}
             for required in _REQUIRED_TABLES:
                 if required not in names:
-                    raise KeyError(
-                        f"gtfs feed missing required table: {required}.txt"
-                    )
+                    raise KeyError(f"gtfs feed missing required table: {required}.txt")
                 with zf.open(names[required]) as f:
                     df = pd.read_csv(f, low_memory=False)
                 logger.info("gtfs: loaded %s (%d rows)", required, len(df))

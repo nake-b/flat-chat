@@ -6,13 +6,17 @@ Decided 2026-06-14 while designing the integration of the geo-context silver tab
 > - `search/distances.py` + `search/buckets.py` + `search/transit.py` →
 >   merged into [`listings/labels.py`](../../services/backend/src/flat_chat/listings/labels.py)
 >   + [`listings/thresholds.py`](../../services/backend/src/flat_chat/listings/thresholds.py).
-> - MSS German→English maps moved out of the backend entirely. They now
->   live in silver-transform code at
->   [`services/ingestion/src/geo_context/transform/wfs.py`](../../services/ingestion/src/geo_context/transform/wfs.py).
->   The data layer (silver onwards) is canonically English.
+> - MSS German→English maps moved out of the backend entirely (search-perf refactor).
 > Values unchanged — only file locations moved.
 
-This doc is the **audit trail for every numeric constant and label choice** used to interpret geo-context data — "what does *near* mean", "what counts as a *quiet* street", "is *Status hoch* good or bad". Every constant in `listings/thresholds.py` + `listings/labels.py` traces to a row in this doc. The MSS German→English mapping table also lives here (now applied at silver-ingest time, not in the backend).
+> **geo-context v2 update (June 2026): MSS / Sozialmonitoring was removed
+> entirely** on ethical grounds — the source table, the `mss_*` columns, the
+> filter, and the German→English label map are all gone. **Section 8 below is
+> retained as a historical record of the removed decision, not a live
+> reference.** See [`named-place-search.md`](named-place-search.md) and
+> [`bezirk-ortsteil-resolution.md`](bezirk-ortsteil-resolution.md).
+
+This doc is the **audit trail for every numeric constant and label choice** used to interpret geo-context data — "what does *near* mean", "what counts as a *quiet* street". Every constant in `listings/thresholds.py` + `listings/labels.py` traces to a row in this doc.
 
 **Rule**: constants without a row in this doc are technical debt. Doc-first, code-second.
 
@@ -48,6 +52,13 @@ Sources:
 | hospitals | 5000 | medical context, larger range acceptable |
 | water_bodies | 2000 | scenic amenity, generous cap |
 | transit_stops | 1500 | anything beyond is not "your stop" |
+
+**Gold-layer storage radii** (`R_NEARBY_*_M` in `services/ingestion/src/gold/enrich_listings.py`) — generous on purpose; search-time predicates do the actual cutoff. The two added for geo-context v2:
+
+| Constant | Value (m) | Rationale |
+|---|---|---|
+| `R_NEARBY_KITAS_M` | **3000** | Kitas are denser + more hyperlocal than schools (a family wants the *nearest* day-care, not one across town) → mirror playgrounds' 3 km, not schools' 5 km. |
+| `R_NEARBY_LANDMARKS_M` | **2000** | Notable landmarks (monuments, towers, bridges, stadiums, attractions) are sparse; "near a landmark" is a generous, low-frequency relationship — 2 km keeps the junction populated without flooding it. |
 
 ---
 
@@ -167,9 +178,14 @@ Sources:
 
 ---
 
-## 8. MSS (Sozialmonitoring) — English re-labels
+## 8. MSS (Sozialmonitoring) — English re-labels [REMOVED in geo-context v2]
 
-The source data (`social_monitoring_2025`) publishes German labels that are loaded with cultural meaning. We re-label to neutral English. Used everywhere the agent / UI surfaces MSS data.
+> **This section is historical.** MSS / Sozialmonitoring was removed entirely
+> in geo-context v2 (ethical grounds). The source table, columns, filter, and
+> the re-label map below no longer exist in the codebase. Retained only as the
+> audit record of the decision that was reverted.
+
+The source data (`social_monitoring_2025`) published German labels that were loaded with cultural meaning. We re-labelled to neutral English wherever the agent / UI surfaced MSS data.
 
 ### Status (4-level — composite of unemployment, child poverty, single-parent households on transfer benefits)
 

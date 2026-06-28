@@ -143,7 +143,7 @@ def test_search_apartments_clears_active_detail_from_previous_search():
 def test_search_apartments_translates_geo_kwargs_into_params():
     """Sanity-check that the geo-context kwargs make it into the params
     object SearchService sees. Catches bit-rot in the kwargs->params plumbing."""
-    from flat_chat.search.geo_filters import MssFilter, TransitFilter
+    from flat_chat.search.geo_filters import KitaFilter, TransitFilter
 
     search = _MockSearchService([], [], total=0)
     state = SessionState()
@@ -152,7 +152,9 @@ def test_search_apartments_translates_geo_kwargs_into_params():
         search_apartments(
             _ctx(state, search=search),
             transit=TransitFilter(modes=["u_bahn"], distance="near"),
-            mss=MssFilter(status_min="affluent"),
+            kita=KitaFilter(distance="near"),
+            near_place_ref="park:42",
+            inside_ring=True,
             max_noise="quiet",
             density="sparse",
         )
@@ -162,10 +164,73 @@ def test_search_apartments_translates_geo_kwargs_into_params():
     assert params is not None
     assert params.transit is not None
     assert params.transit.modes == ["u_bahn"]
-    assert params.mss is not None
-    assert params.mss.status_min == "affluent"
+    assert params.kita is not None
+    assert params.kita.distance == "near"
+    assert params.near_place_ref == "park:42"
+    assert params.inside_ring is True
     assert params.max_noise == "quiet"
     assert params.density == "sparse"
+
+
+# ---------------------------------------------------------------------------
+# locate_place — pure lookup, no state mutation, no snapshot
+# ---------------------------------------------------------------------------
+
+
+class _MockPlaceService:
+    """Returns canned candidates for whatever name it gets."""
+
+    def __init__(self, candidates):
+        self.candidates = candidates
+        self.called_with: str | None = None
+
+    async def locate(self, name):
+        self.called_with = name
+        return list(self.candidates)
+
+
+def _ctx_place(state: SessionState, place) -> SimpleNamespace:
+    deps = SimpleNamespace(place_service=place, state=state)
+    return SimpleNamespace(deps=deps)
+
+
+def test_locate_place_returns_candidates_and_does_not_mutate_state():
+    from flat_chat.chat.tools import locate_place
+    from flat_chat.search.places import PlaceCandidate
+
+    candidate = PlaceCandidate(
+        place_ref="park:7",
+        kind="park",
+        name="Tiergarten",
+        description=None,
+        lat=52.514,
+        lon=13.35,
+    )
+    place = _MockPlaceService([candidate])
+    state = SessionState()
+    state.total_results = 5  # pre-existing result set must be untouched
+
+    out = asyncio.run(locate_place(_ctx_place(state, place), place_name="Tiergarten"))
+
+    # Pure lookup: plain string, NOT a ToolReturn (no StateSnapshotEvent).
+    assert isinstance(out, str)
+    assert "place_ref=park:7" in out
+    assert "Tiergarten" in out
+    assert place.called_with == "Tiergarten"
+    # State is untouched — no snapshot, no result-set replacement.
+    assert state.total_results == 5
+    assert state.result_markers == []
+
+
+def test_locate_place_no_match_returns_guidance():
+    from flat_chat.chat.tools import locate_place
+
+    place = _MockPlaceService([])
+    out = asyncio.run(
+        locate_place(_ctx_place(SessionState(), place), place_name="Nonexistent")
+    )
+    assert isinstance(out, str)
+    assert "No place named" in out
 
 
 # ---------------------------------------------------------------------------

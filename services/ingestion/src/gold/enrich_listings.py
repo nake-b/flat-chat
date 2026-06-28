@@ -14,12 +14,12 @@ Two output shapes:
     `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
 
   - **`listings_geo_context` columns**: scalar / field facts about the
-    listing's location (noise dB, density, MSS labels, greenery m²,
-    school-catchment membership, disabled-parking count) + a small set of
-    "nearest X" chip scalars derived from the junction tables for cheap
-    card-row label rendering. Filled by `enrich_noise`, `enrich_greenery`,
-    `enrich_density`, `enrich_mss`, `enrich_disabled_parking`, and
-    `enrich_chip_scalars`.
+    listing's location (noise dB, density, greenery m², school-catchment
+    membership, disabled-parking count, inside-ring flag, bezirk/ortsteil) +
+    a small set of "nearest X" chip scalars derived from the junction tables
+    for cheap card-row label rendering. Filled by `enrich_noise`,
+    `enrich_greenery`, `enrich_density`, `enrich_admin_areas`,
+    `enrich_inside_ring`, `enrich_disabled_parking`, and `enrich_chip_scalars`.
 
 Architectural notes:
   - Gold stores RAW measurements only (numbers, IDs, names). Bucket labels
@@ -61,6 +61,24 @@ R_NEARBY_HOSPITALS_M = 12_000
 R_NEARBY_PARKS_M = 5_000
 R_NEARBY_PLAYGROUNDS_M = 3_000
 R_NEARBY_WATER_M = 6_000
+# Kitas are denser + more hyperlocal than schools → mirror playgrounds'
+# 3 km, not schools' 5 km. See threshold doc §1.
+R_NEARBY_KITAS_M = 3_000
+# Notable landmarks are sparse; "near a landmark" is generous. See
+# threshold doc §1.
+R_NEARBY_LANDMARKS_M = 2_000
+
+# Landmark categories worth surfacing as a "near the X" card attribute.
+# `building` (the bulk of ALKIS footprints) is intentionally excluded — a
+# named building footprint is useful for `locate_place` search but too noisy
+# as a nearby-landmark chip.
+NOTABLE_LANDMARK_CATEGORIES = (
+    "monument",
+    "tower",
+    "bridge",
+    "stadium",
+    "attraction",
+)
 
 # Top-K always-include — every listing carries at least this many rows per
 # family so the detail panel renders even in feature-sparse periphery.
@@ -74,7 +92,7 @@ ALWAYS_INCLUDE_K = 5
 GREENERY_BUFFER_M = 300
 DISABLED_PARKING_RADIUS_M = 300
 
-# Noise coverage gate. The street_noise_2022 dataset is a ~10m grid of
+# Noise coverage gate. The strategic_noise_2022 dataset is a ~10m grid of
 # modelled receivers along every Berlin road/rail; a well-geocoded listing
 # almost always has a sample within 10m. The 50m gate is 5× headroom: it
 # catches geocode drift without admitting readings from a different
@@ -422,6 +440,110 @@ def enrich_nearby_water(conn: Connection) -> int:
     return result.rowcount or 0
 
 
+def enrich_nearby_kitas(conn: Connection) -> int:
+    """Listings × kitas within R = 3 km (top-K=5 always)."""
+    conn.execute(text("TRUNCATE TABLE listings_nearby_kitas"))
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO listings_nearby_kitas (
+                listing_id, kita_id, distance_m, name, rank
+            )
+            SELECT l.id,
+                   k.kita_id,
+                   k.distance_m,
+                   k.name,
+                   k.rank::smallint
+            FROM listings l
+            CROSS JOIN LATERAL (
+                SELECT t.kita_id, t.name,
+                       t.distance_m,
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.kita_id
+                       ) AS rank
+                FROM (
+                    SELECT k.id::text AS kita_id, k.name,
+                           ST_Distance(k.geom::geography,
+                                       l.location::geography)::int AS distance_m
+                    FROM kitas k
+                    WHERE k.geom IS NOT NULL
+                    ORDER BY k.geom <-> l.location
+                    LIMIT GREATEST(
+                        :k,
+                        (SELECT COUNT(*) FROM kitas k2
+                         WHERE k2.geom IS NOT NULL
+                           AND ST_DWithin(k2.geom::geography,
+                                          l.location::geography,
+                                          :radius_m))
+                    )
+                ) t
+            ) k
+            WHERE l.location IS NOT NULL
+            """
+        ),
+        {"k": ALWAYS_INCLUDE_K, "radius_m": R_NEARBY_KITAS_M},
+    )
+    return result.rowcount or 0
+
+
+def enrich_nearby_landmarks(conn: Connection) -> int:
+    """Listings × notable landmarks within R = 2 km (top-K=5 always).
+
+    Restricted to `NOTABLE_LANDMARK_CATEGORIES` — generic ALKIS building
+    footprints (category='building') are excluded from the card attribute;
+    they remain searchable by name via the `named_places` view.
+    """
+    conn.execute(text("TRUNCATE TABLE listings_nearby_landmarks"))
+    result = conn.execute(
+        text(
+            """
+            INSERT INTO listings_nearby_landmarks (
+                listing_id, landmark_id, distance_m, category, name, rank
+            )
+            SELECT l.id,
+                   lm.landmark_id,
+                   lm.distance_m,
+                   lm.category,
+                   lm.name,
+                   lm.rank::smallint
+            FROM listings l
+            CROSS JOIN LATERAL (
+                SELECT t.landmark_id, t.name, t.category,
+                       t.distance_m,
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.distance_m, t.landmark_id
+                       ) AS rank
+                FROM (
+                    SELECT lm.id::text AS landmark_id, lm.name, lm.category,
+                           ST_Distance(lm.geom::geography,
+                                       l.location::geography)::int AS distance_m
+                    FROM landmarks lm
+                    WHERE lm.geom IS NOT NULL
+                      AND lm.category = ANY(:categories)
+                    ORDER BY lm.geom <-> l.location
+                    LIMIT GREATEST(
+                        :k,
+                        (SELECT COUNT(*) FROM landmarks lm2
+                         WHERE lm2.geom IS NOT NULL
+                           AND lm2.category = ANY(:categories)
+                           AND ST_DWithin(lm2.geom::geography,
+                                          l.location::geography,
+                                          :radius_m))
+                    )
+                ) t
+            ) lm
+            WHERE l.location IS NOT NULL
+            """
+        ),
+        {
+            "k": ALWAYS_INCLUDE_K,
+            "radius_m": R_NEARBY_LANDMARKS_M,
+            "categories": list(NOTABLE_LANDMARK_CATEGORIES),
+        },
+    )
+    return result.rowcount or 0
+
+
 # =========================================================================
 # Chip scalars — denormalised "nearest X" summary derived from the
 # junction tables. One UPDATE per family on `listings_geo_context`. Used
@@ -482,7 +604,7 @@ def enrich_noise(conn: Connection) -> int:
 
     Two-stage filter for performance:
       1. Bbox pre-filter via `ST_DWithin(n.geom, l.location, <degrees>)`
-         — uses the GIST index on `street_noise_2022.geom` directly.
+         — uses the GIST index on `strategic_noise_2022.geom` directly.
          The bbox radius is the gate (50 m) translated to degrees at
          Berlin's latitude (~52.5°N: 50 / 111320 ≈ 0.00045 lat, 50 /
          (111320 * cos(52.5°)) ≈ 0.00074 lon). We use 0.001 as a
@@ -501,22 +623,25 @@ def enrich_noise(conn: Connection) -> int:
         text(
             """
             UPDATE listings_geo_context lgc
-            SET noise_total_lden = nearest.total_lden,
-                noise_profile    = nearest.blob,
-                enriched_at      = now()
+            SET noise_total_lden   = nearest.total_lden,
+                noise_total_lnight = nearest.total_lnight,
+                noise_profile      = nearest.blob,
+                enriched_at        = now()
             FROM listings l
             LEFT JOIN LATERAL (
                 SELECT n.noise_total_lden AS total_lden,
+                       n.noise_total_lnight AS total_lnight,
                        ST_Distance(n.geom::geography,
                                    l.location::geography)::int AS distance_m,
                        jsonb_build_object(
-                           'total_lden',  n.noise_total_lden,
-                           'street_lden', n.noise_street_lden,
-                           'rail_lden',   n.noise_rail_lden,
-                           'distance_m',  ST_Distance(n.geom::geography,
-                                                      l.location::geography)::int
+                           'total_lden',    n.noise_total_lden,
+                           'total_lnight',  n.noise_total_lnight,
+                           'street_lden',   n.noise_street_lden,
+                           'rail_lden',     n.noise_rail_lden,
+                           'distance_m',    ST_Distance(n.geom::geography,
+                                                        l.location::geography)::int
                        ) AS blob
-                FROM street_noise_2022 n
+                FROM strategic_noise_2022 n
                 WHERE l.location IS NOT NULL
                   AND ST_DWithin(n.geom, l.location, :bbox_deg)
                 ORDER BY n.geom <-> l.location
@@ -538,7 +663,8 @@ def enrich_greenery(conn: Connection) -> int:
             UPDATE listings_geo_context lgc
             SET greenery_profile = jsonb_build_object(
                     'green_m2_within_300m',
-                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0) + COALESCE(pg_m2, 0)
+                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0)
+                        + COALESCE(pg_m2, 0)
                 ),
                 enriched_at = now()
             FROM listings l,
@@ -610,27 +736,65 @@ def enrich_density(conn: Connection) -> int:
     return result.rowcount or 0
 
 
-def enrich_mss(conn: Connection) -> int:
-    """Sozialmonitoring status/dynamics chips + full profile."""
+def enrich_admin_areas(conn: Connection) -> int:
+    """Assign the listing's Bezirk + Ortsteil from the ALKIS polygons.
+
+    For each, pick the SMALLEST containing polygon (ORDER BY ST_Area ASC
+    LIMIT 1) so overlapping/nested boundaries resolve to the most specific
+    area. LEFT JOIN LATERAL per polygon table — a listing outside coverage
+    keeps NULL rather than dropping out of the UPDATE.
+    """
     result = conn.execute(
         text(
             """
             UPDATE listings_geo_context lgc
-            SET mss_status   = m.status_index_label,
-                mss_dynamics = m.dynamics_index_label,
-                mss_profile = jsonb_build_object(
-                    'status',                 m.status_index_label,
-                    'dynamics',               m.dynamics_index_label,
-                    'social_inequality',      m.social_inequality_label,
-                    'planning_area_name',     m.planning_area_name,
-                    'residents',              m.residents,
-                    'year',                   m.year
+            SET listing_bezirk   = bz.name,
+                listing_ortsteil = ot.name,
+                enriched_at      = now()
+            FROM listings l
+            LEFT JOIN LATERAL (
+                SELECT b.name
+                FROM bezirke b
+                WHERE l.location IS NOT NULL
+                  AND ST_Covers(b.geom, l.location)
+                ORDER BY ST_Area(b.geom) ASC
+                LIMIT 1
+            ) bz ON true
+            LEFT JOIN LATERAL (
+                SELECT o.name
+                FROM ortsteile o
+                WHERE l.location IS NOT NULL
+                  AND ST_Covers(o.geom, l.location)
+                ORDER BY ST_Area(o.geom) ASC
+                LIMIT 1
+            ) ot ON true
+            WHERE lgc.listing_id = l.id
+            """
+        )
+    )
+    return result.rowcount or 0
+
+
+def enrich_inside_ring(conn: Connection) -> int:
+    """Flag whether the listing falls inside the low-emission zone (≈ ring).
+
+    The zone is normally a single feature in `inner_city_zone`; an `EXISTS`
+    over the table yields a clean boolean per listing and stays correct even
+    if the source ever arrives multipart (a `LIMIT 1` would silently test one
+    arbitrary feature).
+    """
+    result = conn.execute(
+        text(
+            """
+            UPDATE listings_geo_context lgc
+            SET inside_ring = EXISTS (
+                    SELECT 1 FROM inner_city_zone z
+                    WHERE ST_Contains(z.geom, l.location)
                 ),
                 enriched_at = now()
-            FROM listings l, social_monitoring_2025 m
+            FROM listings l
             WHERE lgc.listing_id = l.id
               AND l.location IS NOT NULL
-              AND ST_Contains(m.geom, l.location)
             """
         )
     )
@@ -699,15 +863,18 @@ def enrich_disabled_parking(conn: Connection) -> int:
 CHIP_FAMILIES = {
     "nearby_transit": enrich_nearby_transit,
     "nearby_schools": enrich_nearby_schools,
+    "nearby_kitas": enrich_nearby_kitas,
     "nearby_hospitals": enrich_nearby_hospitals,
     "nearby_parks": enrich_nearby_parks,
     "nearby_playgrounds": enrich_nearby_playgrounds,
     "nearby_water": enrich_nearby_water,
+    "nearby_landmarks": enrich_nearby_landmarks,
     "chip_scalars": enrich_chip_scalars,
     "noise": enrich_noise,
     "greenery": enrich_greenery,
     "density": enrich_density,
-    "mss": enrich_mss,
+    "admin_areas": enrich_admin_areas,
+    "inside_ring": enrich_inside_ring,
     "school_catchment": enrich_school_catchment,
     "disabled_parking": enrich_disabled_parking,
 }

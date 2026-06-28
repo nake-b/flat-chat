@@ -1,9 +1,11 @@
 # geo_context — Berlin geospatial context ETL
 
-Ships Berlin geo-reference data (schools, parks, noise, population
-density, hospitals, social monitoring, water bodies, public transit)
-into PostGIS so the chat agent can answer "what kind of neighborhood is
-this?" questions about a listing.
+Ships Berlin geo-reference data (schools, kitas, parks, playgrounds,
+strategic noise, population density, hospitals, water bodies, landmarks,
+bezirke/ortsteile admin polygons, the inner-city / Umweltzone ring, public
+transit) into PostGIS so the chat agent can answer "what kind of
+neighborhood is this?" questions about a listing. (MSS/Sozialmonitoring was
+removed in geo-context v2.)
 
 ```
 ┌──────────────────────┐    XML/JSON   ┌────────────────────┐
@@ -31,13 +33,13 @@ this?" questions about a listing.
                                                  │
                               ┌──────────────────▼──────────────────┐
                               │ silver-tier PostGIS tables          │
-                              │  schools, school_catchments,        │
+                              │  schools, school_catchments, kitas, │
                               │  population_density_2025,           │
-                              │  street_noise_2022, green_volume…,  │
+                              │  strategic_noise_2022, green_volume,│
                               │  parks, playgrounds, hospitals,     │
-                              │  disabled_parking,                  │
-                              │  social_monitoring_2025,            │
-                              │  water_bodies,                      │
+                              │  disabled_parking, landmarks,       │
+                              │  bezirke, ortsteile,                │
+                              │  inner_city_zone, water_bodies,     │
                               │  transit_stops, transit_routes,     │
                               │  transit_route_shapes               │
                               └─────────────────────────────────────┘
@@ -104,18 +106,24 @@ Suggested cadence:
 | Table | Source URL | License | Update cadence |
 |---|---|---|---|
 | `schools` + `school_catchments` | gdi.berlin.de/services/wfs/schulen | dl-de/by-2-0 | yearly |
+| `kitas` | gdi.berlin.de/services/wfs/kitas | dl-de/zero-2-0 | monthly |
 | `population_density_2025` | gdi.berlin.de/services/wfs/ua_einwohnerdichte_2025 | dl-de/by-2-0 | yearly |
-| `street_noise_2022` | gdi.berlin.de/services/wfs/ua_stratlaerm_2022 | dl-de/by-2-0 | every 5y (EU) |
+| `strategic_noise_2022` | gdi.berlin.de/services/wfs/ua_stratlaerm_2022 | dl-de/by-2-0 | every 5y (EU) |
 | `green_volume_2020` | gdi.berlin.de/services/wfs/ua_gruenvolumen_2020 | dl-de/by-2-0 | every ~5y |
 | `parks` + `playgrounds` | gdi.berlin.de/services/wfs/gruenanlagen | dl-de/by-2-0 | quarterly |
 | `hospitals` (plan + other) | gdi.berlin.de/services/wfs/krankenhaeuser | dl-de/by-2-0 | rarely |
 | `disabled_parking` | gdi.berlin.de/services/wfs/behindertenparkplaetze | dl-de/by-2-0 | monthly |
-| `social_monitoring_2025` | gdi.berlin.de/services/wfs/mss_2025 | dl-de/by-2-0 | yearly |
+| `landmarks` (ALKIS) | gdi.berlin.de/services/wfs/alkis_gebaeude | dl-de/zero-2-0 | yearly |
+| `landmarks` (OSM) | overpass-api.de (Overpass) | ODbL | — |
+| `bezirke` | gdi.berlin.de/services/wfs/alkis_bezirke | dl-de/zero-2-0 | rarely |
+| `ortsteile` | gdi.berlin.de/services/wfs/alkis_ortsteile | dl-de/zero-2-0 | rarely |
+| `inner_city_zone` (Umweltzone) | gdi.berlin.de/services/wfs/umweltzone | dl-de/zero-2-0 | rarely |
 | `water_bodies` | gdi.berlin.de/services/wfs/gewaesserkarte | dl-de/by-2-0 | rarely |
 | `transit_stops` + `transit_routes` + `transit_route_shapes` | vbb.de/vbbgtfs | CC BY 4.0 | weekly |
 
-Berlin GDI data is published under the Datenlizenz Deutschland 2.0
-(Namensnennung). Keep attribution in any UI that surfaces the data.
+Berlin GDI data is published under Datenlizenz Deutschland — `by-2-0`
+(attribution required) or `zero-2-0` (no attribution). OSM is ODbL — keep
+"© OpenStreetMap contributors" in any UI that surfaces landmark data.
 
 ## Adding a new dataset
 
@@ -154,10 +162,17 @@ add a YAML entry.
   is consistent with the `listings.location` column. PostGIS spatial
   joins should always go through `::geography` for meter-accurate results.
 
-- **MSS / Gewässer status `wip`:** column-name guesses based on
-  GetCapabilities + DescribeFeatureType but never verified on real
-  output. If aliases turn out wrong they'll be silently dropped — check
-  `SELECT COUNT(*) FROM social_monitoring_2025` after first run.
+- **`wip`-status layers (kitas, landmarks, bezirke, ortsteile, umweltzone,
+  Gewässer):** alias column names are based on GetCapabilities +
+  DescribeFeatureType but not all verified against real output. If an alias
+  is wrong the column is silently dropped — check `SELECT COUNT(*)` +
+  `SELECT name FROM <table> LIMIT 5` after the first run. In particular,
+  `bezirke` aliases `{"namgem": "name", "name": "bezirk_id"}` because the
+  layer's `name` is a numeric id and `namgem` is the human label.
+
+- **OSM landmarks (`extract/osm.py`):** a separate Overpass step (not WFS)
+  appends `source='osm'` rows into `landmarks` after the ALKIS seed. Overpass
+  is flaky → retry/backoff; a Geofabrik-extract fallback is a TODO.
 
 - **VBB uses GTFS Extended Route Types**, not the basic 0–3 codes. The
   values you'll see in `transit_stops.modes_served` / `transit_routes.route_type`:

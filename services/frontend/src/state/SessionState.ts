@@ -21,8 +21,6 @@
 export type NoiseLabel = "quiet" | "lively" | "noisy";
 export type DensityLabel = "sparse" | "moderate" | "dense";
 export type GreeneryLabel = "concrete" | "leafy" | "very_leafy";
-export type MssStatus = "disadvantaged" | "lower-income" | "mixed" | "affluent";
-export type MssDynamics = "slipping" | "stable" | "improving";
 export type GtfsMode =
   | "mainline"
   | "regional"
@@ -80,9 +78,21 @@ export interface NearestWater {
   distance_m: number;
 }
 
+export interface NearestKita {
+  name: string | null;
+  distance_m: number;
+}
+
+export interface NearestLandmark {
+  name: string | null;
+  category: string | null;
+  distance_m: number;
+}
+
 export interface NoiseProfile {
   label: NoiseLabel | null;
   total_lden: number | null;
+  total_lnight: number | null;
   street_lden: number | null;
   rail_lden: number | null;
   distance_m: number | null;
@@ -107,15 +117,6 @@ export interface DensityProfile {
   age_80_plus: number | null;
 }
 
-export interface MssProfile {
-  status: MssStatus | null;
-  dynamics: MssDynamics | null;
-  social_inequality: string | null;
-  planning_area_name: string | null;
-  residents: number | null;
-  year: number | null;
-}
-
 // Tier-3 detail blob — fetched via GET /api/listings/{id} (primary) or
 // pushed by the agent's `open_listing` tool via state delta.
 export interface ListingDetail {
@@ -127,6 +128,11 @@ export interface ListingDetail {
   postal_code: string | null;
   latitude: number | null;
   longitude: number | null;
+
+  // Admin-area context (ALKIS polygon assignment + Umweltzone ring flag)
+  inside_ring: boolean | null;
+  listing_bezirk: string | null;
+  listing_ortsteil: string | null;
 
   price_warm_eur: number | null;
   price_cold_eur: number | null;
@@ -168,10 +174,11 @@ export interface ListingDetail {
   nearest_playground: NearestPlayground | null;
   nearest_hospitals: NearestHospital[];
   nearest_water: NearestWater | null;
+  nearest_kitas: NearestKita[];
+  nearest_landmarks: NearestLandmark[];
   noise: NoiseProfile | null;
   greenery: GreeneryProfile | null;
   density: DensityProfile | null;
-  mss: MssProfile | null;
   disabled_parking_count: number;
 }
 
@@ -224,8 +231,10 @@ export interface ListingCard {
   nearest_park_m: number | null;
   noise_label: NoiseLabel | null;
   density_label: DensityLabel | null;
-  mss_status_label: MssStatus | null;
-  mss_dynamics_label: MssDynamics | null;
+  // Admin-area context — cheap scalars for location chips
+  inside_ring: boolean | null;
+  listing_bezirk: string | null;
+  listing_ortsteil: string | null;
   // Semantic-search score
   similarity_score: number | null;
 }

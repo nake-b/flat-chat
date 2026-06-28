@@ -23,8 +23,8 @@ module that owns shared listing concerns:
 
 | Submodule | What it owns |
 |---|---|
-| `models.py` | `Listing`, `ListingGeoContext`, `ListingEmbedding` + the `ListingNearby*` junction ORMs — all **read-only** views of the `world` schema (`{"schema": "world"}`; ingestion owns the DDL). `IronCard`/`RawListing` were removed in the schema-ownership split — the backend doesn't model iron/bronze. See [`schema-ownership-split.md`](schema-ownership-split.md). |
-| `types.py` | `NoiseLabel`, `DensityLabel`, `GreeneryLabel`, `MssStatus`, `MssDynamics`, `DistanceBucket`, `NearSpec`, `GtfsMode` Literal types |
+| `models.py` | `Listing`, `ListingGeoContext`, `ListingEmbedding` + the `ListingNearby*` junction ORMs (incl. `ListingNearbyKita`/`ListingNearbyLandmark`) + the `named_places` read-only Core `Table` (the gazetteer view backing `locate_place`) — all **read-only** views of the `world` schema (`{"schema": "world"}`; ingestion owns the DDL). `IronCard`/`RawListing` were removed in the schema-ownership split — the backend doesn't model iron/bronze. See [`schema-ownership-split.md`](schema-ownership-split.md). |
+| `types.py` | `NoiseLabel`, `DensityLabel`, `GreeneryLabel`, `DistanceBucket`, `NearSpec`, `GtfsMode` Literal types (the MSS `MssStatus`/`MssDynamics` types were removed in geo-context v2) |
 | `context.py` | `ListingDetail`, `UiApartment`, and all the nested dataclasses (`NearestTransitStop`, `NearestSchool`, …) |
 | `labels.py` | `bucket_noise`, `bucket_density`, `bucket_greenery`, `walk_minutes`, `encode_modes`, `decode_modes`, `resolve_near_spec` |
 | `thresholds.py` | The constants — noise dB cutoffs, density per-hectare cutoffs, greenery m² cutoffs, walking-distance ladder, per-dataset caps, GTFS mode code map |
@@ -65,10 +65,12 @@ APIs. That's an inversion. Neutral module solves it.
 ## What stayed in `search/`
 
 - Filter input shapes (`TransitFilter`, `SchoolFilter`, `HospitalFilter`,
-  `MssFilter`): these are search-input contracts, not listing data.
+  `KitaFilter`): these are search-input contracts, not listing data.
   They only exist because someone is *searching*.
 - `SearchParams` + `SortBy`: same.
 - `SearchService` itself: filter + rank is search's reason to exist.
+- `PlaceService` (`search/places.py`): resolves a named place to a
+  `place_ref` for `near_place_ref` search — agent-only, like `SearchService`.
 
 ## What got deleted
 

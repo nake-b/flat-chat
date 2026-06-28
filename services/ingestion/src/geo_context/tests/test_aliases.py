@@ -56,8 +56,6 @@ def test_extra_columns_injected() -> None:
 
 
 def test_unknown_dataset_raises() -> None:
-    gdf = gpd.GeoDataFrame(
-        {"geometry": [Point(0, 0)]}, crs="EPSG:25833"
-    )
+    gdf = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, crs="EPSG:25833")
     with pytest.raises(KeyError):
         transform_wfs_layer(gdf, "nope", "nope")

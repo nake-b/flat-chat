@@ -25,8 +25,9 @@ from flat_chat.listings.context import (
     GreeneryProfile,
     ListingCard,
     Marker,
-    MssProfile,
     NearestHospital,
+    NearestKita,
+    NearestLandmark,
     NearestPark,
     NearestPlayground,
     NearestSchool,
@@ -278,10 +279,16 @@ def _detail_full():
         nearest_water=NearestWater(
             name="Landwehrkanal", water_kind="canal", distance_m=500
         ),
-        noise=NoiseProfile(label="lively", total_lden=60.0),
+        nearest_kitas=[NearestKita(name="Kita Sonnenschein", distance_m=180)],
+        nearest_landmarks=[
+            NearestLandmark(name="Oberbaumbrücke", category="bridge", distance_m=650),
+        ],
+        inside_ring=True,
+        listing_bezirk="Friedrichshain-Kreuzberg",
+        listing_ortsteil="Kreuzberg",
+        noise=NoiseProfile(label="lively", total_lden=60.0, total_lnight=52.0),
         greenery=GreeneryProfile(label="leafy", green_m2_within_300m=6000.0),
         density=DensityProfile(label="dense", persons_per_hectare=200.0),
-        mss=MssProfile(status="mixed", dynamics="improving"),
         disabled_parking_count=3,
     )
 
@@ -300,9 +307,15 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "Nearest playground: Mariannenplatz — 250m" in out
     assert "  - Urban-Krankenhaus (plan_hospital) — 900m" in out
     assert "Nearest water: Landwehrkanal — 500m" in out
+    assert "  - Kita Sonnenschein — 180m" in out
+    assert "  - Oberbaumbrücke (bridge) — 650m" in out
     assert (
-        "Neighbourhood character: street noise: lively, greenery: leafy, "
-        "density: dense, Sozialmonitoring: mixed · improving"
+        "Location: inside the S-Bahn ring, Bezirk Friedrichshain-Kreuzberg, "
+        "Ortsteil Kreuzberg"
+    ) in out
+    assert (
+        "Neighbourhood character: noise: lively (52 dB at night), "
+        "greenery: leafy, density: dense"
     ) in out
     assert "Disabled parking nearby: 3 spots within 300m" in out
 

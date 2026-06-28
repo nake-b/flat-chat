@@ -18,7 +18,7 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
     # schulen  (Berliner Schulverzeichnis)
     # ---------------------------------------------------------------------
     ("schulen", "schulen"): {
-        "bsn": "school_number",      # Berliner Schulnummer
+        "bsn": "school_number",  # Berliner Schulnummer
         "schulname": "name",
         "schulart": "school_type",
         "traeger": "operator",
@@ -38,7 +38,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "bez": "school_number",
         "bezname": "school_name",
     },
-
     # ---------------------------------------------------------------------
     # ua_einwohnerdichte_2025  (Einwohnerdichte – population density)
     # ---------------------------------------------------------------------
@@ -59,7 +58,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "typklar": "area_type",
         "etypklar": "area_type_en",
     },
-
     # ---------------------------------------------------------------------
     # ua_stratlaerm_2022  (strategic noise map)
     # Source x/y columns are explicitly dropped — redundant with Point geom.
@@ -77,7 +75,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "ges_den": "noise_total_lden",
         "ges_n": "noise_total_lnight",
     },
-
     # ---------------------------------------------------------------------
     # ua_gruenvolumen_2020  (3D vegetation volume from LiDAR)
     # ---------------------------------------------------------------------
@@ -107,7 +104,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "egrz_name": "block_type_name_en",
         "etypklar": "area_class_name_en",
     },
-
     # ---------------------------------------------------------------------
     # gruenanlagen  (parks + playgrounds share most of the schema)
     # ---------------------------------------------------------------------
@@ -142,7 +138,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "planname": "plan_name",
         "nettospfl": "play_area_m2",
     },
-
     # ---------------------------------------------------------------------
     # krankenhaeuser  (both layers feed one `hospitals` table; the `tier`
     # column is set by the orchestrator from the YAML `extra.tier` field).
@@ -169,7 +164,6 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "betten": "total_beds",
         "fachabteilungen": "departments",
     },
-
     # ---------------------------------------------------------------------
     # behindertenparkplaetze  (disabled parking)
     # Source gps_lat/gps_lon dropped — redundant with the projected geom.
@@ -186,26 +180,55 @@ ALIASES: dict[tuple[str, str], dict[str, str]] = {
         "ortsteil": "neighborhood",
         "datum": "recorded_date",
     },
-
     # ---------------------------------------------------------------------
-    # mss_2025  (Monitoring Soziale Stadtentwicklung — composite indices)
+    # kitas  (Kindertagesstätten — day-care centres, points)
+    # NOTE: column names below mirror the published kita WFS schema; verify
+    # against GetCapabilities if a refresh drops fields (status: wip).
     # ---------------------------------------------------------------------
-    ("mss_2025", "mss2025_indizes_542"): {
-        "plr_id": "planning_area_id",
-        "plr_name": "planning_area_name",
-        "bez_id": "district_id",
-        "ew": "residents",
-        "di_n": "dynamics_index_score",
-        "di_v": "dynamics_index_label",
-        "sdi": "social_inequality_category",
-        "sdi_n": "social_inequality_score",
-        "sdi_v": "social_inequality_label",
-        "si_n": "status_index_score",
-        "si_v": "status_index_label",
-        "zeit": "year",
-        "kom": "notes",
+    ("kita", "kita:kita"): {
+        "e_name": "name",
+        "t_name": "operator",
+        "t_art": "operator_type",
+        "e_strasse": "street",
+        "e_hnr": "house_number",
+        "e_plz": "postal_code",
+        "e_bez": "district",
+        "e_tel": "phone",
+        "e_web": "website",
     },
-
+    # ---------------------------------------------------------------------
+    # alkis_gebaeude  (named building footprints → landmarks; source='alkis',
+    # category='building' injected via YAML `extra`). Keep named-only: the
+    # transform drops rows with an empty `name` (see transform_wfs_layer).
+    # ---------------------------------------------------------------------
+    ("alkis_gebaeude", "alkis_gebaeude:gebaeude"): {
+        "nam": "name",
+        "bezeich": "description",
+    },
+    # ---------------------------------------------------------------------
+    # alkis_bezirke  (borough boundary polygons)
+    # CRITICAL: features carry NO `nam`. `name` is a numeric borough ID and
+    # `namgem` is the human label ("Mitte") — so the human label lands in the
+    # `name` column and the numeric id in `bezirk_id`.
+    # ---------------------------------------------------------------------
+    ("alkis_bezirke", "alkis_bezirke:bezirksgrenzen"): {
+        "namgem": "name",
+        "name": "bezirk_id",
+    },
+    # ---------------------------------------------------------------------
+    # alkis_ortsteile  (locality boundary polygons) — `nam` is the label here.
+    # ---------------------------------------------------------------------
+    ("alkis_ortsteile", "alkis_ortsteile:ortsteile"): {
+        "nam": "name",
+    },
+    # ---------------------------------------------------------------------
+    # umweltzone  (low-emission zone ≈ S-Bahn ring → inner_city_zone)
+    # Single feature; only the geometry matters. `nam` aliased if present so
+    # the dropped-column log stays quiet.
+    # ---------------------------------------------------------------------
+    ("umweltzone", "umweltzone:umweltzone"): {
+        "nam": "name",
+    },
     # ---------------------------------------------------------------------
     # gewaesserkarte  (water bodies — surface polygons)
     # ---------------------------------------------------------------------

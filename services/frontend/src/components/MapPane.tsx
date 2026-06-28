@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Map as MapLibreMap, Source, Layer } from "@vis.gl/react-maplibre";
+import {
+  Map as MapLibreMap,
+  Source,
+  Layer,
+  AttributionControl,
+} from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
   GeoJSONSource,
@@ -337,6 +342,10 @@ export function MapPane() {
       initialViewState={BERLIN_CENTER}
       mapStyle={MAP_STYLE_URL}
       style={{ width: "100%", height: "100%" }}
+      // Disable the built-in attribution so we can add ours once, carrying the
+      // ODbL obligation for the OSM-sourced landmark data alongside the
+      // basemap's own credits.
+      attributionControl={false}
       interactiveLayerIds={["unclustered-point", "clusters"]}
       maxBounds={BERLIN_BOUNDS}
       minZoom={9}
@@ -365,6 +374,13 @@ export function MapPane() {
         setMapInstance(m);
       }}
     >
+      {/* ODbL obligation: landmark data is partly sourced from OpenStreetMap.
+          `compact` keeps the credit to an "i" toggle so it doesn't crowd the
+          map; the basemap's own attribution still rides the same control. */}
+      <AttributionControl
+        compact
+        customAttribution="© OpenStreetMap contributors"
+      />
       <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
   );
