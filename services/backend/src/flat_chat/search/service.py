@@ -35,7 +35,7 @@ from pydantic_ai import Embedder
 from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import ListingCard, Marker
+from flat_chat.listings.context import Marker
 from flat_chat.listings.labels import encode_modes, resolve_near_spec
 from flat_chat.listings.models import (
     Listing,
@@ -71,6 +71,7 @@ from .schemas import (
     NumericFacet,
     ResultFacets,
     SearchParams,
+    SearchResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,10 +136,9 @@ class SearchService:
         self.db = db
         self.embedder = embedder
 
-    async def search(
-        self, params: SearchParams
-    ) -> tuple[list[Marker], list[ListingCard], int, ResultFacets | None]:
-        """Run the search. Returns (markers, preview_cards, total, facets).
+    async def search(self, params: SearchParams) -> SearchResult:
+        """Run the search. Returns a `SearchResult` (markers, preview, total,
+        facets) — a NamedTuple, so positional unpacking still works.
 
         - `markers`: EVERY match (≤ MARKER_CAP) as thin tier-1 markers — the
           map source and the ordered result set the LLM indexes into.
@@ -226,7 +226,7 @@ class SearchService:
         # when there's nothing to describe.
         facets = await self._facets(params) if total > 0 else None
 
-        return markers, preview, total, facets
+        return SearchResult(markers, preview, total, facets)
 
     # ---- Facets (whole-set aggregate stats) ----
 
@@ -246,15 +246,20 @@ class SearchService:
         Runs sequentially after the marker/preview reads — the shared
         AsyncSession is one connection, so concurrent execution is unsafe.
         """
-        # Numeric facets — one row, min/median/max for price and area.
+        # Numeric facets — one row, min/median/max for price and area. Labelled
+        # so they're read by name below, not by fragile positional `row[n]`.
         num_stmt: Select = (
             select(
-                func.min(Listing.warm_rent_eur),
-                func.percentile_cont(0.5).within_group(Listing.warm_rent_eur.asc()),
-                func.max(Listing.warm_rent_eur),
-                func.min(Listing.area_sqm),
-                func.percentile_cont(0.5).within_group(Listing.area_sqm.asc()),
-                func.max(Listing.area_sqm),
+                func.min(Listing.warm_rent_eur).label("price_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.warm_rent_eur.asc())
+                .label("price_median"),
+                func.max(Listing.warm_rent_eur).label("price_max"),
+                func.min(Listing.area_sqm).label("area_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.area_sqm.asc())
+                .label("area_median"),
+                func.max(Listing.area_sqm).label("area_max"),
             )
             .select_from(Listing)
             .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
@@ -288,8 +293,10 @@ class SearchService:
         dist_rows = (await self.db.execute(dist_stmt)).all()
 
         return ResultFacets(
-            price_warm_eur=_numeric_facet(row[0], row[1], row[2]),
-            area_sqm=_numeric_facet(row[3], row[4], row[5]),
+            price_warm_eur=_numeric_facet(
+                row.price_min, row.price_median, row.price_max
+            ),
+            area_sqm=_numeric_facet(row.area_min, row.area_median, row.area_max),
             districts=[
                 DistrictCount(district=name, count=count) for name, count in dist_rows
             ],

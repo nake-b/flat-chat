@@ -10,10 +10,11 @@ Bucket labels (NoiseLabel, GreeneryLabel, DensityLabel) live in
 """
 
 from datetime import date
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
+from flat_chat.listings.context import ListingCard, Marker
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
@@ -155,3 +156,24 @@ class ResultFacets(BaseModel):
     price_warm_eur: NumericFacet | None = None
     area_sqm: NumericFacet | None = None
     districts: list[DistrictCount] = Field(default_factory=list)
+
+
+class SearchResult(NamedTuple):
+    """The full output of `SearchService.search()`.
+
+    A NamedTuple (not a dataclass) so it stays tuple-unpackable — existing
+    callers and tests keep `markers, preview, total, facets = await search(...)`
+    while gaining named access (`result.facets`). The four tiers:
+
+    - `markers`: EVERY match (≤ MARKER_CAP) as thin tier-1 markers — the map
+      source and the ordered result set the LLM indexes into.
+    - `preview`: the top PREVIEW_N as full tier-2 cards.
+    - `total`: `len(markers)`, unless the cap binds — then a real COUNT(*).
+    - `facets`: whole-set aggregate stats (price/area ranges, neighbourhood
+      counts), or `None` when total is 0.
+    """
+
+    markers: list[Marker]
+    preview: list[ListingCard]
+    total: int
+    facets: ResultFacets | None
