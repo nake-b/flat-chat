@@ -263,6 +263,30 @@ export interface ResultMarkers {
   prices: (number | null)[];
 }
 
+// ---------------------------------------------------------------------------
+// ResultFacets — aggregate stats over the WHOLE filtered set (price/area
+// ranges + neighbourhood counts), mirrored from the backend. Primarily for
+// the agent (grounds its whole-set summaries); kept here for type-parity and
+// a future results-header UI. Not rendered today.
+// ---------------------------------------------------------------------------
+
+export interface NumericFacet {
+  min: number | null;
+  median: number | null;
+  max: number | null;
+}
+
+export interface DistrictCount {
+  district: string;
+  count: number;
+}
+
+export interface ResultFacets {
+  price_warm_eur: NumericFacet | null;
+  area_sqm: NumericFacet | null;
+  districts: DistrictCount[];
+}
+
 // A single decoded marker — one row zipped out of the parallel arrays.
 export interface MarkerPoint {
   id: string;
@@ -311,6 +335,7 @@ export interface SessionState {
   total_results: number;
   result_markers: ResultMarkers;
   preview_cards: ListingCard[];
+  facets: ResultFacets | null;
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
 }
@@ -320,6 +345,7 @@ export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   total_results: 0,
   result_markers: { ids: [], lats: [], lngs: [], prices: [] },
   preview_cards: [],
+  facets: null,
   active_id: null,
   active_listing_detail: null,
 }) as SessionState;

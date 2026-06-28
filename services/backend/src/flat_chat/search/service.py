@@ -4,10 +4,11 @@ Design:
   - Joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` and
     filters with plain B-tree predicates on the gold scalars plus EXISTS
     subqueries against the per-listing junction tables.
-  - `search()` returns `(markers, preview_cards, total)`: EVERY match as a
-    thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered result
-    set), plus the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
-    LLM + the card strip). The rest of the cards hydrate on demand via
+  - `search()` returns `(markers, preview_cards, total, facets)`: EVERY match
+    as a thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered
+    result set), the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
+    LLM + the card strip), the count, and whole-set `ResultFacets` (price/area
+    ranges + per-Ortsteil counts). The rest of the cards hydrate on demand via
     `ListingService.get_cards`.
   - The only spatial predicate is `ST_DWithin` on the listing's own location
     for `near_lat/near_lon` proximity search — a single condition that hits
@@ -34,7 +35,7 @@ from pydantic_ai import Embedder
 from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import ListingCard, Marker
+from flat_chat.listings.context import Marker
 from flat_chat.listings.labels import encode_modes, resolve_near_spec
 from flat_chat.listings.models import (
     Listing,
@@ -63,7 +64,15 @@ from .geo_filters import (
     SchoolFilter,
     TransitFilter,
 )
-from .schemas import MARKER_CAP, PREVIEW_N, SearchParams
+from .schemas import (
+    MARKER_CAP,
+    PREVIEW_N,
+    DistrictCount,
+    NumericFacet,
+    ResultFacets,
+    SearchParams,
+    SearchResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +84,22 @@ _LIKE_META = re.compile(r"([%_\\])")
 
 def _escape_for_substring(s: str) -> str:
     return f"%{_LIKE_META.sub(r'\\\1', s)}%"
+
+
+def _numeric_facet(
+    lo: float | None, mid: float | None, hi: float | None
+) -> NumericFacet | None:
+    """Build a NumericFacet from raw (min, median, max), or None if all empty.
+
+    Postgres returns Decimal for `percentile_cont`; coerce to float so the
+    Pydantic model + JSON wire stay plain numbers."""
+    if lo is None and mid is None and hi is None:
+        return None
+    return NumericFacet(
+        min=float(lo) if lo is not None else None,
+        median=float(mid) if mid is not None else None,
+        max=float(hi) if hi is not None else None,
+    )
 
 
 def _parse_place_ref(token: str) -> tuple[str, int] | None:
@@ -111,15 +136,17 @@ class SearchService:
         self.db = db
         self.embedder = embedder
 
-    async def search(
-        self, params: SearchParams
-    ) -> tuple[list[Marker], list[ListingCard], int]:
-        """Run the search. Returns (markers, preview_cards, total).
+    async def search(self, params: SearchParams) -> SearchResult:
+        """Run the search. Returns a `SearchResult` (markers, preview, total,
+        facets) — a NamedTuple, so positional unpacking still works.
 
         - `markers`: EVERY match (≤ MARKER_CAP) as thin tier-1 markers — the
           map source and the ordered result set the LLM indexes into.
         - `preview_cards`: the top PREVIEW_N as full tier-2 cards.
         - `total`: `len(markers)`, unless the cap binds — then a real COUNT(*).
+        - `facets`: aggregate stats (price/area ranges, neighbourhood counts)
+          over the WHOLE filtered set, so the agent grounds whole-set claims in
+          the full set rather than the top-N preview. `None` when total is 0.
 
         Markers and preview share `_compose` so their filters AND ORDER BY are
         identical; the preview is a true prefix of the marker order, which is
@@ -194,7 +221,86 @@ class SearchService:
             row_to_listing_card(row, with_score=bool(params.query))
             for row in preview_rows
         ]
-        return markers, preview, total
+
+        # Facets over the whole filtered set — skip the two extra round-trips
+        # when there's nothing to describe.
+        facets = await self._facets(params) if total > 0 else None
+
+        return SearchResult(markers, preview, total, facets)
+
+    # ---- Facets (whole-set aggregate stats) ----
+
+    async def _facets(self, params: SearchParams) -> ResultFacets:
+        """Aggregate stats over the FULL filtered set (not the preview slice).
+
+        Two cheap aggregate queries, both reusing `_apply_listing_filters` +
+        `_apply_geo_context_filters` so they describe exactly the same rows as
+        the markers/preview:
+          - numeric: min / median / max for warm rent and area in one row
+            (`percentile_cont(0.5)` for the median);
+          - districts: count per Ortsteil (`listing_ortsteil`), the Berlin
+            neighbourhood granularity, NULLs excluded.
+
+        Computed in SQL rather than from the in-memory markers so price stays
+        exact past MARKER_CAP and so area (absent from markers) is covered.
+        Runs sequentially after the marker/preview reads — the shared
+        AsyncSession is one connection, so concurrent execution is unsafe.
+        """
+        # Numeric facets — one row, min/median/max for price and area. Labelled
+        # so they're read by name below, not by fragile positional `row[n]`.
+        num_stmt: Select = (
+            select(
+                func.min(Listing.warm_rent_eur).label("price_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.warm_rent_eur.asc())
+                .label("price_median"),
+                func.max(Listing.warm_rent_eur).label("price_max"),
+                func.min(Listing.area_sqm).label("area_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.area_sqm.asc())
+                .label("area_median"),
+                func.max(Listing.area_sqm).label("area_max"),
+            )
+            .select_from(Listing)
+            .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
+        )
+        num_stmt = self._apply_listing_filters(num_stmt, params)
+        num_stmt = self._apply_geo_context_filters(num_stmt, params)
+        num_stmt = num_stmt.where(
+            Listing.latitude.is_not(None), Listing.longitude.is_not(None)
+        )
+        row = (await self.db.execute(num_stmt)).one()
+
+        # Districts — count per Ortsteil, busiest first (id tie-break for
+        # deterministic ordering across equal counts).
+        lgc = ListingGeoContext
+        dist_stmt: Select = (
+            select(lgc.listing_ortsteil, func.count())
+            .select_from(Listing)
+            .outerjoin(lgc, lgc.listing_id == Listing.id)
+        )
+        dist_stmt = self._apply_listing_filters(dist_stmt, params)
+        dist_stmt = self._apply_geo_context_filters(dist_stmt, params)
+        dist_stmt = (
+            dist_stmt.where(
+                Listing.latitude.is_not(None),
+                Listing.longitude.is_not(None),
+                lgc.listing_ortsteil.is_not(None),
+            )
+            .group_by(lgc.listing_ortsteil)
+            .order_by(func.count().desc(), lgc.listing_ortsteil)
+        )
+        dist_rows = (await self.db.execute(dist_stmt)).all()
+
+        return ResultFacets(
+            price_warm_eur=_numeric_facet(
+                row.price_min, row.price_median, row.price_max
+            ),
+            area_sqm=_numeric_facet(row.area_min, row.area_median, row.area_max),
+            districts=[
+                DistrictCount(district=name, count=count) for name, count in dist_rows
+            ],
+        )
 
     # ---- Statement composition ----
 

@@ -23,7 +23,12 @@ from flat_chat.chat.agent import agent
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.state import ChatDeps, ChatSession
 
-EXPECTED_TOOLS = {"search_apartments", "open_listing", "get_result_page"}
+EXPECTED_TOOLS = {
+    "search_apartments",
+    "open_listing",
+    "get_result_page",
+    "locate_place",
+}
 
 
 def test_agent_advertises_listing_tools_via_capability():
@@ -36,6 +41,7 @@ def test_agent_advertises_listing_tools_via_capability():
     deps = ChatDeps(
         search_service=None,  # type: ignore[arg-type]  # never called (no tool calls)
         listing_service=None,  # type: ignore[arg-type]
+        place_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-wiring"),
         state=SessionState(),
     )

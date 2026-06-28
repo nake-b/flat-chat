@@ -37,6 +37,7 @@ class SessionState(BaseModel):
     # The materialized result set (answer)
     result_markers: list[Marker]                  # tier 1, EVERY match (≤ MARKER_CAP=5000)
     preview_cards: list[ListingCard]              # tier 2, top PREVIEW_N=10 (hot)
+    facets: ResultFacets | None                   # whole-set stats (price/area ranges + Ortsteil counts)
 
     # The active selection (focus)
     active_id: UUID | None
@@ -68,10 +69,15 @@ the heavy part (full cards) scales independently of the markers:
   fetch) and for the card strip's first paint.
 - **`total_results`** — now a real count: `len(result_markers)`, or
   `COUNT(*)` when the 5000 cap binds.
+- **`facets`** — whole-set aggregate stats (`ResultFacets`: price/area
+  min·median·max + per-Ortsteil counts) computed in SQL over the same
+  filtered set, so the LLM grounds whole-set summaries instead of
+  extrapolating from `preview_cards`. `None` until a search returns ≥1
+  result. See [`result-set-facets.md`](result-set-facets.md).
 
-`SearchService.search()` returns `(markers, preview_cards, total)` —
-there is no per-search `limit` arg anymore; markers are hard-capped
-server-side. The shared tier-2 projection lives in
+`SearchService.search()` returns `(markers, preview_cards, total,
+facets)` — there is no per-search `limit` arg anymore; markers are
+hard-capped server-side. The shared tier-2 projection lives in
 `listings/projection.py`, reused by both the preview build and
 `ListingService.get_cards(ids)`.
 

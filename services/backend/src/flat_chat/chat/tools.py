@@ -346,8 +346,8 @@ async def search_apartments(
 
     # Execute the search. SearchService drops null-coordinate listings and
     # returns markers (EVERY match, ≤ MARKER_CAP), the top-N preview cards,
-    # and the total.
-    markers, preview, total = await ctx.deps.search_service.search(params)
+    # the total, and whole-set facets (price/area ranges, neighbourhood counts).
+    markers, preview, total, facets = await ctx.deps.search_service.search(params)
 
     # SessionState is the canonical in-memory snapshot. Both the LLM (via
     # build_dynamic_state_prompt) and the frontend (via the AG-UI state
@@ -356,6 +356,7 @@ async def search_apartments(
     ctx.deps.state.total_results = total
     ctx.deps.state.result_markers = markers
     ctx.deps.state.preview_cards = preview
+    ctx.deps.state.facets = facets
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 

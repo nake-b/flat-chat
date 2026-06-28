@@ -33,6 +33,7 @@ from flat_chat.chat.tools import (
     search_apartments,
 )
 from flat_chat.listings.context import ListingCard, ListingDetail, Marker
+from flat_chat.search.schemas import DistrictCount, NumericFacet, ResultFacets
 
 # ---------------------------------------------------------------------------
 # Mock services
@@ -40,17 +41,24 @@ from flat_chat.listings.context import ListingCard, ListingDetail, Marker
 
 
 class _MockSearchService:
-    """Returns canned (markers, preview, total) for whatever params it gets."""
+    """Returns canned (markers, preview, total, facets) for any params."""
 
-    def __init__(self, markers: list[Marker], preview: list[ListingCard], total: int):
+    def __init__(
+        self,
+        markers: list[Marker],
+        preview: list[ListingCard],
+        total: int,
+        facets: ResultFacets | None = None,
+    ):
         self.markers = markers
         self.preview = preview
         self.total = total
+        self.facets = facets
         self.called_with = None
 
     async def search(self, params):
         self.called_with = params
-        return list(self.markers), list(self.preview), self.total
+        return list(self.markers), list(self.preview), self.total, self.facets
 
 
 class _MockListingService:
@@ -110,7 +118,11 @@ def _card(idx: int) -> ListingCard:
 def test_search_apartments_populates_state_and_emits_snapshot():
     markers = [_marker(1), _marker(2)]
     preview = [_card(1), _card(2)]
-    search = _MockSearchService(markers, preview, total=42)
+    facets = ResultFacets(
+        price_warm_eur=NumericFacet(min=1100.0, median=1150.0, max=1200.0),
+        districts=[DistrictCount(district="Kreuzberg", count=2)],
+    )
+    search = _MockSearchService(markers, preview, total=42, facets=facets)
     state = SessionState()
     ctx = _ctx(state, search=search)
 
@@ -122,6 +134,9 @@ def test_search_apartments_populates_state_and_emits_snapshot():
     assert state.total_results == 42
     assert [m.id for m in state.result_markers] == ["id-1", "id-2"]
     assert [c.id for c in state.preview_cards] == ["id-1", "id-2"]
+    # Whole-set facets are plumbed onto the state for the agent prompt.
+    assert state.facets is not None
+    assert state.facets.price_warm_eur.max == 1200.0
     # State snapshot accompanies the return value for the frontend.
     assert len(result.metadata) == 1
     assert result.metadata[0].type == EventType.STATE_SNAPSHOT
