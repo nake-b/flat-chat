@@ -4,10 +4,10 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const stealth = require('scraper-lib/stealth');
 
-const DEFAULT_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const DEFAULT_TIMEOUT_MS = 30_000;
+// Re-exported from the shared stealth module so existing imports keep working.
+const { DEFAULT_USER_AGENT, DEFAULT_TIMEOUT_MS } = stealth;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,6 +31,11 @@ async function clickIfPresent(page, selectors) {
 // wg-gesucht uses ConsentManager.net (#cmpbox).
 async function acceptConsent(page) {
   const selectors = [
+    // Prefer "Speichern" (save current selection) — it dismisses the
+    // consentmanager.net box without triggering the full accept-all vendor
+    // load that was confusing the scraper. Try it before any accept button.
+    '.cmpboxbtnsave',
+    '#cmpbntsavetxt',
     '#cmpwelcomebtnyes',
     '.cmpboxbtnyes',
     '.cmpboxbtn[role="button"]',
@@ -50,7 +55,7 @@ async function acceptConsent(page) {
       const clicked = await frame.evaluate(() => {
         const candidates = [...document.querySelectorAll('button, a[role="button"], div[role="button"]')];
         const target = candidates.find((node) =>
-          /alle akzeptieren|akzeptieren|einverstanden|zustimmen|accept all|i agree/i.test(
+          /speichern|alle akzeptieren|akzeptieren|einverstanden|zustimmen|accept all|i agree|save/i.test(
             (node.innerText || node.textContent || '').trim()
           )
         );
@@ -70,15 +75,15 @@ async function acceptConsent(page) {
   return false;
 }
 
-async function preparePage(page, { userAgent = DEFAULT_USER_AGENT, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  page.setDefaultTimeout(timeoutMs);
-  await page.setUserAgent(userAgent);
-  await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6' });
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    window.chrome = window.chrome || { runtime: {} };
+// Thin wrapper over the shared stealth helper, fixing wg-gesucht's German
+// Accept-Language. Pass `userAgent: null` (the new default) to rotate a current
+// Chrome UA per run; an explicit USER_AGENT env override still wins. The old
+// manual navigator patches are gone — the stealth plugin owns those now.
+async function preparePage(page, { userAgent = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  return stealth.applyStealthToPage(page, {
+    userAgent,
+    acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+    timeoutMs,
   });
 }
 

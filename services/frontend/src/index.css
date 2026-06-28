@@ -102,7 +102,10 @@ body,
   box-shadow: 0 1px 0 rgba(176, 0, 48, 0.18) !important;
 }
 
-/* Assistant bubble — white with hairline border, left-aligned. */
+/* Assistant bubble — white with hairline border, left-aligned.
+   `width: fit-content` makes short replies ("On it.") hug the text instead
+   of stretching to the full max-width band; `max-width` still caps + wraps
+   long messages. Mirrors the user bubble. */
 .copilotKitAssistantMessage {
   background: #ffffff !important;
   color: theme("colors.ink.DEFAULT") !important;
@@ -111,6 +114,7 @@ body,
   padding: 0.75rem 1rem !important;
   font-size: 0.9375rem !important;
   line-height: 1.55 !important;
+  width: fit-content !important;
   max-width: 84% !important;
   letter-spacing: -0.005em !important;
 }
@@ -415,7 +419,10 @@ body,
    Selection.
    ────────────────────────────────────────────────────────────────────── */
 
+/* Highlighter yellow + ink, not the brand red. A single global selection
+   color must stay legible on BOTH the red user bubble and the white
+   assistant text; red-on-red made selection inside user bubbles invisible. */
 ::selection {
-  background: theme("colors.red.DEFAULT");
-  color: white;
+  background: #ffe08a;
+  color: #0a0a0a;
 }

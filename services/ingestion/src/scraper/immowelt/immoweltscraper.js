@@ -1,6 +1,10 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
+const stealth = require('scraper-lib/stealth');
+
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
 
 const START_URL =
   process.env.START_URL ||
@@ -562,10 +566,14 @@ async function main() {
     const searchPage = await browser.newPage();
     const searchJsonResponses = [];
     await collectJsonResponses(searchPage, searchJsonResponses);
-    searchPage.setDefaultTimeout(30_000);
-    await searchPage.setUserAgent(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36'
-    );
+    // Shared stealth helper: rotating current Chrome UA + matching client hints.
+    // Capture the profile so the detail tab reuses the SAME UA — a real browser
+    // doesn't change UA between tabs of one session.
+    const sessionProfile = await stealth.applyStealthToPage(searchPage, {
+      userAgent: process.env.USER_AGENT || null,
+      acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+      timeoutMs: 30_000,
+    });
 
     console.log(`Opening ${START_URL}`);
     const initialResponse = await searchPage.goto(START_URL, { waitUntil: 'domcontentloaded' });
@@ -619,10 +627,11 @@ async function main() {
     const cards = [...cardsByUrl.values()];
     const rows = [];
     const detailPage = await browser.newPage();
-    detailPage.setDefaultTimeout(30_000);
-    await detailPage.setUserAgent(
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36'
-    );
+    await stealth.applyStealthToPage(detailPage, {
+      profile: sessionProfile,
+      acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+      timeoutMs: 30_000,
+    });
 
     for (let index = 0; index < cards.length; index += 1) {
       const card = cards[index];

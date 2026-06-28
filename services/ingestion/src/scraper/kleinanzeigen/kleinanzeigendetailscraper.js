@@ -5,14 +5,17 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const puppeteer = require('puppeteer');
+const vanillaPuppeteer = require('puppeteer');
 const db = require('scraper-lib');
+const stealth = require('scraper-lib/stealth');
+
+// puppeteer-extra + stealth plugin, wrapping our own puppeteer engine.
+const puppeteer = stealth.makeStealthPuppeteer(vanillaPuppeteer);
 
 const ORIGIN = 'https://www.kleinanzeigen.de';
 const LISTING_SOURCE = 'kleinanzeigen';
-const USER_AGENT =
-  process.env.USER_AGENT ||
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// null → rotate a current Chrome UA per run (see _lib/stealth.js).
+const USER_AGENT = process.env.USER_AGENT || null;
 
 const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || __dirname);
 const MAX_LISTINGS = process.env.MAX_LISTINGS ? Number.parseInt(process.env.MAX_LISTINGS, 10) : null;
@@ -117,14 +120,12 @@ async function acceptConsent(page) {
 }
 
 async function preparePage(page) {
-  page.setDefaultTimeout(PAGE_TIMEOUT);
-  await page.setUserAgent(USER_AGENT);
-  await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6' });
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    window.chrome = window.chrome || { runtime: {} };
+  // Shared stealth helper: rotating current Chrome UA + matching client hints.
+  // The old manual navigator patches are gone — the stealth plugin owns those.
+  await stealth.applyStealthToPage(page, {
+    userAgent: USER_AGENT,
+    acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.7,en;q=0.6',
+    timeoutMs: PAGE_TIMEOUT,
   });
 }
 
@@ -147,29 +148,9 @@ async function dumpDebugArtifacts(page, baseDir, label) {
   }
 }
 
-async function detectChallenge(page) {
-  return page.evaluate(() => {
-    const title = (document.title || '').toLowerCase();
-    if (title.includes('just a moment') || title.includes('attention required')) return 'cloudflare_challenge';
-    if (document.querySelector('#challenge-running, #cf-please-wait, .cf-browser-verification')) {
-      return 'cloudflare_challenge';
-    }
-    const captchaFrames = [...document.querySelectorAll('iframe[src*="hcaptcha"], iframe[src*="recaptcha"]')];
-    for (const frame of captchaFrames) {
-      const rect = frame.getBoundingClientRect();
-      const style = window.getComputedStyle(frame);
-      if (
-        rect.width > 50 &&
-        rect.height > 50 &&
-        style.display !== 'none' &&
-        style.visibility !== 'hidden'
-      ) {
-        return 'captcha';
-      }
-    }
-    return null;
-  });
-}
+// detectChallenge now comes from scraper-lib/stealth — the old local copy
+// missed DataDome (kleinanzeigen's vendor), which is exactly what blocks us.
+const { detectChallenge } = stealth;
 
 function printBanner(targets) {
   console.log('');
@@ -210,11 +191,35 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
         url: window.location.href,
       };
 
-      // ---- Title ----------------------------------------------------------
-      result.title =
-        clean(document.querySelector('#viewad-title')?.textContent) ||
-        clean(document.querySelector('h1')?.textContent) ||
-        null;
+      // ---- Title + reserved/deleted status --------------------------------
+      // #viewad-title ships two hidden status spans (.pvap-reserved-title)
+      // reading "Reserviert • " / "Gelöscht • ". They keep the `is-hidden`
+      // class until the listing actually gets that status — but .textContent
+      // returns hidden text too, so reading the h1 raw prepends a phantom
+      // status to EVERY title. Strip those spans for the title, and derive the
+      // real status from whether any such span is actually shown (is-hidden
+      // removed).
+      const titleEl =
+        document.querySelector('#viewad-title') || document.querySelector('h1');
+      const status = { reserved: false, deleted: false };
+      let titleText = null;
+      if (titleEl) {
+        for (const span of [...titleEl.querySelectorAll('.pvap-reserved-title')]) {
+          if (span.classList.contains('is-hidden')) continue;
+          const spanText = (span.textContent || '').toLowerCase();
+          if (spanText.includes('reserviert')) status.reserved = true;
+          if (spanText.includes('gelöscht') || spanText.includes('geloescht')) {
+            status.deleted = true;
+          }
+        }
+        const titleClone = titleEl.cloneNode(true);
+        for (const span of [...titleClone.querySelectorAll('.pvap-reserved-title')]) {
+          span.remove();
+        }
+        titleText = clean(titleClone.textContent) || null;
+      }
+      result.title = titleText;
+      result.status = status;
 
       // ---- Locality -------------------------------------------------------
       result.locality =
@@ -408,7 +413,7 @@ async function run() {
   console.log('Launching browser...');
   const browser = await puppeteer.launch(launchOptions);
 
-  const stats = { ok: 0, errors: 0 };
+  const stats = { ok: 0, skipped: 0, errors: 0 };
 
   try {
     const page = await browser.newPage();
@@ -428,7 +433,7 @@ async function run() {
       }
 
       try {
-        await page.goto(target.url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT });
+        await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
       } catch (error) {
         console.warn(`  navigation failed: ${error.message}`);
         await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-nav`);
@@ -466,6 +471,34 @@ async function run() {
         console.warn(`  scrape failed: ${error.message}`);
         await dumpDebugArtifacts(page, DEBUG_DIR, `detail-${target.id}-scrape-err`);
         stats.errors += 1;
+        continue;
+      }
+
+      // Reserved/deleted listings are flagged by a *shown* status span inside
+      // #viewad-title (scrapeDetail derives detail.status from is-hidden state,
+      // NOT from textContent — the spans exist hidden on every listing). They're
+      // dead ads — skip persisting them to bronze so silver stays clean, but
+      // still mark the iron card detailed so we don't retry it on the next run.
+      // We deliberately fall through to the same jitter/backoff as a normal
+      // listing (do NOT continue straight to the next card) to keep the request
+      // cadence human-looking.
+      if (detail.status?.reserved || detail.status?.deleted) {
+        const flags = [
+          detail.status.reserved ? 'reserved' : null,
+          detail.status.deleted ? 'deleted' : null,
+        ]
+          .filter(Boolean)
+          .join('+');
+        console.log(`  skipped — ${flags} (title="${(detail.title || '').slice(0, 60)}")`);
+        stats.skipped += 1;
+        try {
+          await db.markIronCardDetailed(pool, target.ironCardId);
+        } catch (error) {
+          console.warn(`  db mark failed: ${error.message}`);
+        }
+        if (i < targets.length - 1) {
+          await randomDelay();
+        }
         continue;
       }
 
@@ -507,6 +540,7 @@ async function run() {
   console.log('');
   console.log('Detail scrape complete');
   console.log(`OK:                ${stats.ok}`);
+  console.log(`Reserved/deleted:  ${stats.skipped}`);
   console.log(`Errors skipped:    ${stats.errors}`);
   console.log(`Output:            raw_listings table (source=${LISTING_SOURCE})`);
   console.log('');

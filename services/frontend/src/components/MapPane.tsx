@@ -1,21 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Map as MapLibreMap,
   Source,
   Layer,
   AttributionControl,
-  useMap,
 } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
   GeoJSONSource,
+  Map as MaplibreGl,
   MapLayerMouseEvent,
   SymbolLayerSpecification,
 } from "maplibre-gl";
 import type { Feature, FeatureCollection, Point } from "geojson";
 
 import { useSessionState } from "../hooks/useSessionState";
-import { useHover } from "../hooks/useHover";
+import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
 import {
   OVERLAY_FILL_OPACITY,
@@ -27,6 +27,13 @@ import {
   overlayShape,
 } from "../state/overlayStyles";
 import { OverlayLegend } from "./OverlayLegend";
+import {
+  REFRAME_MAX_ZOOM,
+  REFRAME_MS,
+  fractionInside,
+  markersBBox,
+  shouldReframe,
+} from "./mapCamera";
 
 // Initial view: zoomed out far enough to see the whole Berlin outline.
 // Berlin admin border roughly: lat 52.34 → 52.68, lng 13.09 → 13.76.
@@ -53,7 +60,91 @@ const MAP_STYLE_URL =
 const RED = "#E4003C";
 const RED_DEEP = "#B00030";
 const RED_TINT = "#F47A95";
-const INK = "#0A0A0A";
+const GREY = "#5A5A5A"; // default (unselected) pin colour
+
+// ── Teardrop pin (SDF) ────────────────────────────────────────────────────
+// Unclustered listings render as a clean teardrop pin via a MapLibre symbol
+// layer fed a runtime-generated SDF icon. SDF (vs a plain raster) is what lets
+// `icon-color` recolour the same image at render time (the seam for future
+// price/prompt-driven colouring) and gives a crisp white `icon-halo` outline.
+// We draw the teardrop with Canvas 2D (smooth bezier silhouette) and convert
+// the filled mask into a signed-distance field — far cleaner than hand-rolled
+// analytic SDF math.
+const PIN_IMAGE_ID = "apt-pin";
+const PIN_SCALE = 2; // canvas px per SVG unit (24-unit viewBox → 48px texture)
+const PIN_W = 24 * PIN_SCALE;
+const PIN_H = 24 * PIN_SCALE;
+const SDF_RANGE = 5; // px over which the signed distance spans the alpha ramp
+
+// The Material Design "place" marker — the de-facto standard map pin (round
+// head, pointed tip at the bottom), 24×24 SVG viewBox. We use only the OUTER
+// teardrop subpath (dropping the icon's centre-hole circle) and fill it solid,
+// then turn the mask into an SDF so it stays recolourable via `icon-color`.
+const PLACE_PATH =
+  "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z";
+
+function drawTeardropMask(): Uint8ClampedArray {
+  const canvas = document.createElement("canvas");
+  canvas.width = PIN_W;
+  canvas.height = PIN_H;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(PIN_SCALE, PIN_SCALE);
+  ctx.fillStyle = "#fff";
+  ctx.fill(new Path2D(PLACE_PATH));
+  return ctx.getImageData(0, 0, PIN_W, PIN_H).data;
+}
+
+// Convert the filled mask into an SDF: per pixel, the signed Euclidean distance
+// to the shape boundary (negative inside), encoded into alpha around 0.5.
+function makeTeardropSDF(): { width: number; height: number; data: Uint8ClampedArray } {
+  const w = PIN_W, h = PIN_H;
+  const mask = drawTeardropMask();
+  const inside = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) inside[i] = mask[i * 4 + 3] > 127 ? 1 : 0;
+
+  // Boundary = inside pixels touching an outside 4-neighbour (the zero level).
+  const bx: number[] = [];
+  const by: number[] = [];
+  const at = (x: number, y: number) =>
+    x < 0 || y < 0 || x >= w || y >= h ? 0 : inside[y * w + x];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!inside[y * w + x]) continue;
+      if (!at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)) {
+        bx.push(x);
+        by.push(y);
+      }
+    }
+  }
+
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let min2 = Infinity;
+      for (let k = 0; k < bx.length; k++) {
+        const dx = x - bx[k], dy = y - by[k];
+        const d2 = dx * dx + dy * dy;
+        if (d2 < min2) min2 = d2;
+      }
+      const signed = (inside[y * w + x] ? -1 : 1) * Math.sqrt(min2);
+      const alpha = Math.max(0, Math.min(1, 0.5 - signed / (2 * SDF_RANGE)));
+      const i = (y * w + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(alpha * 255);
+    }
+  }
+  return { width: w, height: h, data };
+}
+
+// Idempotent — `hasImage` guards the duplicate-add throw, and a style reload
+// (e.g. a future Protomaps swap) drops added images so this re-runs on
+// `styledata`. Only adds once the style is loaded (addImage requires it).
+function ensurePinImage(m: MaplibreGl): void {
+  if (!m.isStyleLoaded() || m.hasImage(PIN_IMAGE_ID)) return;
+  m.addImage(PIN_IMAGE_ID, makeTeardropSDF(), { sdf: true, pixelRatio: 2 });
+}
 
 const CLUSTER_LAYER: CircleLayerSpecification = {
   id: "clusters",
@@ -103,61 +194,83 @@ const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
   },
 };
 
-// Translucent halo behind a selected dot — drawn first so the active circle
-// sits on top of it. Only visible when feature-state.active is true.
-const POINT_HALO_LAYER = {
-  id: "unclustered-point-halo",
-  type: "circle",
-  source: "apartments",
-  filter: ["!", ["has", "point_count"]],
-  paint: {
-    "circle-color": RED,
-    "circle-opacity": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      0.22,
-      0,
-    ],
-    "circle-radius": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      18,
-      0,
-    ],
-    "circle-radius-transition": { duration: 220, delay: 0 },
-    "circle-opacity-transition": { duration: 220, delay: 0 },
-    "circle-stroke-width": 0,
-  },
-} as unknown as CircleLayerSpecification;
-
-const POINT_LAYER = {
+// The apartment pin — a single clean teardrop, recoloured by state. No glow
+// layer (it read as a muddy blob); default grey, hover red. A crisp white halo
+// outlines every pin for legibility against the map. The SELECTED listing is
+// NOT styled here — it gets its own always-on-top pin (ACTIVE_PIN_LAYER) so it
+// shows even when this layer's feature is swallowed by a cluster. Same layer id
+// ("unclustered-point") as the old circle so click/hover wiring +
+// interactiveLayerIds need no change.
+const PIN_LAYER: SymbolLayerSpecification = {
   id: "unclustered-point",
-  type: "circle",
+  type: "symbol",
   source: "apartments",
   filter: ["!", ["has", "point_count"]],
+  layout: {
+    "icon-image": PIN_IMAGE_ID,
+    "icon-anchor": "bottom",
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-size": 1.2,
+  },
   paint: {
-    "circle-color": [
+    "icon-color": [
       "case",
-      ["boolean", ["feature-state", "active"], false],
-      INK,
       ["boolean", ["feature-state", "hover"], false],
       RED,
-      "#3A3A3A",
+      GREY,
     ],
-    "circle-radius": [
-      "case",
-      ["boolean", ["feature-state", "active"], false],
-      9,
-      ["boolean", ["feature-state", "hover"], false],
-      8,
-      5,
-    ],
-    "circle-radius-transition": { duration: 180, delay: 0 },
-    "circle-color-transition": { duration: 140, delay: 0 },
-    "circle-stroke-color": "#ffffff",
-    "circle-stroke-width": 2,
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": 1.2,
+    "icon-color-transition": { duration: 140, delay: 0 },
   },
-} as unknown as CircleLayerSpecification;
+};
+
+// The SELECTED listing's pin — its own single-feature, UNCLUSTERED source drawn
+// on top of everything. This is what fixes "selecting a listing shows the
+// cluster bubble, not a pin": the clustered `unclustered-point` layer has no
+// feature to highlight when the selection sits inside a cluster, so we render
+// the active one separately. Bigger + brand-red + thicker halo so it reads as
+// the focus, floating above any cluster it overlaps. Purely visual — kept OUT
+// of interactiveLayerIds so clicks fall through to the cluster/point beneath.
+const ACTIVE_PIN_LAYER: SymbolLayerSpecification = {
+  id: "active-point",
+  type: "symbol",
+  source: "active-apartment",
+  layout: {
+    "icon-image": PIN_IMAGE_ID,
+    "icon-anchor": "bottom",
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-size": 1.6,
+  },
+  paint: {
+    "icon-color": RED,
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": 2.5,
+  },
+};
+
+// How long the marker/cluster layers fade in when a new result set lands (ms).
+const FADE_MS = 320;
+
+// Resolve the [lng, lat] for the selected listing: prefer its marker in the
+// active result set, fall back to the tier-3 detail blob (covers an agent
+// open_listing for an id outside the current results). Shared by the pan
+// effect and the active-pin overlay so they always agree on the location.
+function resolveActiveCenter(
+  activeId: string | null,
+  coordsById: Map<string, [number, number]>,
+  detail: { latitude: number | null; longitude: number | null } | null | undefined,
+): [number, number] | null {
+  if (!activeId) return null;
+  const fromMarkers = coordsById.get(activeId);
+  if (fromMarkers) return fromMarkers;
+  if (detail && detail.latitude != null && detail.longitude != null) {
+    return [detail.longitude, detail.latitude];
+  }
+  return null;
+}
 
 export function MapPane() {
   // Click + hover handlers live at the MapLibreMap level so we use
@@ -168,6 +281,17 @@ export function MapPane() {
   // hits at the click/move point, so we don't need queryRenderedFeatures.
   const { activate } = useSessionState();
   const { setHover } = useHover();
+
+  // The real maplibre Map instance, captured on load. We pass it down to
+  // ApartmentLayer rather than relying on `useMap()`, which returns undefined
+  // for the keyed map here (no <MapProvider> in the tree) — that left every
+  // imperative effect (pin image, hover/active highlight, pan) bailing.
+  const [mapInstance, setMapInstance] = useState<MaplibreGl | null>(null);
+
+  // Guards the one-time `styleimagemissing` registration. `onLoad` can fire
+  // again on a style reload (e.g. a future Protomaps swap), and we must not
+  // stack a fresh listener each time.
+  const pinHandlerBound = useRef(false);
 
   // Stable refs so the handler closures always see the LATEST activate /
   // setHover without needing to re-bind on every render. React's useState
@@ -246,6 +370,19 @@ export function MapPane() {
         const m = e.target;
         m.scrollZoom.setWheelZoomRate(1 / 90);
         m.scrollZoom.setZoomRate(1 / 100);
+        // Register the SDF pin eagerly, and lazily via `styleimagemissing` —
+        // the latter fires the moment a layer references `apt-pin` without it,
+        // so the pins render regardless of style-load / layer-mount ordering
+        // (and re-register after a style swap). This replaces a fragile
+        // styledata/isStyleLoaded gate that left the image unregistered.
+        ensurePinImage(m);
+        if (!pinHandlerBound.current) {
+          pinHandlerBound.current = true;
+          m.on("styleimagemissing", (ev: { id: string }) => {
+            if (ev.id === PIN_IMAGE_ID) ensurePinImage(m);
+          });
+        }
+        setMapInstance(m);
       }}
     >
       {/* ODbL obligation: landmark data is partly sourced from OpenStreetMap.
@@ -257,7 +394,7 @@ export function MapPane() {
       />
       {/* Overlays render BEFORE the apartment pins so markers stay on top. */}
       <OverlayLayer />
-      <ApartmentLayer />
+      <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
       <OverlayLegend />
     </div>
@@ -343,14 +480,46 @@ function OverlayLayer() {
   );
 }
 
-function ApartmentLayer() {
+function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
   const { state } = useSessionState();
-  const { hoverId } = useHover();
-  const { "apartments-map": map } = useMap();
+  const { hoverId, activeId: clientActiveId } = useHover();
   const lastFeatureStateIds = useRef<Set<string>>(new Set());
+  const lastPannedId = useRef<string | null>(null);
+
+  // Mirror the authoritative SessionState.active_id into the hover store so the
+  // agent path (open_listing / reload hydration, which arrive as SSE deltas and
+  // never run through activate()) updates the same client-local selection a
+  // card click does. Without this, a stale click would mask a later agent
+  // selection. See useActiveIdMirror + useHover's comment.
+  useActiveIdMirror(state?.active_id ?? null);
+
+  // Selected listing for the map. The mirror above keeps `clientActiveId` in
+  // sync with both paths; the `?? state.active_id` fallback only covers the
+  // first-paint/hydration window before the mirror effect runs.
+  const activeId = clientActiveId ?? state?.active_id ?? null;
+
+  // The decoded result set — the single source for the geojson, the id→coord
+  // lookup, and the result-set fingerprint below. (decodeMarkers is cheap, but
+  // doing it once keeps the three derivations in lockstep.)
+  const markers = useMemo(
+    () => decodeMarkers(state?.result_markers),
+    [state?.result_markers],
+  );
+
+  // Cheap, stable fingerprint of the result set: length + first/last id. A new
+  // search yields a different signature; the same set echoed across turns keeps
+  // the same one even though `result_markers` is a fresh reference each
+  // snapshot. Drives the fade + reframe so they fire on a genuine new result
+  // set, not on every state delta (and NOT on pagination, which leaves
+  // `result_markers` untouched). Mirrors CardStrip's markersSig.
+  const markersSig = useMemo(
+    () =>
+      `${markers.length}:${markers[0]?.id ?? ""}:${markers[markers.length - 1]?.id ?? ""}`,
+    [markers],
+  );
 
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
-    const features = decodeMarkers(state?.result_markers).map((m) => ({
+    const features = markers.map((m) => ({
       type: "Feature" as const,
       id: m.id,
       geometry: { type: "Point" as const, coordinates: [m.lng, m.lat] },
@@ -360,45 +529,185 @@ function ApartmentLayer() {
       },
     }));
     return { type: "FeatureCollection", features };
-  }, [state?.result_markers]);
+  }, [markers]);
 
-  // Drive hover + active visual state by setFeatureState. Track which ids
-  // we touched last frame so we can clean them up — feature-state persists
-  // until explicitly reset.
+  // id → [lng, lat] for the active result set, so a card/pin click can pan
+  // the map to the selected listing.
+  const coordsById = useMemo(() => {
+    const m = new Map<string, [number, number]>();
+    for (const mk of markers) {
+      m.set(mk.id, [mk.lng, mk.lat]);
+    }
+    return m;
+  }, [markers]);
+
+  // Single-feature collection for the always-on-top active pin. Empty when
+  // nothing is selected (or its location can't be resolved yet).
+  const activeGeojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
+    const center = resolveActiveCenter(
+      activeId,
+      coordsById,
+      state?.active_listing_detail,
+    );
+    if (!activeId || !center) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    return {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          id: activeId,
+          geometry: { type: "Point", coordinates: center },
+          properties: { id: activeId, price_warm_eur: null },
+        },
+      ],
+    };
+  }, [activeId, coordsById, state?.active_listing_detail]);
+
+  // Pan (and gently zoom in only when far out) to the active listing whenever
+  // the selection changes. The highlight is the dedicated active-pin layer.
   useEffect(() => {
-    const m = map?.getMap();
+    if (!activeId) {
+      lastPannedId.current = null; // allow re-pan if the same id is re-selected
+      return;
+    }
+    if (activeId === lastPannedId.current) return;
+    const m = map;
+    if (!m) return;
+    const center = resolveActiveCenter(
+      activeId,
+      coordsById,
+      state?.active_listing_detail,
+    );
+    if (!center) return;
+    lastPannedId.current = activeId;
+    const opts: { center: [number, number]; duration: number; zoom?: number } = {
+      center,
+      duration: 850,
+    };
+    if (m.getZoom() < 12.5) opts.zoom = 14; // gentle zoom-in only when zoomed far out
+    m.easeTo(opts);
+  }, [map, activeId, state?.active_listing_detail, coordsById]);
+
+  // Drive HOVER visual state by setFeatureState. (Active selection is rendered
+  // by the dedicated active-pin layer, not feature-state, so it shows even when
+  // clustered.) Track the id we touched last frame so we can clean it up —
+  // feature-state persists until explicitly reset.
+  useEffect(() => {
+    const m = map;
     if (!m) return;
     const src = "apartments";
-    const next = new Set<string>();
-    if (hoverId) next.add(hoverId);
-    if (state?.active_id) next.add(state.active_id);
-    for (const id of lastFeatureStateIds.current) {
-      if (!next.has(id)) {
-        m.removeFeatureState({ source: src, id });
-      }
+    const prev = lastFeatureStateIds.current;
+    for (const id of prev) {
+      if (id !== hoverId) m.removeFeatureState({ source: src, id });
     }
-    if (hoverId) m.setFeatureState({ source: src, id: hoverId }, { hover: true });
-    if (state?.active_id) {
-      m.setFeatureState({ source: src, id: state.active_id }, { active: true });
+    const next = new Set<string>();
+    if (hoverId) {
+      m.setFeatureState({ source: src, id: hoverId }, { hover: true });
+      next.add(hoverId);
     }
     lastFeatureStateIds.current = next;
-  }, [map, hoverId, state?.active_id, state?.result_markers]);
+  }, [map, hoverId, state?.result_markers]);
+
+  // New result set → fade the marker + cluster layers in, and reframe the
+  // camera if warranted. Both fire on `markersSig` (a genuine new/refined set),
+  // skipping the first mount. The reframe rule lives in mapCamera.shouldReframe.
+  const didMountResults = useRef(false);
+  useEffect(() => {
+    const m = map;
+    if (!m) return;
+    if (!didMountResults.current) {
+      didMountResults.current = true;
+      return; // first paint: no fade / no reframe
+    }
+
+    // ── Fade-in: kill the transition, snap each layer's opacity to 0, then on
+    // the next frame restore the target with a transition. The layers persist
+    // across the data swap, so the paint transition animates the new features.
+    const fades: Array<[string, string, number]> = [
+      ["unclustered-point", "icon-opacity", 1],
+      ["clusters", "circle-opacity", 0.92],
+      ["cluster-count", "text-opacity", 1],
+    ];
+    for (const [layer, prop] of fades) {
+      if (!m.getLayer(layer)) continue;
+      m.setPaintProperty(layer, `${prop}-transition`, { duration: 0, delay: 0 });
+      m.setPaintProperty(layer, prop, 0);
+    }
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        for (const [layer, prop, target] of fades) {
+          if (!m.getLayer(layer)) continue;
+          m.setPaintProperty(layer, `${prop}-transition`, {
+            duration: FADE_MS,
+            delay: 0,
+          });
+          m.setPaintProperty(layer, prop, target);
+        }
+      }),
+    );
+
+    // ── Reframe (gated): never while a listing is selected; otherwise when
+    // zoomed out or the results aren't on screen. See mapCamera.shouldReframe.
+    const bbox = markersBBox(markers);
+    if (bbox) {
+      const b = m.getBounds();
+      const fractionInView = fractionInside(markers, {
+        west: b.getWest(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        north: b.getNorth(),
+      });
+      if (
+        shouldReframe({
+          zoom: m.getZoom(),
+          fractionInView,
+          // Read the authoritative snapshot field, NOT the `activeId` mirror —
+          // the hover-store mirror lags one render behind a state delta, so on
+          // the commit where new markers arrive it still holds the OLD
+          // selection and would wrongly suppress the reframe. `state.active_id`
+          // is correct in this same snapshot (a new search clears it; an agent
+          // open_listing in the same turn sets it → then we DO defer to it).
+          hasActiveSelection: !!state?.active_id,
+          markerCount: markers.length,
+        })
+      ) {
+        m.fitBounds(bbox, {
+          padding: 60,
+          maxZoom: REFRAME_MAX_ZOOM,
+          duration: REFRAME_MS,
+        });
+      }
+    }
+
+    return () => cancelAnimationFrame(raf);
+    // Keyed on markersSig (the result-set fingerprint), not `markers` identity,
+    // so it fires once per genuine change. activeId is read but intentionally
+    // not a dep — we want the selection state AT result-change time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, markersSig]);
 
   return (
-    <Source
-      id="apartments"
-      type="geojson"
-      data={geojson}
-      cluster
-      clusterRadius={50}
-      clusterMaxZoom={14}
-      promoteId="id"
-    >
-      <Layer {...CLUSTER_LAYER} />
-      <Layer {...CLUSTER_COUNT_LAYER} />
-      <Layer {...POINT_HALO_LAYER} />
-      <Layer {...POINT_LAYER} />
-    </Source>
+    <>
+      <Source
+        id="apartments"
+        type="geojson"
+        data={geojson}
+        cluster
+        clusterRadius={50}
+        clusterMaxZoom={14}
+        promoteId="id"
+      >
+        <Layer {...CLUSTER_LAYER} />
+        <Layer {...CLUSTER_COUNT_LAYER} />
+        <Layer {...PIN_LAYER} />
+      </Source>
+      {/* Declared after the clustered source so the active pin draws on top. */}
+      <Source id="active-apartment" type="geojson" data={activeGeojson}>
+        <Layer {...ACTIVE_PIN_LAYER} />
+      </Source>
+    </>
   );
 }
 
