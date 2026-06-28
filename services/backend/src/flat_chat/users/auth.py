@@ -40,6 +40,15 @@ from flat_chat.core.config import settings
 from flat_chat.core.database import get_async_db
 from flat_chat.users.models import User
 
+# Everything below is wired as a dependency CHAIN consumed by fastapi-users, not
+# called directly by our code:
+#   get_user_db → get_user_manager → FastAPIUsers(get_user_manager, [auth_backend])
+# From that instance we derive the auth routers (mounted in `api/auth.py`) and
+# `current_active_user` (which `get_user_id()` wraps). Each factory is consumed by
+# the next one down. The module-level objects are stateless config built once at
+# import with no I/O (DB sessions arrive per-request via `Depends`) — the canonical
+# fastapi-users setup, and consistent with our module-level agent/toolset/routers.
+
 
 # --- Pydantic schemas (wire shapes for the auth routes) --------------------
 class UserRead(schemas.BaseUser[uuid.UUID]):
