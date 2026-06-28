@@ -17,6 +17,7 @@ from .common import (
     parse_int_str,
     parse_postal_district,
     parse_sqm,
+    redact_freetext,
 )
 
 
@@ -58,7 +59,7 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
         "title": dump.get("title"),
         "headline": None,
-        "description": dump.get("description"),
+        "description": redact_freetext(dump.get("description")),
         "rooms": parse_int_str(details.get("zimmer")),
         "bedrooms": parse_int_str(details.get("schlafzimmer")),
         "bathrooms": parse_int_str(details.get("badezimmer")),
