@@ -14,10 +14,17 @@ src/
   db.py                 → engine (search_path=world,public), SessionLocal, get_session()
   iron/, bronze/        → (iron + bronze tiers; raw scraper output)
   scraper/              → Per-source Node scrapers (NEVER run automatically)
+    _lib/stealth.js     → Shared browser stealth: puppeteer-extra + stealth
+                          plugin, rotating CURRENT Chrome UA pool + matching
+                          client hints. See "Scraper anti-bot" below.
   silver/               → Bronze → typed Listing rows
     run.py              → `python -m silver.run` — chains gold + platinum at end
-    transformer.py      → Dispatcher by source; UPSERT logic
-    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht)
+    transformer.py      → Dispatcher by source; UPSERT logic + `deduplicate`
+                          (collapses reposted same-title+address flats) +
+                          geocoding pass that backfills NULL coordinates via
+                          Nominatim (tail of `transform()`)
+    sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
+                          housinganywhere, wohninberlin)
   geo_context/          → Berlin GDI WFS + VBB GTFS → silver geo tables
     run.py              → CLI with --only / --skip-wfs / --skip-gtfs
     extract/, transform/, load/
@@ -47,6 +54,34 @@ docker compose run --rm ingestion uv run alembic upgrade head
 (`to_sql`/`to_postgis`, enrich UPSERTs) resolves unqualified names to `world`.
 Full record: [`schema-ownership-split.md`](../../agent-compound-docs/decisions/schema-ownership-split.md).
 
+## Scraper anti-bot / stealth
+
+All Node scrapers share `scraper/_lib/stealth.js` (`require('scraper-lib/stealth')`):
+
+- `makeStealthPuppeteer(require('puppeteer'))` wraps the engine with
+  puppeteer-extra + puppeteer-extra-plugin-stealth — hides `navigator.webdriver`,
+  gives a real `PluginArray` (the old hand patch set it to `[1,2,3,4,5]`, an
+  integer tell), patches the `Runtime.enable` CDP leak, etc.
+- `applyStealthToPage(page, {userAgent, profile, acceptLanguage, timeoutMs})`
+  replaces every old per-scraper `preparePage`. It rotates a CURRENT
+  desktop-Chrome UA **per run** (not per request — real browsers don't change UA
+  mid-session) with a MATCHING `userAgentMetadata`, so the UA string and the
+  `sec-ch-ua` client hints agree, and aligns `navigator.languages` to
+  `Accept-Language`. Returns the chosen `{userAgent, metadata}` so a multi-tab
+  scraper reuses one UA across tabs via `profile:`.
+- `detectChallenge(page)` covers Cloudflare + DataDome + visible captcha iframes.
+
+Search-page `goto` uses `waitUntil: 'domcontentloaded'` (not `networkidle2`) so a
+challenge interstitial fails fast and `detectChallenge` can report it, instead of
+silently eating the full timeout.
+
+**Maintenance: bump `CHROME_BUILDS` in `_lib/stealth.js` every few Chrome
+releases.** A stale UA pool is the exact failure this module exists to prevent —
+the scrapers shipped pinned to Chrome 124 (April 2024), and by mid-2026 that
+version alone was a bot signal. Deps live in `_lib/package.json` only; each
+scraper keeps its own `puppeteer` and passes it in. `USER_AGENT=` pins a UA;
+`HEADLESS=false` runs headful for debugging.
+
 ## Medallion tiers in this service
 
 | Tier | Tables | Cadence | Module |
@@ -62,9 +97,25 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
 
 ## Chain triggers
 
-- `silver.run` → calls `gold.run.main([])` at the end. Then attempts
-  `platinum.run.main([])` best-effort (skipped silently if `JINA_API_KEY`
-  isn't set — semantic search degrades to recency, no fatal failure).
+- `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then
+  attempts `platinum.run.main([])` best-effort (skipped silently if
+  `JINA_API_KEY` isn't set — semantic search degrades to recency, no fatal
+  failure). **`transform` itself** ends with a best-effort geocoding pass
+  (`_geocode_missing`) that fills NULL coordinates by geocoding the listing's
+  address (Nominatim by default) — so coordinate-less sources (e.g.
+  wohninberlin) become visible to search + gold. Only `location IS NULL` rows
+  are touched (idempotent), and `upsert.py` preserves the backfilled point
+  across re-transforms; a geocoder outage warns but never fails silver.
+  Configure via `NOMINATIM_BASE_URL` / `GEOCODER_USER_AGENT` /
+  `GEOCODER_RATE_LIMIT_S`. `deduplicate` (in `transformer.py`) runs a single
+  window-function
+  DELETE that collapses listings sharing a `(title, address)` — any source —
+  down to one survivor (geocoded-first, then newest `scraped_at`). It runs
+  **before** gold so deleted rows are never enriched, and runs on **every**
+  silver run rather than once: bronze `raw_listings` rows survive a silver
+  delete (FK is `ON DELETE SET NULL`) and `transform` reprocesses all of bronze,
+  so a one-off cleanup would be re-undone next run. See
+  [`silver-deduplication.md`](../../agent-compound-docs/decisions/silver-deduplication.md).
 - `geo_context.run` → if any WFS/GTFS family succeeded, calls
   `gold.run.main([])`. Geo-context refreshes invalidate every listing's
   gold row, so the chain ensures fresh enrichment without manual

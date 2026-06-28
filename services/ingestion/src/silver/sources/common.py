@@ -203,9 +203,10 @@ def find_amenity(items: Iterable[str] | None, *needles: str) -> str | None:
 # A generous envelope — Berlin proper sits inside 13.088–13.761 / 52.339–52.675;
 # we widen by ~0.01° on each side to forgive listings sitting fractionally
 # outside the official border (Brandenburg-side commuter towns get filtered
-# out anyway by `city = "Berlin"`).
-_BERLIN_LON_MIN, _BERLIN_LON_MAX = 13.08, 13.77
-_BERLIN_LAT_MIN, _BERLIN_LAT_MAX = 52.33, 52.68
+# out anyway by `city = "Berlin"`). Public so the geocoder reuses the same
+# envelope for result-validation AND its query viewbox bias.
+BERLIN_LON_MIN, BERLIN_LON_MAX = 13.08, 13.77
+BERLIN_LAT_MIN, BERLIN_LAT_MAX = 52.33, 52.68
 
 
 def clean_berlin_coords(
@@ -227,9 +228,9 @@ def clean_berlin_coords(
         lng_f = float(lng)
     except TypeError, ValueError:
         return None, None
-    if not (_BERLIN_LAT_MIN <= lat_f <= _BERLIN_LAT_MAX):
+    if not (BERLIN_LAT_MIN <= lat_f <= BERLIN_LAT_MAX):
         return None, None
-    if not (_BERLIN_LON_MIN <= lng_f <= _BERLIN_LON_MAX):
+    if not (BERLIN_LON_MIN <= lng_f <= BERLIN_LON_MAX):
         return None, None
     return lat_f, lng_f
 

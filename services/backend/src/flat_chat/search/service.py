@@ -31,7 +31,7 @@ from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
 from pgvector.sqlalchemy import Vector
 from pydantic_ai import Embedder
-from sqlalchemy import ARRAY, Integer, Select, Text, cast, func, or_, select
+from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import ListingCard, Marker
@@ -343,6 +343,7 @@ class SearchService:
                     cast(Listing.location, Geography),
                     cast(point, Geography),
                     radius_m,
+                    type_=Boolean,
                 )
             )
 
@@ -368,15 +369,16 @@ class SearchService:
                     .where(np.kind == kind, np.src_id == src_id)
                     .scalar_subquery()
                 )
-                # No `type_=bool`: passing the Python `bool` builtin breaks
-                # SQLAlchemy's cache-key traversal for ST_DWithin (it expects a
-                # TypeEngine, not a type). ST_DWithin already returns a boolean
-                # predicate, so the cast is unnecessary here.
+                # `type_=Boolean` (the SQLAlchemy TypeEngine, NOT the Python
+                # `bool` builtin — that one breaks cache-key traversal) so this
+                # predicate is cacheable, matching the near_lat/near_lon
+                # ST_DWithin above (see the proximity-caching fix on main).
                 stmt = stmt.where(
                     geo_func.ST_DWithin(
                         cast(Listing.location, Geography),
                         cast(geom_subq, Geography),
                         radius_m,
+                        type_=Boolean,
                     )
                 )
 

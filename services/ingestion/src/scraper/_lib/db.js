@@ -70,18 +70,37 @@ async function upsertIronCard(pool, { sourceName, externalId, detailUrl, sourceU
   return res.rows[0].id;
 }
 
-// Fetch iron rows that have not yet been detail-scraped, oldest first.
+// Fetch iron rows that have not yet been detail-scraped, freshest first.
+//
+// `scraped_at` carries NO usable freshness signal *within* a crawl: the card
+// scraper re-persists the full cumulative card list on every page, so all of
+// a crawl's rows get re-stamped with the final persist's timestamp (they land
+// within ~1ms of each other). Worse, at finer resolution that timestamp is if
+// anything inversely correlated with freshness — deeper, staler pages are
+// scraped last. So we must NOT let `scraped_at` dominate ordering.
+//
+// The real freshness rank lives in the card's search_page + card_index: with
+// the site sorted newest-first (sortierung:neuste), page 1 / index 0 is the
+// newest ad. So we bucket `scraped_at` to the day (newest crawl-day first),
+// walk that day's results top-down by page then index, and only fall back to
+// `scraped_at DESC` to break ties between two crawls on the same day. Sources
+// whose card payload lacks these keys degrade to day + crawl order (NULLS LAST).
 async function fetchPendingIronCards(pool, sourceName, limit = null) {
+  const orderBy = `
+        ORDER BY scraped_at::date DESC,
+                 NULLIF(data->'raw_payload'->'card'->>'search_page', '')::int ASC NULLS LAST,
+                 NULLIF(data->'raw_payload'->'card'->>'card_index', '')::int ASC NULLS LAST,
+                 scraped_at DESC`;
   const sql = limit
     ? `SELECT id, external_id, detail_url, source_url, data
          FROM iron_cards
         WHERE source_name = $1 AND detail_scraped_at IS NULL
-        ORDER BY scraped_at ASC
+        ${orderBy}
         LIMIT $2`
     : `SELECT id, external_id, detail_url, source_url, data
          FROM iron_cards
         WHERE source_name = $1 AND detail_scraped_at IS NULL
-        ORDER BY scraped_at ASC`;
+        ${orderBy}`;
   const params = limit ? [sourceName, limit] : [sourceName];
   const res = await pool.query(sql, params);
   return res.rows;

@@ -8,6 +8,7 @@ import {
   type ListingDetail,
   type SessionState,
 } from "../state/SessionState";
+import { useHover } from "./useHover";
 
 // Single seam between CopilotKit's shared-state primitive and the rest of
 // the app. Every map / card / chat component reads the agent's authoritative
@@ -32,6 +33,11 @@ export function useSessionState() {
   // write-back so the backend has it on the next turn.
   const activate = useCallback(
     async (id: string | null) => {
+      // Mirror the selection into the client-local hover store. The map's
+      // ApartmentLayer reads `activeId` from there for pan + highlight because
+      // this client-side setState does NOT reliably re-render that consumer.
+      useHover.getState().setActive(id);
+
       if (id === null) {
         setState((prev) => ({
           ...(prev ?? EMPTY_SESSION_STATE),

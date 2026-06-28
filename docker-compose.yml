@@ -105,6 +105,11 @@ services:
       # Forwarded for `silver.embed`, the Jina v3 backfill CLI.
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
+      # Forwarded for the geocoding pass inside `silver.transform` (backfills
+      # coordinates for listings that arrived without a scraped point).
+      - NOMINATIM_BASE_URL=${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
+      - GEOCODER_USER_AGENT=${GEOCODER_USER_AGENT:-flat-chat-geocoder/1.0 (+https://github.com/nake-b/flat-chat)}
+      - GEOCODER_RATE_LIMIT_S=${GEOCODER_RATE_LIMIT_S:-1.0}
 
   # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
   # Opt-in via `--profile geo-context`; does not run on `docker compose up`.

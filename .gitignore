@@ -71,6 +71,9 @@ scraper/node_modules/
 # Per-run scraper debug dumps (HTML snapshot + headless screenshot).
 **/*-debug-*.html
 **/*-debug-*.png
+# Saved HousingAnywhere page snapshots from scraper dev (local scratch).
+services/ingestion/src/scraper/housinganywhere/HousingAnywhereInner.html
+services/ingestion/src/scraper/housinganywhere/housingAnywhere.html
 
 # Sphinx documentation
 docs/_build/
@@ -198,11 +201,11 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
@@ -233,3 +236,6 @@ data/scraped/
 # Protomaps tile extracts live alongside their README; only the README is tracked.
 data/tiles/*.pmtiles
 flat_chat_dump_*.pgdump
+# Local DB snapshot tarball (large; backup/restore artifact, never source).
+flat-chat-db-snapshot.tgz
+backup-pre-split-*.sql
