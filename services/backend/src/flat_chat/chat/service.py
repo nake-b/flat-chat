@@ -314,7 +314,9 @@ async def _generate_and_persist_title(
             return
         updated = await store.set_title_if_unset(session_id, title)
         if updated:
-            logger.info("Conversation title set: session=%s title=%r", session_id, title)
+            logger.info(
+                "Conversation title set: session=%s title=%r", session_id, title
+            )
     except Exception:
         logger.exception("Background title generation failed for %s", session_id)
 

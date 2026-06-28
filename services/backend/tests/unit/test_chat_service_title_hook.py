@@ -21,7 +21,6 @@ import asyncio
 import json
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.requests import Request
@@ -69,7 +68,7 @@ class _CaptureTasks:
         self.tasks: list[asyncio.Task] = []
         self._original = asyncio.create_task
 
-    def __enter__(self) -> "_CaptureTasks":
+    def __enter__(self) -> _CaptureTasks:
         asyncio.create_task = self._capture  # type: ignore[assignment]
         return self
 
@@ -93,12 +92,14 @@ async def _run_turn(
     chat_model,
     capture: _CaptureTasks,
 ) -> None:
-    chat = ChatService(search_service=None, listing_service=None, store=store)
+    chat = ChatService(
+        search_service=None, listing_service=None, place_service=None, store=store
+    )
     original_build = service_mod.build_chat_model
     service_mod.build_chat_model = lambda: chat_model
     try:
         resp = await chat.dispatch_agent_request(
-            _make_request(_envelope(session_id, envelope_messages))
+            _make_request(_envelope(session_id, envelope_messages)), USER
         )
         async for _ in resp.body_iterator:
             pass

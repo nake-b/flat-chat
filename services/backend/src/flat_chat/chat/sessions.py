@@ -14,11 +14,11 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -333,11 +333,7 @@ class DbSessionStore:
                 Conversation.updated_at,
             )
             .where(Conversation.user_id == user_uuid)
-            .where(
-                select(1)
-                .where(Message.conversation_id == Conversation.id)
-                .exists()
-            )
+            .where(select(1).where(Message.conversation_id == Conversation.id).exists())
             .order_by(Conversation.updated_at.desc(), Conversation.id)
         )
         async with self._session_factory() as db:
@@ -365,7 +361,9 @@ class DbSessionStore:
                 .where(Conversation.title.is_(None))
                 .values(title=title)
             )
-        return (result.rowcount or 0) == 1
+        # execute() is typed as Result; an UPDATE actually returns a
+        # CursorResult, which is where rowcount lives.
+        return (cast("CursorResult[Any]", result).rowcount or 0) == 1
 
     async def delete_if_owned(self, session_id: str, user_id: str) -> bool:
         try:
@@ -383,7 +381,7 @@ class DbSessionStore:
                 .where(Conversation.id == conv_uuid)
                 .where(Conversation.user_id == user_uuid)
             )
-        return (result.rowcount or 0) == 1
+        return (cast("CursorResult[Any]", result).rowcount or 0) == 1
 
     def lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:

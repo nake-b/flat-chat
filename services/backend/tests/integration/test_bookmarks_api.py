@@ -235,16 +235,14 @@ def test_list_bookmarks_returns_cards_newest_first(async_db_url):
         await client.post(f"/api/bookmarks/{older['id']}")
         await session.execute(
             sa.text(
-                "UPDATE app.bookmarks SET created_at = :ts "
-                "WHERE listing_id = :lid"
+                "UPDATE app.bookmarks SET created_at = :ts WHERE listing_id = :lid"
             ),
             {"ts": t0 - timedelta(hours=1), "lid": older["id"]},
         )
         await client.post(f"/api/bookmarks/{newer['id']}")
         await session.execute(
             sa.text(
-                "UPDATE app.bookmarks SET created_at = :ts "
-                "WHERE listing_id = :lid"
+                "UPDATE app.bookmarks SET created_at = :ts WHERE listing_id = :lid"
             ),
             {"ts": t0, "lid": newer["id"]},
         )
@@ -306,9 +304,7 @@ def test_cascade_on_listing_delete(async_db_url):
         await client.post(f"/api/bookmarks/{listing['id']}")
         pre = await client.get("/api/bookmarks/ids")
         # Delete the listing directly via SQL. The bookmark row should go too.
-        await session.execute(
-            sa.delete(Listing).where(Listing.id == listing["id"])
-        )
+        await session.execute(sa.delete(Listing).where(Listing.id == listing["id"]))
         await session.commit()
         post = await client.get("/api/bookmarks/ids")
         post_cards = await client.get("/api/bookmarks")

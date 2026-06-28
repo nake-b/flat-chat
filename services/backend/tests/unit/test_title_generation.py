@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -22,7 +23,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-import pytest
 from pydantic_ai.models.test import TestModel
 
 from flat_chat.chat import title_gen
@@ -112,8 +112,12 @@ def test_is_first_completed_turn_ignores_tool_calls_and_retries():
     history: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content="be helpful")]),
         _user("hi"),
-        ModelResponse(parts=[ToolCallPart(tool_name="search", args={}, tool_call_id="t1")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="search", content="ok", tool_call_id="t1")]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name="search", args={}, tool_call_id="t1")]
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name="search", content="ok", tool_call_id="t1")]
+        ),
         ModelRequest(parts=[RetryPromptPart(content="try again", tool_call_id="t1")]),
         _assistant("hello"),
     ]

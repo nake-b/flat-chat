@@ -46,14 +46,12 @@ class BookmarkService:
         await self.db.execute(
             pg_insert(User)
             .values(id=user_uuid)
-            .on_conflict_do_nothing(index_elements=[User.id])
+            .on_conflict_do_nothing(index_elements=["id"])
         )
         await self.db.execute(
             pg_insert(Bookmark)
             .values(user_id=user_uuid, listing_id=listing_uuid)
-            .on_conflict_do_nothing(
-                index_elements=[Bookmark.user_id, Bookmark.listing_id]
-            )
+            .on_conflict_do_nothing(index_elements=["user_id", "listing_id"])
         )
         await self.db.commit()
 

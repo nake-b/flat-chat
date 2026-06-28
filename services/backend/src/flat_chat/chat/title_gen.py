@@ -14,7 +14,13 @@ from __future__ import annotations
 import logging
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 
 from flat_chat.chat.providers import build_title_model
 
@@ -38,8 +44,9 @@ output "Neue Suche" if the user wrote in German, else "New search".
 # Module-level agent. `output_type=str` returns the raw model text — no
 # Pydantic validation wrapper, which would otherwise re-prompt on punctuation
 # the model picked up despite the instructions.
+# No deps_type → the agent's deps default to None (Agent[None, str]); passing
+# `deps_type=None` (a value, not a type) doesn't match v2's overloads.
 _title_agent: Agent[None, str] = Agent(
-    deps_type=None,
     output_type=str,
     instructions=_TITLE_INSTRUCTIONS,
     retries={"tools": 0, "output": 0},
