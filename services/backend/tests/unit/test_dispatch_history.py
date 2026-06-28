@@ -78,7 +78,9 @@ async def _messages_seen_by_model(
     session = await store.create(USER)
     session.message_history = stored_history
 
-    chat = ChatService(search_service=None, listing_service=None, store=store)
+    chat = ChatService(
+        search_service=None, listing_service=None, place_service=None, store=store
+    )
     # Force the run to use our recording model — bypasses provider selection
     # (no API keys in the test env) and lets us inspect what the agent saw.
     original_build = service_mod.build_chat_model

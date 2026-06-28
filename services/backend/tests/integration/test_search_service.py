@@ -12,10 +12,12 @@ end-to-end: seed a row that matches, run the search, assert the row
 came back. If the SQL is malformed for any reason — operator mismatch,
 JSON path syntax, array overlap — ``await self.db.execute(stmt)`` raises.
 
-POI filters (transit / schools / hospitals / parks / playgrounds /
+POI filters (transit / schools / hospitals / kitas / parks / playgrounds /
 water) seed ``listings_nearby_*`` junction rows. Scalar / field filters
-(mss / max_noise / min_greenery / density) seed ``listings_geo_context``
-columns. See
+(inside_ring / max_noise / min_greenery / density) seed
+``listings_geo_context`` columns. The named-place filter (``near_place_ref``)
+seeds the source table behind ``world.named_places`` and asserts a
+geometry-precise ``ST_DWithin``. See
 ``agent-compound-docs/decisions/spatial-neighbor-tables.md``.
 
 Run:
@@ -30,6 +32,7 @@ from datetime import UTC, datetime
 
 from flat_chat.listings.models import (
     ListingNearbyHospital,
+    ListingNearbyKita,
     ListingNearbyPark,
     ListingNearbyPlayground,
     ListingNearbySchool,
@@ -38,11 +41,12 @@ from flat_chat.listings.models import (
 )
 from flat_chat.search.geo_filters import (
     HospitalFilter,
-    MssFilter,
+    KitaFilter,
     SchoolFilter,
     TransitFilter,
 )
 from flat_chat.search.schemas import PREVIEW_N, SearchParams
+from flat_chat.search.service import SearchService
 
 from ..conftest import DB_REQUIRED
 from ..fixtures.factories import (
@@ -56,11 +60,15 @@ from ..fixtures.factories import (
 )
 from ..fixtures.factories import (
     nearby_hospital_row,
+    nearby_kita_row,
     nearby_park_row,
     nearby_playground_row,
     nearby_school_row,
     nearby_transit_row,
     nearby_water_row,
+)
+from ..fixtures.factories import (
+    with_session as _with_session,
 )
 
 pytestmark = DB_REQUIRED
@@ -76,7 +84,7 @@ def test_no_filters_returns_seeded_listing(async_db_url):
     gold = _gold_row(listing["id"])
 
     async def body(service):
-        results, _preview, total = await service.search(SearchParams())
+        results, _preview, total, _ = await service.search(SearchParams())
         return [r.id for r in results], total
 
     ids, total = _drive(async_db_url, [(listing, gold)], body)
@@ -92,7 +100,7 @@ def test_listing_without_junction_rows_is_filtered_out_by_poi_predicate(async_db
     gold = _gold_row(listing["id"])
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _, _ = await service.search(SearchParams(near_park="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, [(listing, gold)], body)
@@ -118,7 +126,7 @@ def test_transit_modes_filter_matches_u_bahn(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(
@@ -142,7 +150,7 @@ def test_transit_modes_filter_misses_when_only_bus(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(
@@ -186,7 +194,7 @@ def test_transit_modes_matches_u_bahn_not_nearest_stop(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(modes=["u_bahn"], distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(
@@ -206,7 +214,7 @@ def test_transit_distance_filter(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -245,7 +253,7 @@ def test_transit_lines_filter_matches_specific_line(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(lines=["U8"]))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -261,7 +269,7 @@ def test_transit_stop_name_filter_uses_ilike(async_db_url):
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(stop_name="wittenau"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(
@@ -288,7 +296,9 @@ def test_school_proximity_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(school=SchoolFilter()))
+        results, _preview, _, _ = await service.search(
+            SearchParams(school=SchoolFilter())
+        )
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -321,7 +331,7 @@ def test_school_type_filter_matches_gymnasium(async_db_url):
 
     async def body(service):
         params = SearchParams(school=SchoolFilter(school_type="Gymnasium"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -353,7 +363,7 @@ def test_school_requires_catchment_combines_with_proximity(async_db_url):
 
     async def body(service):
         params = SearchParams(school=SchoolFilter(requires_catchment=True))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -383,7 +393,7 @@ def test_hospital_plan_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(
+        results, _preview, _, _ = await service.search(
             SearchParams(hospital=HospitalFilter())
         )
         return {r.id for r in results}
@@ -405,7 +415,7 @@ def test_hospital_tier_any_widens(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(
+        results, _preview, _, _ = await service.search(
             SearchParams(hospital=HospitalFilter(tier="any"))
         )
         return {r.id for r in results}
@@ -415,50 +425,178 @@ def test_hospital_tier_any_widens(async_db_url):
 
 
 # ---------------------------------------------------------------------------
-# MSS — scalar columns on listings_geo_context (unchanged)
+# inside_ring — scalar bool column on listings_geo_context
 # ---------------------------------------------------------------------------
 
 
-def test_mss_status_floor(async_db_url):
-    aff = _listing_row()
-    mix = _listing_row()
-    dis = _listing_row()
+def test_inside_ring_true_matches_only_inside(async_db_url):
+    inside = _listing_row()
+    outside = _listing_row()
+    null_ring = _listing_row()
     seeds = [
-        (aff, _gold_row(aff["id"], mss_status="affluent")),
-        (mix, _gold_row(mix["id"], mss_status="mixed")),
-        (dis, _gold_row(dis["id"], mss_status="disadvantaged")),
+        (inside, _gold_row(inside["id"], inside_ring=True)),
+        (outside, _gold_row(outside["id"], inside_ring=False)),
+        # gold never assigned a ring flag → must NOT match `inside_ring=True`.
+        (null_ring, _gold_row(null_ring["id"], inside_ring=None)),
     ]
 
     async def body(service):
-        params = SearchParams(mss=MssFilter(status_min="mixed"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(SearchParams(inside_ring=True))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(aff["id"]) in ids
-    assert str(mix["id"]) in ids
-    assert str(dis["id"]) not in ids
+    assert str(inside["id"]) in ids
+    assert str(outside["id"]) not in ids
+    assert str(null_ring["id"]) not in ids
 
 
-def test_mss_dynamics_exact(async_db_url):
-    improving = _listing_row()
-    stable = _listing_row()
+def test_inside_ring_false_matches_only_outside(async_db_url):
+    inside = _listing_row()
+    outside = _listing_row()
     seeds = [
-        (
-            improving,
-            _gold_row(improving["id"], mss_status="mixed", mss_dynamics="improving"),
-        ),
-        (stable, _gold_row(stable["id"], mss_status="mixed", mss_dynamics="stable")),
+        (inside, _gold_row(inside["id"], inside_ring=True)),
+        (outside, _gold_row(outside["id"], inside_ring=False)),
     ]
 
     async def body(service):
-        params = SearchParams(mss=MssFilter(status_min="mixed", dynamics="improving"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(SearchParams(inside_ring=False))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(improving["id"]) in ids
-    assert str(stable["id"]) not in ids
+    assert str(outside["id"]) in ids
+    assert str(inside["id"]) not in ids
+
+
+# ---------------------------------------------------------------------------
+# kita — EXISTS against listings_nearby_kitas (mirrors transit/hospital)
+# ---------------------------------------------------------------------------
+
+
+def test_kita_filter(async_db_url):
+    near = _listing_row()
+    far = _listing_row()
+    seeds = [(near, _gold_row(near["id"])), (far, _gold_row(far["id"]))]
+    junctions = [
+        (ListingNearbyKita, nearby_kita_row(near["id"], distance_m=200)),
+        (ListingNearbyKita, nearby_kita_row(far["id"], distance_m=2000)),
+    ]
+
+    async def body(service):
+        params = SearchParams(kita=KitaFilter(distance="near"))
+        results, _preview, _, _ = await service.search(params)
+        return {r.id for r in results}
+
+    ids = _drive(async_db_url, seeds, body, junctions=junctions)
+    assert str(near["id"]) in ids
+    assert str(far["id"]) not in ids
+
+
+# ---------------------------------------------------------------------------
+# near_place_ref — geometry-precise ST_DWithin against world.named_places.
+# Seed an EXTENDED geometry (a LINESTRING landmark, ~the Spree) and a listing
+# near the LINE but far from its centroid; assert near_place_ref matches it
+# while a centroid-radius search would not.
+# ---------------------------------------------------------------------------
+
+
+def test_near_place_ref_uses_full_geometry_not_centroid(async_db_url):
+    import sqlalchemy as sa
+
+    # A long E-W line at lat 52.50, from lon 13.30 to 13.50. Its centroid is
+    # ~lon 13.40. A listing at (52.501, 13.305) sits ~110 m from the LINE but
+    # ~6.5 km from the centroid — so a 1 km radius matches via the geometry
+    # and would NOT match a centroid-based query. The spatial predicate reads
+    # `Listing.location` (the PostGIS Point), so we seed it explicitly — the
+    # raw-insert seed path doesn't derive it from lat/lon the way silver does.
+    from geoalchemy2 import WKTElement
+
+    on_line = _listing_row(
+        latitude=52.501,
+        longitude=13.305,
+        location=WKTElement("POINT(13.305 52.501)", srid=4326),
+    )
+    elsewhere = _listing_row(
+        latitude=52.40,
+        longitude=13.30,
+        location=WKTElement("POINT(13.30 52.40)", srid=4326),
+    )
+    seeds = [
+        (on_line, _gold_row(on_line["id"])),
+        (elsewhere, _gold_row(elsewhere["id"])),
+    ]
+
+    async def body(session):
+        landmark_id = await session.scalar(
+            sa.text(
+                """
+                INSERT INTO world.landmarks (name, source, category, geom)
+                VALUES (
+                    'Spree', 'osm', 'river',
+                    ST_SetSRID(
+                        ST_GeomFromText('LINESTRING(13.30 52.50, 13.50 52.50)'),
+                        4326
+                    )
+                )
+                RETURNING id
+                """
+            )
+        )
+        service = SearchService(session)
+        params = SearchParams(near_place_ref=f"landmark:{landmark_id}", radius_km=1.0)
+        results, _preview, _, _ = await service.search(params)
+        return {r.id for r in results}
+
+    ids = _with_session(async_db_url, seeds, body)
+    assert str(on_line["id"]) in ids
+    assert str(elsewhere["id"]) not in ids
+
+
+def test_near_place_ref_malformed_token_is_ignored(async_db_url):
+    """A garbage / hallucinated token must not 500 — it yields no spatial
+    predicate match (defensive parse), so the search still runs."""
+    a = _listing_row()
+    seeds = [(a, _gold_row(a["id"]))]
+
+    async def body(service):
+        # No colon → _parse_place_ref returns None → filter dropped entirely.
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_place_ref="not-a-real-token")
+        )
+        return {r.id for r in results}
+
+    ids = _drive(async_db_url, seeds, body)
+    # Filter ignored, so the listing still comes back (no crash).
+    assert str(a["id"]) in ids
+
+
+# ---------------------------------------------------------------------------
+# District OR-union — Listing.district ∪ listing_bezirk ∪ listing_ortsteil
+# ---------------------------------------------------------------------------
+
+
+def test_districts_or_union_across_scraped_and_polygon(async_db_url):
+    # Listing whose scraped `district` differs from its polygon `ortsteil`:
+    # "in Tiergarten" must match it via the Ortsteil even though the source
+    # labelled it "Mitte".
+    by_ortsteil = _listing_row(district="Mitte")
+    by_scraped = _listing_row(district="Tiergarten")
+    unrelated = _listing_row(district="Spandau")
+    seeds = [
+        (by_ortsteil, _gold_row(by_ortsteil["id"], listing_ortsteil="Tiergarten")),
+        (by_scraped, _gold_row(by_scraped["id"], listing_ortsteil="Spandau")),
+        (unrelated, _gold_row(unrelated["id"], listing_ortsteil="Spandau")),
+    ]
+
+    async def body(service):
+        results, _preview, _, _ = await service.search(
+            SearchParams(districts=["Tiergarten"])
+        )
+        return {r.id for r in results}
+
+    ids = _drive(async_db_url, seeds, body)
+    assert str(by_ortsteil["id"]) in ids  # matched via the polygon Ortsteil
+    assert str(by_scraped["id"]) in ids  # matched via the scraped district
+    assert str(unrelated["id"]) not in ids
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +614,7 @@ def test_near_park_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _, _ = await service.search(SearchParams(near_park="near"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -494,7 +632,7 @@ def test_near_playground_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(
+        results, _preview, _, _ = await service.search(
             SearchParams(near_playground="near")
         )
         return {r.id for r in results}
@@ -510,7 +648,7 @@ def test_near_water_filter(async_db_url):
     junctions = [(ListingNearbyWater, nearby_water_row(near["id"], distance_m=300))]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_water="near"))
+        results, _preview, _, _ = await service.search(SearchParams(near_water="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
@@ -531,7 +669,7 @@ def test_max_noise_filter_excludes_loud(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _, _ = await service.search(SearchParams(max_noise="quiet"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -551,7 +689,7 @@ def test_max_noise_optimistic_includes_null(async_db_url):
     seeds = [(null_noise, _gold_row(null_noise["id"], noise_total_lden=None))]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _, _ = await service.search(SearchParams(max_noise="quiet"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
@@ -573,7 +711,9 @@ def test_min_greenery_jsonb_float_extraction(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(min_greenery="leafy"))
+        results, _preview, _, _ = await service.search(
+            SearchParams(min_greenery="leafy")
+        )
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -590,7 +730,7 @@ def test_density_sparse_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(density="sparse"))
+        results, _preview, _, _ = await service.search(SearchParams(density="sparse"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -615,8 +755,8 @@ def test_combined_filters_kitchen_sink(async_db_url):
         listing["id"],
         noise_total_lden=48.0,
         persons_per_hectare=40.0,
-        mss_status="mixed",
-        mss_dynamics="improving",
+        inside_ring=True,
+        listing_ortsteil="Kreuzberg",
         greenery_profile={"green_m2_within_300m": 6000.0},
         school_catchment={"name": "GS Test"},
     )
@@ -629,6 +769,7 @@ def test_combined_filters_kitchen_sink(async_db_url):
         ),
         (ListingNearbySchool, nearby_school_row(listing["id"], distance_m=400)),
         (ListingNearbyHospital, nearby_hospital_row(listing["id"], distance_m=600)),
+        (ListingNearbyKita, nearby_kita_row(listing["id"], distance_m=150)),
         (ListingNearbyPark, nearby_park_row(listing["id"], distance_m=180)),
         (ListingNearbyPlayground, nearby_playground_row(listing["id"], distance_m=300)),
         (ListingNearbyWater, nearby_water_row(listing["id"], distance_m=800)),
@@ -644,14 +785,15 @@ def test_combined_filters_kitchen_sink(async_db_url):
             transit=TransitFilter(modes=["u_bahn"], distance="near"),
             school=SchoolFilter(),
             hospital=HospitalFilter(),
-            mss=MssFilter(status_min="mixed", dynamics="improving"),
+            kita=KitaFilter(distance="near"),
+            inside_ring=True,
             near_park="near",
             near_playground="walking_distance",
             max_noise="quiet",
             min_greenery="leafy",
             density="sparse",
         )
-        results, _preview, total = await service.search(params)
+        results, _preview, total, _ = await service.search(params)
         return [r.id for r in results], total
 
     ids, total = _drive(async_db_url, [(listing, gold)], body, junctions=junctions)
@@ -669,7 +811,7 @@ def test_search_returns_markers_preview_and_total(async_db_url):
     seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
 
     async def body(service):
-        markers, preview, total = await service.search(SearchParams(sort_by="price"))
+        markers, preview, total, _ = await service.search(SearchParams(sort_by="price"))
         return [m.id for m in markers], [c.id for c in preview], total
 
     marker_ids, preview_ids, total = _drive(async_db_url, seeds, body)
@@ -693,7 +835,7 @@ def test_preview_is_prefix_of_markers_with_tied_price(async_db_url):
     seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
 
     async def body(service):
-        markers, preview, _ = await service.search(SearchParams(sort_by="price"))
+        markers, preview, _, _ = await service.search(SearchParams(sort_by="price"))
         return [m.id for m in markers], [c.id for c in preview]
 
     marker_ids, preview_ids = _drive(async_db_url, seeds, body)
@@ -713,7 +855,7 @@ def test_preview_is_prefix_of_markers_with_tied_recency(async_db_url):
     seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
 
     async def body(service):
-        markers, preview, _ = await service.search(SearchParams(sort_by="recent"))
+        markers, preview, _, _ = await service.search(SearchParams(sort_by="recent"))
         return [m.id for m in markers], [c.id for c in preview]
 
     marker_ids, preview_ids = _drive(async_db_url, seeds, body)
@@ -730,7 +872,7 @@ def test_search_drops_null_coordinate_listings_from_markers(async_db_url):
     ]
 
     async def body(service):
-        markers, _preview, total = await service.search(SearchParams())
+        markers, _preview, total, _ = await service.search(SearchParams())
         return {m.id for m in markers}, total
 
     ids, total = _drive(async_db_url, seeds, body)
@@ -749,9 +891,124 @@ def test_search_total_uses_count_when_marker_cap_binds(async_db_url, monkeypatch
     seeds = [(lst, _gold_row(lst["id"])) for lst in listings]
 
     async def body(service):
-        markers, _preview, total = await service.search(SearchParams())
+        markers, _preview, total, _ = await service.search(SearchParams())
         return len(markers), total
 
     n_markers, total = _drive(async_db_url, seeds, body)
     assert n_markers == 2  # capped
     assert total == 3  # real COUNT(*) over the filtered set
+
+
+# ---------------------------------------------------------------------------
+# Facets — whole-set aggregate stats (price/area ranges + neighbourhood counts)
+#
+# These execute `percentile_cont(...).within_group(...)` and a GROUP BY against
+# real Postgres — the SQL-shape bugs that compile in SQLAlchemy but Postgres
+# rejects at runtime only surface here. A unique `district` tag isolates these
+# seeds from any other committed rows in the test DB.
+# ---------------------------------------------------------------------------
+
+# Sentinel district used only to scope facets tests to their own seeds — no
+# committed row uses it, so `districts=[_FACET_ZONE]` matches exactly the seeds.
+_FACET_ZONE = "FacetTestZoneQZX"
+
+
+def _facet_seed(warm: float, area: float, ortsteil: str) -> tuple[dict, dict]:
+    lst = _listing_row(warm_rent_eur=warm, area_sqm=area, district=_FACET_ZONE)
+    return lst, _gold_row(lst["id"], listing_ortsteil=ortsteil)
+
+
+def test_facets_price_area_ranges_and_district_counts(async_db_url):
+    seeds = [
+        _facet_seed(600.0, 30.0, "Wedding"),
+        _facet_seed(1200.0, 60.0, "Prenzlauer Berg"),
+        _facet_seed(1950.0, 112.0, "Prenzlauer Berg"),
+    ]
+
+    async def body(service):
+        _markers, _preview, total, facets = await service.search(
+            SearchParams(districts=[_FACET_ZONE])
+        )
+        return total, facets
+
+    total, facets = _drive(async_db_url, seeds, body)
+    assert total == 3
+    assert facets is not None
+
+    # Numeric ranges over the FULL set (median via percentile_cont).
+    assert facets.price_warm_eur.min == 600.0
+    assert facets.price_warm_eur.median == 1200.0
+    assert facets.price_warm_eur.max == 1950.0
+    assert facets.area_sqm.min == 30.0
+    assert facets.area_sqm.median == 60.0
+    assert facets.area_sqm.max == 112.0
+
+    # Neighbourhood counts grouped by Ortsteil, busiest first, summing to total.
+    counts = {d.district: d.count for d in facets.districts}
+    assert counts == {"Prenzlauer Berg": 2, "Wedding": 1}
+    assert facets.districts[0].district == "Prenzlauer Berg"  # ordered desc
+    assert sum(d.count for d in facets.districts) == total
+
+
+def test_facets_honour_the_active_filters(async_db_url):
+    # A price ceiling must cap the facet max — facets describe the FILTERED set,
+    # not the table. With max=1300, only the 600 and 1200 rows survive.
+    seeds = [
+        _facet_seed(600.0, 30.0, "Wedding"),
+        _facet_seed(1200.0, 60.0, "Prenzlauer Berg"),
+        _facet_seed(1950.0, 112.0, "Prenzlauer Berg"),
+    ]
+
+    async def body(service):
+        _markers, _preview, total, facets = await service.search(
+            SearchParams(districts=[_FACET_ZONE], price_warm_max=1300.0)
+        )
+        return total, facets
+
+    total, facets = _drive(async_db_url, seeds, body)
+    assert total == 2
+    assert facets.price_warm_eur.min == 600.0
+    assert facets.price_warm_eur.max == 1200.0  # the 1950 row is filtered out
+    counts = {d.district: d.count for d in facets.districts}
+    assert counts == {"Prenzlauer Berg": 1, "Wedding": 1}
+
+
+def test_facets_none_when_no_results(async_db_url):
+    seeds = [_facet_seed(600.0, 30.0, "Wedding")]
+
+    async def body(service):
+        _markers, _preview, total, facets = await service.search(
+            SearchParams(districts=["NoSuchZoneZZZ"])
+        )
+        return total, facets
+
+    total, facets = _drive(async_db_url, seeds, body)
+    assert total == 0
+    assert facets is None
+
+
+def test_facets_exclude_null_ortsteil_from_district_counts(async_db_url):
+    # A listing with no Ortsteil assignment still counts toward price/area facets
+    # but is excluded from the neighbourhood breakdown (counts can sum < total).
+    no_ortsteil = _listing_row(
+        warm_rent_eur=2000.0, area_sqm=90.0, district=_FACET_ZONE
+    )
+    seeds = [
+        _facet_seed(800.0, 40.0, "Wedding"),
+        (no_ortsteil, _gold_row(no_ortsteil["id"])),  # listing_ortsteil → NULL
+    ]
+
+    async def body(service):
+        _markers, _preview, total, facets = await service.search(
+            SearchParams(districts=[_FACET_ZONE])
+        )
+        return total, facets
+
+    total, facets = _drive(async_db_url, seeds, body)
+    assert total == 2
+    # Price facet covers BOTH rows (incl. the null-ortsteil one).
+    assert facets.price_warm_eur.max == 2000.0
+    # District facet covers only the Ortsteil-assigned row.
+    counts = {d.district: d.count for d in facets.districts}
+    assert counts == {"Wedding": 1}
+    assert sum(d.count for d in facets.districts) == 1  # < total (2)

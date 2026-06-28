@@ -43,7 +43,8 @@ def _row_to_iron(record: dict) -> dict:
     if external_id is None or detail_url is None or scraped_at is None:
         raise ValueError(
             f"Missing required fields for source={source!r}: "
-            f"external_id={external_id!r}, detail_url={detail_url!r}, scraped_at={scraped_at!r}"
+            f"external_id={external_id!r}, detail_url={detail_url!r}, "
+            f"scraped_at={scraped_at!r}"
         )
 
     return {

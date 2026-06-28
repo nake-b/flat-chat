@@ -9,13 +9,9 @@ tweaks don't need a gold rebuild.
 
 from __future__ import annotations
 
-from typing import cast
-from typing import get_args as _typing_get_args
-
 from .context import ListingCard
 from .labels import bucket_density, bucket_noise, walk_minutes
 from .models import Listing, ListingGeoContext
-from .types import MssDynamics, MssStatus
 
 # Columns a card row must SELECT: the Listing entity + the chip scalars off
 # `listings_geo_context`. Both the preview query and the `?view=card` batch
@@ -30,28 +26,10 @@ CARD_COLUMNS = (
     ListingGeoContext.nearest_park_m,
     ListingGeoContext.noise_total_lden,
     ListingGeoContext.persons_per_hectare,
-    ListingGeoContext.mss_status,
-    ListingGeoContext.mss_dynamics,
+    ListingGeoContext.inside_ring,
+    ListingGeoContext.listing_bezirk,
+    ListingGeoContext.listing_ortsteil,
 )
-
-
-_MSS_STATUS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssStatus))
-_MSS_DYNAMICS_VALUES: frozenset[str] = frozenset(_typing_get_args(MssDynamics))
-
-
-def _safe_mss_status(value: str | None) -> MssStatus | None:
-    """Coerce unknown / sentinel MSS status strings (e.g. ``Planungsraum
-    ohne Zuordnung`` — the publisher's "no data" marker) to None instead
-    of letting Pydantic raise. Real labels pass through unchanged."""
-    if value is None:
-        return None
-    return cast(MssStatus, value) if value in _MSS_STATUS_VALUES else None
-
-
-def _safe_mss_dynamics(value: str | None) -> MssDynamics | None:
-    if value is None:
-        return None
-    return cast(MssDynamics, value) if value in _MSS_DYNAMICS_VALUES else None
 
 
 def row_to_listing_card(row, *, with_score: bool) -> ListingCard:
@@ -122,7 +100,8 @@ def row_to_listing_card(row, *, with_score: bool) -> ListingCard:
         nearest_park_m=mapping.get("nearest_park_m"),
         noise_label=bucket_noise(noise_lden),
         density_label=bucket_density(pph),
-        mss_status_label=_safe_mss_status(mapping.get("mss_status")),
-        mss_dynamics_label=_safe_mss_dynamics(mapping.get("mss_dynamics")),
+        inside_ring=mapping.get("inside_ring"),
+        listing_bezirk=mapping.get("listing_bezirk"),
+        listing_ortsteil=mapping.get("listing_ortsteil"),
         similarity_score=sim_score,
     )

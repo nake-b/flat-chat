@@ -49,8 +49,9 @@ function card(
     nearest_park_m: null,
     noise_label: null,
     density_label: null,
-    mss_status_label: null,
-    mss_dynamics_label: null,
+    inside_ring: null,
+    listing_bezirk: null,
+    listing_ortsteil: null,
     similarity_score: null,
     ...overrides,
   };

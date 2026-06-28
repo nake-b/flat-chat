@@ -45,7 +45,6 @@ from gold.enrich_listings import (
     ensure_rows,
     enrich_chip_scalars,
     enrich_density,
-    enrich_mss,
     enrich_nearby_parks,
     enrich_nearby_transit,
     enrich_noise,
@@ -455,7 +454,7 @@ def _seed_noise_sample(
     conn.execute(
         text(
             f"""
-            INSERT INTO street_noise_2022
+            INSERT INTO strategic_noise_2022
                 (noise_total_lden, noise_street_lden, noise_rail_lden, geom)
             VALUES (:t, :s, :r, {_point(conn, lat, _BERLIN_LON)})
             """
@@ -653,47 +652,7 @@ def test_enrich_density_no_containing_polygon_leaves_null(sync_conn: Connection)
     assert row.persons_per_hectare is None
 
 
-# ---------------------------------------------------------------------------
-# enrich_mss — Sozialmonitoring polygon containment
-# ---------------------------------------------------------------------------
-
-
-def test_enrich_mss_writes_status_dynamics_chips(sync_conn: Connection):
-    listing_id = _seed_listing(sync_conn)
-    d = 0.005
-    poly = (
-        f"ST_SetSRID(ST_GeomFromText("
-        f"'MULTIPOLYGON((("
-        f"{_BERLIN_LON - d} {_BERLIN_LAT - d}, "
-        f"{_BERLIN_LON + d} {_BERLIN_LAT - d}, "
-        f"{_BERLIN_LON + d} {_BERLIN_LAT + d}, "
-        f"{_BERLIN_LON - d} {_BERLIN_LAT + d}, "
-        f"{_BERLIN_LON - d} {_BERLIN_LAT - d}"
-        f")))'), 4326)"
-    )
-    sync_conn.execute(
-        text(
-            f"""
-            INSERT INTO social_monitoring_2025
-                (planning_area_id, planning_area_name, district_id, residents,
-                 status_index_label, dynamics_index_label,
-                 social_inequality_label, year, geom)
-            VALUES ('pa_test', 'Test Planungsraum', 'd_test', 5000,
-                    'mixed', 'improving', 'medium', 2025, {poly})
-            """
-        )
-    )
-    ensure_rows(sync_conn)
-    enrich_mss(sync_conn)
-
-    row = sync_conn.execute(
-        text(
-            "SELECT mss_status, mss_dynamics, mss_profile "
-            "FROM listings_geo_context WHERE listing_id = :id"
-        ),
-        {"id": listing_id},
-    ).first()
-    assert row.mss_status == "mixed"
-    assert row.mss_dynamics == "improving"
-    assert row.mss_profile["social_inequality"] == "medium"
-    assert row.mss_profile["planning_area_name"] == "Test Planungsraum"
+# NOTE: MSS removed entirely in geo-context v2 (the `enrich_mss` enricher and
+# the `social_monitoring_2025` source table are gone in the 0007 migration).
+# The new admin-area / ring / kita / landmark enrichers live in the ingestion
+# service and are exercised by ingestion's own integration suite (Phase 1).

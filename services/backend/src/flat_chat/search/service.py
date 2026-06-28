@@ -4,10 +4,11 @@ Design:
   - Joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` and
     filters with plain B-tree predicates on the gold scalars plus EXISTS
     subqueries against the per-listing junction tables.
-  - `search()` returns `(markers, preview_cards, total)`: EVERY match as a
-    thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered result
-    set), plus the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
-    LLM + the card strip). The rest of the cards hydrate on demand via
+  - `search()` returns `(markers, preview_cards, total, facets)`: EVERY match
+    as a thin tier-1 `Marker` (≤ MARKER_CAP — the map source + the ordered
+    result set), the top PREVIEW_N as full tier-2 `ListingCard`s (hot for the
+    LLM + the card strip), the count, and whole-set `ResultFacets` (price/area
+    ranges + per-Ortsteil counts). The rest of the cards hydrate on demand via
     `ListingService.get_cards`.
   - The only spatial predicate is `ST_DWithin` on the listing's own location
     for `near_lat/near_lon` proximity search — a single condition that hits
@@ -34,18 +35,20 @@ from pydantic_ai import Embedder
 from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import ListingCard, Marker
+from flat_chat.listings.context import Marker
 from flat_chat.listings.labels import encode_modes, resolve_near_spec
 from flat_chat.listings.models import (
     Listing,
     ListingEmbedding,
     ListingGeoContext,
     ListingNearbyHospital,
+    ListingNearbyKita,
     ListingNearbyPark,
     ListingNearbyPlayground,
     ListingNearbySchool,
     ListingNearbyTransit,
     ListingNearbyWater,
+    named_places,
 )
 from flat_chat.listings.projection import CARD_COLUMNS, row_to_listing_card
 from flat_chat.listings.thresholds import (
@@ -57,12 +60,19 @@ from flat_chat.listings.thresholds import (
 )
 
 from .geo_filters import (
-    MSS_STATUS_RANK,
     HospitalFilter,
     SchoolFilter,
     TransitFilter,
 )
-from .schemas import MARKER_CAP, PREVIEW_N, SearchParams
+from .schemas import (
+    MARKER_CAP,
+    PREVIEW_N,
+    DistrictCount,
+    NumericFacet,
+    ResultFacets,
+    SearchParams,
+    SearchResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +86,46 @@ def _escape_for_substring(s: str) -> str:
     return f"%{_LIKE_META.sub(r'\\\1', s)}%"
 
 
+def _numeric_facet(
+    lo: float | None, mid: float | None, hi: float | None
+) -> NumericFacet | None:
+    """Build a NumericFacet from raw (min, median, max), or None if all empty.
+
+    Postgres returns Decimal for `percentile_cont`; coerce to float so the
+    Pydantic model + JSON wire stay plain numbers."""
+    if lo is None and mid is None and hi is None:
+        return None
+    return NumericFacet(
+        min=float(lo) if lo is not None else None,
+        median=float(mid) if mid is not None else None,
+        max=float(hi) if hi is not None else None,
+    )
+
+
+def _parse_place_ref(token: str) -> tuple[str, int] | None:
+    """Parse a `locate_place` `place_ref` token into `(kind, src_id)`.
+
+    The token is the opaque `'<kind>:<src_id>'` string the
+    `world.named_places` view composes (e.g. `"park:42"`). We parse the
+    FORMAT only — split on the first `:`, require a non-empty kind and an
+    integer src_id — with zero knowledge of which tables back the view.
+
+    Defensive by contract: any malformed token (no colon, empty kind,
+    non-integer id, garbage) returns None so the caller drops the filter
+    rather than emitting a query that 500s. The LLM passes these opaquely,
+    so a hallucinated token must fail closed.
+    """
+    if not isinstance(token, str):
+        return None
+    kind, sep, raw_id = token.partition(":")
+    if not sep or not kind or not raw_id:
+        return None
+    try:
+        return kind, int(raw_id)
+    except ValueError:
+        return None
+
+
 class SearchService:
     """Filter + rank listings. Returns markers + preview cards. Agent-only.
 
@@ -86,15 +136,17 @@ class SearchService:
         self.db = db
         self.embedder = embedder
 
-    async def search(
-        self, params: SearchParams
-    ) -> tuple[list[Marker], list[ListingCard], int]:
-        """Run the search. Returns (markers, preview_cards, total).
+    async def search(self, params: SearchParams) -> SearchResult:
+        """Run the search. Returns a `SearchResult` (markers, preview, total,
+        facets) — a NamedTuple, so positional unpacking still works.
 
         - `markers`: EVERY match (≤ MARKER_CAP) as thin tier-1 markers — the
           map source and the ordered result set the LLM indexes into.
         - `preview_cards`: the top PREVIEW_N as full tier-2 cards.
         - `total`: `len(markers)`, unless the cap binds — then a real COUNT(*).
+        - `facets`: aggregate stats (price/area ranges, neighbourhood counts)
+          over the WHOLE filtered set, so the agent grounds whole-set claims in
+          the full set rather than the top-N preview. `None` when total is 0.
 
         Markers and preview share `_compose` so their filters AND ORDER BY are
         identical; the preview is a true prefix of the marker order, which is
@@ -169,7 +221,86 @@ class SearchService:
             row_to_listing_card(row, with_score=bool(params.query))
             for row in preview_rows
         ]
-        return markers, preview, total
+
+        # Facets over the whole filtered set — skip the two extra round-trips
+        # when there's nothing to describe.
+        facets = await self._facets(params) if total > 0 else None
+
+        return SearchResult(markers, preview, total, facets)
+
+    # ---- Facets (whole-set aggregate stats) ----
+
+    async def _facets(self, params: SearchParams) -> ResultFacets:
+        """Aggregate stats over the FULL filtered set (not the preview slice).
+
+        Two cheap aggregate queries, both reusing `_apply_listing_filters` +
+        `_apply_geo_context_filters` so they describe exactly the same rows as
+        the markers/preview:
+          - numeric: min / median / max for warm rent and area in one row
+            (`percentile_cont(0.5)` for the median);
+          - districts: count per Ortsteil (`listing_ortsteil`), the Berlin
+            neighbourhood granularity, NULLs excluded.
+
+        Computed in SQL rather than from the in-memory markers so price stays
+        exact past MARKER_CAP and so area (absent from markers) is covered.
+        Runs sequentially after the marker/preview reads — the shared
+        AsyncSession is one connection, so concurrent execution is unsafe.
+        """
+        # Numeric facets — one row, min/median/max for price and area. Labelled
+        # so they're read by name below, not by fragile positional `row[n]`.
+        num_stmt: Select = (
+            select(
+                func.min(Listing.warm_rent_eur).label("price_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.warm_rent_eur.asc())
+                .label("price_median"),
+                func.max(Listing.warm_rent_eur).label("price_max"),
+                func.min(Listing.area_sqm).label("area_min"),
+                func.percentile_cont(0.5)
+                .within_group(Listing.area_sqm.asc())
+                .label("area_median"),
+                func.max(Listing.area_sqm).label("area_max"),
+            )
+            .select_from(Listing)
+            .outerjoin(ListingGeoContext, ListingGeoContext.listing_id == Listing.id)
+        )
+        num_stmt = self._apply_listing_filters(num_stmt, params)
+        num_stmt = self._apply_geo_context_filters(num_stmt, params)
+        num_stmt = num_stmt.where(
+            Listing.latitude.is_not(None), Listing.longitude.is_not(None)
+        )
+        row = (await self.db.execute(num_stmt)).one()
+
+        # Districts — count per Ortsteil, busiest first (id tie-break for
+        # deterministic ordering across equal counts).
+        lgc = ListingGeoContext
+        dist_stmt: Select = (
+            select(lgc.listing_ortsteil, func.count())
+            .select_from(Listing)
+            .outerjoin(lgc, lgc.listing_id == Listing.id)
+        )
+        dist_stmt = self._apply_listing_filters(dist_stmt, params)
+        dist_stmt = self._apply_geo_context_filters(dist_stmt, params)
+        dist_stmt = (
+            dist_stmt.where(
+                Listing.latitude.is_not(None),
+                Listing.longitude.is_not(None),
+                lgc.listing_ortsteil.is_not(None),
+            )
+            .group_by(lgc.listing_ortsteil)
+            .order_by(func.count().desc(), lgc.listing_ortsteil)
+        )
+        dist_rows = (await self.db.execute(dist_stmt)).all()
+
+        return ResultFacets(
+            price_warm_eur=_numeric_facet(
+                row.price_min, row.price_median, row.price_max
+            ),
+            area_sqm=_numeric_facet(row.area_min, row.area_median, row.area_max),
+            districts=[
+                DistrictCount(district=name, count=count) for name, count in dist_rows
+            ],
+        )
 
     # ---- Statement composition ----
 
@@ -284,19 +415,29 @@ class SearchService:
         if params.has_elevator is not None:
             stmt = stmt.where(Listing.has_elevator == params.has_elevator)
 
-        # District substring match — OR across multiple districts.
+        # District substring match — OR across multiple districts AND across
+        # the three district sources: the scraped `Listing.district` (the
+        # pin-less freetext fallback) plus the ALKIS-polygon assignments
+        # `listing_bezirk` / `listing_ortsteil` on the (already outer-joined)
+        # gold row. "in Tiergarten" then matches whether the source labelled
+        # it Mitte, the Ortsteil polygon says Tiergarten, or both.
         if params.districts:
-            district_clauses = [
-                Listing.district.ilike(_escape_for_substring(d), escape="\\")
-                for d in params.districts
-            ]
+            lgc = ListingGeoContext
+            district_clauses = []
+            for d in params.districts:
+                pattern = _escape_for_substring(d)
+                district_clauses.append(Listing.district.ilike(pattern, escape="\\"))
+                district_clauses.append(lgc.listing_bezirk.ilike(pattern, escape="\\"))
+                district_clauses.append(
+                    lgc.listing_ortsteil.ilike(pattern, escape="\\")
+                )
             stmt = stmt.where(or_(*district_clauses))
 
         # Images present
         if params.has_images is True:
             stmt = stmt.where(func.jsonb_array_length(Listing.images) > 0)
 
-        # Proximity to a point — the one spatial predicate that survives.
+        # Proximity to a point — the one flat spatial predicate (raw coords).
         # Hits the functional GiST index on (location::geography).
         if params.near_lat is not None and params.near_lon is not None:
             point = geo_func.ST_SetSRID(
@@ -312,20 +453,55 @@ class SearchService:
                 )
             )
 
+        # Proximity to a NAMED place — geometry-precise ST_DWithin against the
+        # one shape `locate_place` resolved (correct for the Spree LINE and the
+        # TU-campus POLYGON; a centroid radius would be wrong for both). The
+        # token is the opaque `kind:src_id` `place_ref` from `world.named_places`;
+        # we parse only its FORMAT here (split on the FIRST ':') — no table
+        # knowledge. A malformed/unknown token yields an empty subquery → no
+        # match, never a 500.
+        if params.near_place_ref is not None:
+            parsed = _parse_place_ref(params.near_place_ref)
+            if parsed is not None:
+                kind, src_id = parsed
+                radius_m = params.radius_km * 1000
+                # Scalar subquery: the resolved geometry for this place_ref via
+                # the mapped `world.named_places` view. `kind` is constant so
+                # Postgres prunes the view's UNION to the one branch; `src_id`
+                # hits that base table's PK. Bound params only.
+                np = named_places.c
+                geom_subq = (
+                    select(np.geom)
+                    .where(np.kind == kind, np.src_id == src_id)
+                    .scalar_subquery()
+                )
+                # `type_=Boolean` (the SQLAlchemy TypeEngine, NOT the Python
+                # `bool` builtin — that one breaks cache-key traversal) so this
+                # predicate is cacheable, matching the near_lat/near_lon
+                # ST_DWithin above (see the proximity-caching fix on main).
+                stmt = stmt.where(
+                    geo_func.ST_DWithin(
+                        cast(Listing.location, Geography),
+                        cast(geom_subq, Geography),
+                        radius_m,
+                        type_=Boolean,
+                    )
+                )
+
         return stmt
 
     def _apply_geo_context_filters(self, stmt: Select, params: SearchParams) -> Select:
         """Geo-context filters.
 
         Two shapes:
-          - **POI filters** (transit, schools, hospitals, near_park,
+          - **POI filters** (transit, schools, hospitals, kita, near_park,
             near_playground, near_water): EXISTS against the per-listing
             junction table populated by `gold.enrich_nearby_*`. Honours
             any per-family attribute filter (modes, lines, school_type,
             hospital tier, ...). See
             `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
-          - **Scalar / field filters** (mss, max_noise, min_greenery,
-            density): B-tree / JSONB-extract predicates on the
+          - **Scalar / field filters** (inside_ring, max_noise,
+            min_greenery, density): B-tree / JSONB-extract predicates on the
             denormalised columns of `listings_geo_context`.
         """
         lgc = ListingGeoContext
@@ -340,6 +516,13 @@ class SearchService:
 
         if params.hospital is not None:
             stmt = self._apply_hospital_filter(stmt, params.hospital)
+
+        if params.kita is not None:
+            # Kitas carry no sub-type — pure proximity, same shape as
+            # near_park / near_playground / near_water.
+            stmt = self._apply_proximity_filter(
+                stmt, params.kita.distance, ListingNearbyKita
+            )
 
         if params.near_park is not None:
             # Cemeteries are excluded from listings_nearby_parks at ETL time.
@@ -359,15 +542,13 @@ class SearchService:
 
         # ----- Scalar / field filters on listings_geo_context -----
 
-        # MSS — status floor + optional dynamics. Status floor uses the
-        # ordered ranking from `MSS_STATUS_RANK` so "lower-income" matches
-        # lower-income, mixed, and affluent.
-        if params.mss is not None:
-            min_rank = MSS_STATUS_RANK[params.mss.status_min]
-            allowed = [k for k, v in MSS_STATUS_RANK.items() if v >= min_rank]
-            stmt = stmt.where(lgc.mss_status.in_(allowed))
-            if params.mss.dynamics is not None:
-                stmt = stmt.where(lgc.mss_dynamics == params.mss.dynamics)
+        # Inside the ring (Umweltzone / S-Bahn ring). Strict equality so it
+        # handles both True (inside) and False (outside); NULL rows (gold
+        # hasn't assigned a ring flag) drop out under `== False`, which is
+        # the desired behaviour — we don't claim a listing is outside the
+        # ring when we never tested it.
+        if params.inside_ring is not None:
+            stmt = stmt.where(lgc.inside_ring == params.inside_ring)
 
         # Noise — optimistic-include on NULL (no trusted reading within
         # the 50 m gate set in gold.enrich_noise; we don't claim a listing

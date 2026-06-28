@@ -12,6 +12,11 @@
 -- connection's search_path.
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS vector;
+-- pg_trgm powers the trigram (`%`) name search behind the `world.named_places`
+-- gazetteer view (locate_place). The per-table GIN trgm indexes are created by
+-- the ingestion 0007 migration; the extension itself is DB-global, so it lives
+-- here in `public` alongside postgis/vector.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Two ownership schemas:
 --   world — reference data the ingestion service is the source of truth for

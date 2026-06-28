@@ -83,6 +83,13 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
     complete: (a: { indices?: number[] }) =>
       `Opened listing #${a?.indices?.[0] ?? "?"}`,
   },
+
+  locate_place: {
+    executing: (a: { place_name?: string }) =>
+      a?.place_name ? `Locating ${a.place_name}…` : "Locating place…",
+    complete: (a: { place_name?: string }) =>
+      a?.place_name ? `Found ${a.place_name}` : "Place located",
+  },
 };
 
 // Rotating verb sets. Module-level (stable refs) so <RotatingWord>'s timer

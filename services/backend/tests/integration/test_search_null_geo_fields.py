@@ -9,8 +9,8 @@ Today's contract per filter kind:
   - **POI filters** (transit / schools / hospitals / parks / playgrounds
     / water): EXISTS against the per-listing junction table. A listing
     with no junction rows for that family fails the EXISTS → row drops.
-  - **Scalar / field filters** with strict comparison (`mss_status IN
-    (...)`, `density < cutoff`, `min_greenery >= cutoff`): NULL on the
+  - **Scalar / field filters** with strict comparison (`inside_ring =
+    :v`, `density < cutoff`, `min_greenery >= cutoff`): NULL on the
     column makes the predicate NULL → row drops. Strict semantics.
   - **`max_noise`** — optimistic-include: `or_(IS NULL, < cutoff)`. A
     listing whose nearest noise sample is >50 m away (post-gate NULL)
@@ -27,7 +27,7 @@ when that happens.
 
 from __future__ import annotations
 
-from flat_chat.search.geo_filters import MssFilter, TransitFilter
+from flat_chat.search.geo_filters import TransitFilter
 from flat_chat.search.schemas import SearchParams
 
 from ..conftest import DB_REQUIRED
@@ -62,7 +62,7 @@ def test_null_noise_optimistic_includes_listing_in_quiet_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _, _ = await service.search(SearchParams(max_noise="quiet"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -81,7 +81,7 @@ def test_null_density_drops_listing_from_sparse_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(density="sparse"))
+        results, _preview, _, _ = await service.search(SearchParams(density="sparse"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -96,30 +96,35 @@ def test_missing_transit_junction_row_drops_listing_from_transit_filter(async_db
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
     assert str(no_transit["id"]) not in ids
 
 
-def test_null_mss_status_drops_listing_from_status_floor(async_db_url):
-    """`mss_status IN (...)` against NULL returns NULL → row drops."""
-    affluent = _listing_row()
-    null_mss = _listing_row()
+def test_null_inside_ring_drops_listing_from_ring_filter(async_db_url):
+    """`inside_ring = :v` against NULL returns NULL → row drops.
+
+    Strict semantics: gold never tested this listing against the
+    Umweltzone polygon, so we don't claim it is inside (or outside) the
+    ring — it simply drops out of either-direction filter.
+    """
+    inside = _listing_row()
+    null_ring = _listing_row()
     seeds = [
-        (affluent, _gold_row(affluent["id"], mss_status="affluent")),
-        (null_mss, _gold_row(null_mss["id"], mss_status=None)),
+        (inside, _gold_row(inside["id"], inside_ring=True)),
+        (null_ring, _gold_row(null_ring["id"], inside_ring=None)),
     ]
 
     async def body(service):
-        params = SearchParams(mss=MssFilter(status_min="mixed"))
-        results, _preview, _ = await service.search(params)
+        params = SearchParams(inside_ring=True)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
-    assert str(affluent["id"]) in ids
-    assert str(null_mss["id"]) not in ids
+    assert str(inside["id"]) in ids
+    assert str(null_ring["id"]) not in ids
 
 
 def test_missing_park_junction_row_drops_listing_from_near_park_filter(async_db_url):
@@ -128,7 +133,7 @@ def test_missing_park_junction_row_drops_listing_from_near_park_filter(async_db_
     seeds = [(no_park, _gold_row(no_park["id"]))]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _, _ = await service.search(SearchParams(near_park="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)

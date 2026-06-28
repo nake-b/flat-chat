@@ -22,6 +22,7 @@ from flat_chat.users.models import DUMMY_USER_ID
 
 if TYPE_CHECKING:
     from flat_chat.listings.service import ListingService
+    from flat_chat.search.places import PlaceService
     from flat_chat.search.service import SearchService
 
 
@@ -55,10 +56,10 @@ class ChatSession:
 class ChatDeps:
     """Per-request deps handed to the agent and its tools.
 
-    Bridges request-scoped services (search_service, listing_service)
-    with the session-scoped state. Tools mutate `state` (in-place); the
-    AG-UI adapter streams JSON Patch deltas of those mutations back to
-    the frontend.
+    Bridges request-scoped services (search_service, listing_service,
+    place_service) with the session-scoped state. Tools mutate `state`
+    (in-place); the AG-UI adapter streams JSON Patch deltas of those
+    mutations back to the frontend.
 
     `state` is named to satisfy the `pydantic_ai.ui.StateHandler`
     protocol so the AG-UI adapter can populate it from each incoming
@@ -67,6 +68,7 @@ class ChatDeps:
 
     search_service: SearchService
     listing_service: ListingService
+    place_service: PlaceService
     session: ChatSession
     # Overwritten per-request by the dispatch path from session.state +
     # the incoming AG-UI envelope's state (frontend-driven changes like

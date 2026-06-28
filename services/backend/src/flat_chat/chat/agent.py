@@ -14,7 +14,7 @@ from pydantic_ai import Agent, RunContext
 
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.tools import toolset
+from flat_chat.chat.tools import ListingsCapability
 
 
 def _role_block() -> str:
@@ -63,25 +63,25 @@ def _honesty_block() -> str:
         "`search_apartments` in the same response. The `<order>` field of\n"
         "`<current_state>` is the ground truth; if it doesn't match your claim,\n"
         "you're lying. To change ordering, call `search_apartments` again with the\n"
-        "new `sort_by` and repeat all filters you want to keep.",
+        "new `sort_by` and repeat all filters you want to keep.\n"
+        "When you summarise the WHOLE result set (price range, area, which\n"
+        "neighbourhoods, how many), ground it in `<result_facets>` — those stats\n"
+        "cover every match. The listed cards are only the top few; do NOT infer\n"
+        "the set's price ceiling or neighbourhood mix from them.",
     )
 
 
-def _neutrality_block() -> str:
+def _city_center_block() -> str:
     return xml_block(
-        "neutrality",
-        "Sozialmonitoring labels — status (`affluent / mixed / lower-income /\n"
-        "disadvantaged`) and dynamics (`improving / stable / slipping`) — describe\n"
-        "socioeconomic character drawn from the Berlin Senate's index. They are\n"
-        "NOT value judgements. Never volunteer opinions about disadvantaged\n"
-        'neighbourhoods; never moralise about gentrification. The "disadvantaged +\n'
-        'improving" combination is the classic gentrification signature (Wedding &\n'
-        'Neukölln in the 2010s) — a renter searching for "up-and-coming" wants\n'
-        'exactly this. The "slipping" dynamics label is counterintuitive: it\n'
-        "means a Kiez improving slower than the citywide trend, not declining in\n"
-        "absolute terms. Surface what the data says; let the renter decide. When\n"
-        "passing MSS args through `search_apartments`, do not add a disclaimer —\n"
-        "frame the results neutrally and let the cards speak.",
+        "city_center",
+        "Berlin has NO single city centre — it is polycentric (Mitte, City West\n"
+        'around Zoo, and several Kiez hubs). When the user says "city center",\n'
+        '"central", "Innenstadt", or "Zentrum", treat it as INSIDE THE S-BAHN\n'
+        "RING (pass `inside_ring=true` to `search_apartments`) AND briefly explain\n"
+        "— the first time only — why you mapped their words to the ring (they are\n"
+        'likely new to Berlin). BUT if the user explicitly says "ring",\n'
+        '"S-Bahn-Ring", or "Ringbahn", just apply `inside_ring=true` SILENTLY —\n'
+        "they already know what the ring is; do NOT add the explanation.",
     )
 
 
@@ -97,17 +97,21 @@ INSTRUCTIONS = "\n\n".join(
         _ui_rendering_block(),
         _user_references_block(),
         _honesty_block(),
-        _neutrality_block(),
+        _city_center_block(),
     ]
 )
 
 
 # Module-level Agent is the canonical Pydantic AI pattern — the Agent is
-# immutable config (toolset binding, instructions, retries). Per-request state
-# (model, deps, history) is passed at `agent.run(...)` time, so no DI needed.
+# immutable config (capability binding, instructions, retries). Per-request
+# state (model, deps, history) is passed at `agent.run(...)` time, so no DI
+# needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
+# primitive) — `ListingsCapability` wraps the existing search/listing toolset;
+# future tool groups (map/frontend command tools, distance tools) add their own
+# capabilities. See agent-compound-docs/decisions/pydantic-v2-migration.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    toolsets=[toolset],
+    capabilities=[ListingsCapability()],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

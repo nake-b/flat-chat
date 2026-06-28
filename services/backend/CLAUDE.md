@@ -17,8 +17,8 @@ src/flat_chat/
                                       + GET /api/listings?ids=&view=card (batch tier-2)
                           bookmarks.py POST/DELETE /api/bookmarks/{listing_id} + GET /api/bookmarks(/ids)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(toolsets=[toolset], instructions=...)
-                          tools.py        FunctionToolset[ChatDeps]
+                          agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
+                          tools.py        FunctionToolset[ChatDeps] + ListingsCapability
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
                           state.py        ChatSession (+ user_id) + ChatDeps
@@ -30,13 +30,14 @@ src/flat_chat/
   users/               → Identity domain (app.* owned).
                           models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
   search/              → Query execution domain
-                          service.py      SearchService — async, returns (markers, preview_cards, total)
-                          schemas.py      SearchParams + SortBy
+                          service.py      SearchService — async, returns (markers, preview_cards, total, facets)
+                          places.py       PlaceService — locate_place trigram lookup over world.named_places
+                          schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
-                          models.py            Listing + ListingGeoContext + ListingEmbedding ORMs
+                          models.py            Listing + ListingGeoContext + ListingNearby* + named_places ORMs
                           bookmarks_models.py  Bookmark ORM (app schema — composite PK, CASCADE FKs)
-                          types.py             Literal types (NoiseLabel, MssStatus, ...)
+                          types.py             Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py           ListingDetail + ListingCard + nested dataclasses
                           projection.py        Shared tier-2 ListingCard projection (preview + get_cards)
                           labels.py            bucket_*, walk_minutes, encode_modes, ...
@@ -118,6 +119,12 @@ now split by tier:
   the LLM and the card strip's first paint.
 - `total_results` — a real count (`len(result_markers)`, or `COUNT(*)`
   when the 5000 cap binds).
+- `facets` — whole-set aggregate stats (`ResultFacets`: price/area
+  min·median·max + per-Ortsteil counts) so the LLM grounds whole-set
+  summaries ("up to €1,950", "a mix of Prenzlauer Berg and Wedding")
+  instead of extrapolating from `preview_cards`. Plain nested model (no
+  custom serializer). `None` until a search returns ≥1 result. See
+  [`result-set-facets.md`](../../agent-compound-docs/decisions/result-set-facets.md).
 
 The rest of the cards hydrate on demand by id (see the batch route
 above). No more separate DataFrame + UiState split.
@@ -127,12 +134,20 @@ Decision doc: [`session-state-design.md`](../../agent-compound-docs/decisions/se
 ## Search query — B-tree on gold
 
 `SearchService.search()` joins `listings ⨝ listings_geo_context (⨝
-listings_embeddings)` and returns `(markers, preview_cards, total)` —
-all matching markers (hard-capped server-side at `MARKER_CAP`=5000), the
-top `PREVIEW_N`=10 tier-2 cards, and the count. There is no per-search
-`limit` arg anymore. The shared tier-2 projection lives in
-`listings/projection.py` and is reused by both this preview and
-`ListingService.get_cards(ids)`.
+listings_embeddings)` and returns `(markers, preview_cards, total,
+facets)` — all matching markers (hard-capped server-side at
+`MARKER_CAP`=5000), the top `PREVIEW_N`=10 tier-2 cards, the count, and
+whole-set facets. There is no per-search `limit` arg anymore. The shared
+tier-2 projection lives in `listings/projection.py` and is reused by both
+this preview and `ListingService.get_cards(ids)`.
+
+**Facets** (`_facets`) run two extra cheap aggregate queries over the SAME
+filtered set (both reuse `_apply_listing_filters` + `_apply_geo_context_filters`):
+a single-row `min`/`percentile_cont(0.5)`/`max` for warm rent and area, and a
+`GROUP BY listing_ortsteil` count. Computed in SQL (not from the in-memory
+markers) so price stays exact past `MARKER_CAP` and area — absent from markers —
+is covered. Skipped when `total == 0`. See
+[`result-set-facets.md`](../../agent-compound-docs/decisions/result-set-facets.md).
 
 **Deterministic order — the marker/preview prefix invariant.** Markers and
 preview are two separate executions (LIMIT `MARKER_CAP` vs `PREVIEW_N`) over
@@ -156,19 +171,26 @@ The 12-query `open_listing` fan-out is gone — replaced by one PK lookup
 through `ListingService.get_detail(id)` + 6 small top-N reads from the
 junction tables.
 
-**POI filters** (transit / schools / hospitals / parks / playgrounds /
-water) use EXISTS-against the matching `listings_nearby_*` junction
-table. Attribute filters (transit modes/lines/stop_name, school_type,
-hospital tier) work end-to-end. **Scalar/field filters** (mss /
-max_noise / min_greenery / density) read chip columns on
+**POI filters** (transit / schools / hospitals / kitas / parks /
+playgrounds / water) use EXISTS-against the matching `listings_nearby_*`
+junction table. Attribute filters (transit modes/lines/stop_name,
+school_type, hospital tier) work end-to-end. **Scalar/field filters**
+(inside_ring / max_noise / min_greenery / density) read chip columns on
 `listings_geo_context`. `max_noise` is optimistic-include via
 `or_(IS NULL, < cutoff)` — paired with the 50 m coverage gate inside
-`enrich_noise`. See
-[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+`enrich_noise`. **Named-place proximity** (`near_place_ref`, from
+`locate_place`) resolves ONE geometry via the `world.named_places` view
+and runs a geometry-precise `ST_DWithin`. **District** search OR-unions
+`Listing.district ∪ listing_bezirk ∪ listing_ortsteil` (scraped freetext
++ ALKIS polygon assignments). **MSS/Sozialmonitoring was removed entirely
+(geo-context v2).** See
+[`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md),
+[`named-place-search.md`](../../agent-compound-docs/decisions/named-place-search.md),
+[`bezirk-ortsteil-resolution.md`](../../agent-compound-docs/decisions/bezirk-ortsteil-resolution.md).
 
 `GET /api/health?extended=true` reports `gold_orphans` for drift detection.
 
-Decision docs: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md), [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md).
+Decision docs: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md), [`spatial-neighbor-tables.md`](../../agent-compound-docs/decisions/spatial-neighbor-tables.md), [`named-place-search.md`](../../agent-compound-docs/decisions/named-place-search.md), [`bezirk-ortsteil-resolution.md`](../../agent-compound-docs/decisions/bezirk-ortsteil-resolution.md).
 
 ## LLM prompt assembly
 
@@ -179,7 +201,8 @@ Pydantic AI composes the agent's system prompt as:
 2. **`@toolset.instructions`** (cached, static): tool protocol + phrase
    map. In `chat/tools.py`.
 3. **`@agent.instructions`** (uncached, per-turn): `<current_state>` +
-   `<user_focus>` from `build_dynamic_state_prompt`. In `chat/llm_context.py`.
+   `<result_facets>` (whole-set stats) + `<user_focus>` from
+   `build_dynamic_state_prompt`. In `chat/llm_context.py`.
 
 State-dependent rules ("don't reopen the active listing") MUST go in
 the dynamic layer or they'd break the prompt cache. ~5600 cached prefix

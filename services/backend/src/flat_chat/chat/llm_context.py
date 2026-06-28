@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.search.schemas import NumericFacet, ResultFacets
 
 
 def xml_block(tag: str, body: str) -> str:
@@ -268,18 +269,51 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
             f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
         )
 
+    parts.extend(
+        _format_list_section(
+            detail.nearest_kitas,
+            "Nearby kitas:",
+            lambda k: f"{k.name or 'unnamed'} — {k.distance_m}m",
+        )
+    )
+
+    parts.extend(
+        _format_list_section(
+            detail.nearest_landmarks,
+            "Nearby landmarks:",
+            lambda lm: (
+                f"{lm.name or 'unnamed'}"
+                + (f" ({lm.category})" if lm.category else "")
+                + f" — {lm.distance_m}m"
+            ),
+        )
+    )
+
+    # Admin-area context — ring membership + Bezirk/Ortsteil polygon labels.
+    area_bits: list[str] = []
+    if detail.inside_ring is not None:
+        area_bits.append(
+            "inside the S-Bahn ring"
+            if detail.inside_ring
+            else "outside the S-Bahn ring"
+        )
+    if detail.listing_bezirk:
+        area_bits.append(f"Bezirk {detail.listing_bezirk}")
+    if detail.listing_ortsteil:
+        area_bits.append(f"Ortsteil {detail.listing_ortsteil}")
+    if area_bits:
+        parts.append("Location: " + ", ".join(area_bits))
+
     character_bits: list[str] = []
     if detail.noise and detail.noise.label:
-        character_bits.append(f"street noise: {detail.noise.label}")
+        noise_txt = f"noise: {detail.noise.label}"
+        if detail.noise.total_lnight is not None:
+            noise_txt += f" ({detail.noise.total_lnight:.0f} dB at night)"
+        character_bits.append(noise_txt)
     if detail.greenery and detail.greenery.label:
         character_bits.append(f"greenery: {detail.greenery.label}")
     if detail.density and detail.density.label:
         character_bits.append(f"density: {detail.density.label}")
-    if detail.mss and detail.mss.status:
-        mss_bits: list[str] = [detail.mss.status]
-        if detail.mss.dynamics:
-            mss_bits.append(detail.mss.dynamics)
-        character_bits.append(f"Sozialmonitoring: {' · '.join(mss_bits)}")
     if character_bits:
         parts.append("Neighbourhood character: " + ", ".join(character_bits))
 
@@ -315,6 +349,10 @@ def build_dynamic_state_prompt(state: SessionState) -> str:
     """
     view = LlmResultSetView(state)
     blocks: list[str] = [_current_state_block(view)]
+
+    facets_block = _result_facets_block(state.facets)
+    if facets_block is not None:
+        blocks.append(facets_block)
 
     focus_idx = _index_for_active(state)
     if focus_idx is not None and state.active_listing_detail is not None:
@@ -358,6 +396,60 @@ def _current_state_block(view: LlmResultSetView) -> str:
     return xml_block("current_state", "\n".join(lines))
 
 
+def _result_facets_block(facets: ResultFacets | None) -> str | None:
+    """Render `<result_facets>` — aggregate stats over the WHOLE result set.
+
+    The agent's whole-set summaries ("up to €1,950", "a mix of Prenzlauer Berg
+    and Wedding") must come from here, not from the top-N `preview_cards` it can
+    see. Returns None when there's nothing to ground a claim on, so the block is
+    omitted rather than emitted empty. Lives in the per-turn (uncached) layer.
+    """
+    if facets is None:
+        return None
+
+    lines: list[str] = []
+    price = _format_numeric_facet(facets.price_warm_eur, prefix="€")
+    if price:
+        lines.append(f"  price: {price}")
+    area = _format_numeric_facet(facets.area_sqm, suffix=" m²")
+    if area:
+        lines.append(f"  area: {area}")
+    if facets.districts:
+        top = facets.districts[:6]
+        rendered = ", ".join(f"{d.district} {d.count}" for d in top)
+        more = len(facets.districts) - len(top)
+        if more > 0:
+            rendered += f", +{more} more"
+        lines.append(f"  neighbourhoods (by Ortsteil): {rendered}")
+
+    if not lines:
+        return None
+    return xml_block("result_facets", "\n".join(lines))
+
+
+def _format_numeric_facet(
+    facet: NumericFacet | None, *, prefix: str = "", suffix: str = ""
+) -> str | None:
+    """Format a NumericFacet as "min–max (median X)", collapsing to a single
+    value when min == max. Returns None when the facet has no values."""
+    if facet is None or (
+        facet.min is None and facet.median is None and facet.max is None
+    ):
+        return None
+
+    def fmt(v: float | None) -> str | None:
+        return f"{prefix}{v:,.0f}{suffix}" if v is not None else None
+
+    lo, mid, hi = fmt(facet.min), fmt(facet.median), fmt(facet.max)
+    if lo is not None and hi is not None and lo == hi:
+        rng = lo  # whole set shares one value
+    elif lo is not None and hi is not None:
+        rng = f"{lo}–{hi}"
+    else:
+        rng = lo or hi or ""
+    return f"{rng} (median {mid})" if mid is not None else rng
+
+
 def _index_for_active(state: SessionState) -> int | None:
     """Map SessionState.active_id back to a 1-based index in the result set
     (the ordered `result_markers`)."""
@@ -390,8 +482,8 @@ def _format_card_prose(apt: ListingCard, idx: int) -> str:
         parts.append(f"{apt.nearest_transit_line} {apt.walk_min_to_transit}min")
     if apt.noise_label:
         parts.append(apt.noise_label)
-    if apt.mss_status_label:
-        parts.append(apt.mss_status_label)
+    if apt.inside_ring:
+        parts.append("inside ring")
     return f"  {idx}. " + " | ".join(parts)
 
 

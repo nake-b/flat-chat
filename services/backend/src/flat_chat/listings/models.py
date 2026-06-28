@@ -31,11 +31,14 @@ from geoalchemy2 import Geometry
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Column,
     Float,
     ForeignKey,
     Index,
     Integer,
+    MetaData,
     String,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -210,9 +213,15 @@ class ListingGeoContext(Base):
     nearest_park_name: Mapped[str | None] = mapped_column(Text)
     nearest_park_m: Mapped[int | None] = mapped_column(Integer)
     noise_total_lden: Mapped[float | None] = mapped_column(Float)
+    noise_total_lnight: Mapped[float | None] = mapped_column(Float)
     persons_per_hectare: Mapped[float | None] = mapped_column(Float)
-    mss_status: Mapped[str | None] = mapped_column(Text)
-    mss_dynamics: Mapped[str | None] = mapped_column(Text)
+
+    # Admin-area assignment (ST_Covers against ALKIS bezirke / ortsteile
+    # polygons) + the "inside the ring" (Umweltzone) flag. Populated by
+    # gold.enrich_admin_areas / enrich_inside_ring.
+    inside_ring: Mapped[bool | None] = mapped_column(Boolean)
+    listing_bezirk: Mapped[str | None] = mapped_column(Text)
+    listing_ortsteil: Mapped[str | None] = mapped_column(Text)
 
     # Scalar / field detail blobs — properties of the listing's location,
     # not POI sets. Frozen at gold-build time; one PK lookup feeds the
@@ -221,7 +230,6 @@ class ListingGeoContext(Base):
     noise_profile: Mapped[dict | None] = mapped_column(JSONB)
     greenery_profile: Mapped[dict | None] = mapped_column(JSONB)
     density_profile: Mapped[dict | None] = mapped_column(JSONB)
-    mss_profile: Mapped[dict | None] = mapped_column(JSONB)
     disabled_parking_count: Mapped[int | None] = mapped_column(Integer)
 
     # POI-set detail blobs (`transit_top3` / `schools_top3` / `parks_top2`
@@ -415,3 +423,85 @@ class ListingNearbyWater(Base):
     water_kind: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyKita(Base):
+    """Junction: listing × kita within R = 3 km (mirrors playgrounds)."""
+
+    __tablename__ = "listings_nearby_kitas"
+    __table_args__ = (
+        Index("ix_lnk_listing_distance", "listing_id", "distance_m"),
+        {"schema": "world"},
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    kita_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ListingNearbyLandmark(Base):
+    """Junction: listing × notable landmark within R = 2 km.
+
+    Powers the detail-panel "near the Siegessäule (300 m)" section.
+    `category` (monument / tower / bridge / stadium / attraction) is the
+    notable-class discriminator carried from the `landmarks` source table.
+    """
+
+    __tablename__ = "listings_nearby_landmarks"
+    __table_args__ = (
+        Index("ix_lnl_listing_distance", "listing_id", "distance_m"),
+        Index(
+            "ix_lnl_category",
+            "category",
+            postgresql_where=text("category IS NOT NULL"),
+        ),
+        {"schema": "world"},
+    )
+
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("world.listings.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    landmark_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    distance_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# =========================================================================
+# `world.named_places` — the locate_place gazetteer VIEW (ingestion-owned,
+# created in the 0007 migration as a UNION ALL over the named source
+# tables). The backend reads it SELECT-only.
+#
+# Mapped as a Core `Table` on a DEDICATED metadata — NOT `Base.metadata` —
+# for two reasons:
+#   1. It is a VIEW, not a base table; keeping it off `Base.metadata` means
+#      it never appears in `create_all`/`drop_all` and is excluded from the
+#      `world`-schema drift test (which checks base-table existence only).
+#   2. `PlaceService` only needs column handles to compose SELECTs; no ORM
+#      identity map / relationships are required.
+# The column set + opaque `place_ref` composition are owned by the view DDL
+# (see `services/ingestion/alembic/versions/0007_geo_context_v2.py`).
+# =========================================================================
+
+view_metadata = MetaData()
+
+named_places = Table(
+    "named_places",
+    view_metadata,
+    Column("kind", Text),
+    Column("src_id", Integer),
+    Column("place_ref", Text),
+    Column("name", Text),
+    Column("description", Text),
+    Column("geom", Geometry(srid=4326)),
+    schema="world",
+)
