@@ -512,6 +512,24 @@ class TransitRouteShape(Base):
     geom: Mapped[object] = mapped_column(Geometry("LINESTRING", srid=4326))
 
 
+class TransitStop(Base):
+    """One GTFS stop. Read-only, display-only — used to decorate a drawn transit
+    line with its served stations (dots + line badges on the overlay). The
+    line→stop link is the `lines_served` array (exact labels like `U8`/`S1`), so
+    a line's stations resolve with a direct array match — no spatial snap to the
+    centerline. Like the route tables, this is NOT the "near U8" search path
+    (that's `listings_nearby_transit`). We map a subset of columns; `modes_served`
+    is omitted (the drift test allows a subset)."""
+
+    __tablename__ = "transit_stops"
+    __table_args__ = {"schema": "world"}
+
+    stop_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    geom: Mapped[object] = mapped_column(Geometry("POINT", srid=4326))
+    lines_served: Mapped[list[str]] = mapped_column(ARRAY(Text))
+
+
 # =========================================================================
 # `world.named_places` — the locate_place gazetteer VIEW (ingestion-owned,
 # created in the 0007 migration as a UNION ALL over the named source

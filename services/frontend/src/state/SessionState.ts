@@ -312,6 +312,14 @@ export type OverlayKind =
   | "parks";
 export type OverlayOrigin = "search" | "pinned";
 
+// A labelled point decorating an overlay — currently a transit line's served
+// stations (rendered as dots + line badges). Mirror of context.py:OverlayPoint.
+export interface OverlayPoint {
+  label: string;
+  lon: number;
+  lat: number;
+}
+
 export interface MapOverlay {
   id: string;
   kind: OverlayKind;
@@ -320,6 +328,9 @@ export interface MapOverlay {
   // would also pass. The map layer reads `.type` to pick line vs fill.
   geojson: GeoJSON.Geometry;
   origin: OverlayOrigin;
+  // Optional decorations on the geometry — a transit line's stations; empty/
+  // absent for everything else. Optional so older state snapshots still parse.
+  points?: OverlayPoint[];
 }
 
 // ---------------------------------------------------------------------------

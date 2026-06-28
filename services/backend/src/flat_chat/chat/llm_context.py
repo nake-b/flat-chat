@@ -401,10 +401,15 @@ def _map_overlays_line(state: SessionState) -> str:
     """One line listing geometries currently drawn on the map, so the agent
     knows what's visible — and won't redraw something the user dismissed.
 
-    Empty when nothing is drawn. Lists each overlay as `label (kind)`."""
+    Empty when nothing is drawn. Lists each overlay as `label (kind, origin)`.
+    `origin` is `pinned` (stays until hidden/cleared) or `search` (redraws on the
+    next search) — so the agent can hide by label and knows a `search` overlay
+    needs the filter dropped, not just hidden, to stay gone."""
     if not state.map_overlays:
         return ""
-    drawn = ", ".join(f"{o.label} ({o.kind})" for o in state.map_overlays)
+    drawn = ", ".join(
+        f"{o.label} ({o.kind}, {o.origin})" for o in state.map_overlays
+    )
     return f"  <map_overlays>{drawn}</map_overlays>"
 
 

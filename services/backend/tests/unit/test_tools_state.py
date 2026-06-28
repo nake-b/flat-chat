@@ -413,7 +413,11 @@ def test_tools_are_importable():
 # ---------------------------------------------------------------------------
 
 
-from flat_chat.chat.tools import clear_map_overlays, show_on_map  # noqa: E402
+from flat_chat.chat.tools import (  # noqa: E402
+    clear_map_overlays,
+    hide_on_map,
+    show_on_map,
+)
 from flat_chat.listings.context import MapOverlay  # noqa: E402
 
 
@@ -462,7 +466,7 @@ def _line_overlay(line: str = "U7") -> MapOverlay:
 def test_show_on_map_requires_an_argument():
     state = SessionState()
     out = asyncio.run(show_on_map(_ctx(state)))
-    assert "Pass either" in out
+    assert "at least one" in out
     assert state.map_overlays == []
 
 
@@ -471,7 +475,7 @@ def test_show_on_map_pins_a_transit_line():
     transit = _StubTransitOverlay(_line_overlay("U7"))
     ctx = _ctx(state, transit=transit)
 
-    out = asyncio.run(show_on_map(ctx, transit_line="U7"))
+    out = asyncio.run(show_on_map(ctx, transit_lines=["U7"]))
 
     assert "U7" in out
     assert [o.id for o in state.map_overlays] == ["transit_line:U7"]
@@ -480,11 +484,62 @@ def test_show_on_map_pins_a_transit_line():
     assert transit.origins == ["pinned"]
 
 
+def test_show_on_map_draws_multiple_lines_in_one_call():
+    # Batch draw: one atomic call resolves + pins every line (no parallel-call
+    # race on shared state). The stub echoes whatever line it's asked for.
+    class _MultiTransit:
+        def __init__(self):
+            self.origins = []
+
+        async def route_geometry(self, line, *, origin="search"):
+            self.origins.append(origin)
+            return _line_overlay(line).model_copy(update={"origin": origin})
+
+    state = SessionState()
+    ctx = _ctx(state, transit=_MultiTransit())
+    out = asyncio.run(show_on_map(ctx, transit_lines=["U8", "U9"]))
+
+    assert "U8" in out and "U9" in out
+    assert [o.id for o in state.map_overlays] == [
+        "transit_line:U8",
+        "transit_line:U9",
+    ]
+
+
 def test_show_on_map_missing_geometry_reports_and_draws_nothing():
     state = SessionState()
     ctx = _ctx(state, transit=_StubTransitOverlay(None))
-    out = asyncio.run(show_on_map(ctx, transit_line="X99"))
+    out = asyncio.run(show_on_map(ctx, transit_lines=["X99"]))
     assert "Couldn't find" in out
+    assert state.map_overlays == []
+
+
+def test_hide_on_map_removes_by_label_and_id():
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U8"), _line_overlay("U9"), _place_overlay()]
+    # mix a label ("U8") and an id ("transit_line:U9") — both should match.
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["U8", "transit_line:U9"]))
+    assert "U8" in out and "U9" in out
+    assert [o.id for o in state.map_overlays] == ["place:park:7"]
+
+
+def test_hide_on_map_not_drawn_is_a_no_op_message():
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U8")]
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["S7"]))
+    assert "Nothing matching" in out
+    # untouched
+    assert [o.id for o in state.map_overlays] == ["transit_line:U8"]
+
+
+def test_hide_on_map_hints_when_overlay_is_an_active_search_filter():
+    state = SessionState()
+    u8 = _line_overlay("U8")
+    u8.origin = "search"  # tied to a live filter
+    state.map_overlays = [u8]
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["U8"]))
+    assert "Removed U8" in out
+    assert "drop that filter" in out
     assert state.map_overlays == []
 
 

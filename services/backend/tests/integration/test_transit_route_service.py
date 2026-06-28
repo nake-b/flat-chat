@@ -66,6 +66,70 @@ async def _seed_line(session: AsyncSession, *, route_id: str, short_name: str, w
         )
 
 
+async def _seed_stop(
+    session: AsyncSession, *, stop_id: str, name: str, lon: float, lat: float, lines
+):
+    """Insert a transit stop served by `lines` (the line→stop link is the array)."""
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO world.transit_stops (stop_id, name, geom, modes_served, lines_served)
+            VALUES (:sid, :name, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), '{1}', :lines)
+            """
+        ),
+        {"sid": stop_id, "name": name, "lon": lon, "lat": lat, "lines": lines},
+    )
+
+
+def test_route_geometry_attaches_served_stations(async_db_url):
+    """Stations served by the line ride along as `points`; stops on OTHER lines
+    are excluded, and coordinates are rounded to the overlay precision."""
+
+    async def body(session: AsyncSession):
+        await _seed_line(
+            session,
+            route_id="r-u7",
+            short_name="U7",
+            wkts=["LINESTRING(13.30 52.50, 13.40 52.48)"],
+        )
+        await _seed_stop(
+            session, stop_id="s1", name="Rathaus Steglitz", lon=13.321234, lat=52.456789, lines=["U7", "S1"]
+        )
+        await _seed_stop(
+            session, stop_id="s2", name="Mehringdamm", lon=13.387, lat=52.493, lines=["U7"]
+        )
+        await _seed_stop(
+            session, stop_id="s3", name="Elsewhere", lon=13.50, lat=52.40, lines=["U2"]
+        )
+        return await TransitRouteService(session).route_geometry("U7")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    names = {p.label for p in overlay.points}
+    assert names == {"Rathaus Steglitz", "Mehringdamm"}  # the U2-only stop excluded
+    steglitz = next(p for p in overlay.points if p.label == "Rathaus Steglitz")
+    # Coordinates rounded to OVERLAY_COORD_DIGITS (5).
+    assert steglitz.lon == 13.32123
+    assert steglitz.lat == 52.45679
+
+
+def test_route_geometry_no_stations_is_empty_points(async_db_url):
+    """A line with no mapped stops still draws — `points` is just empty."""
+
+    async def body(session: AsyncSession):
+        await _seed_line(
+            session,
+            route_id="r-bus",
+            short_name="M41",
+            wkts=["LINESTRING(13.30 52.50, 13.35 52.49)"],
+        )
+        return await TransitRouteService(session).route_geometry("M41")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.points == []
+
+
 def test_route_geometry_returns_line_geojson(async_db_url):
     async def body(session: AsyncSession):
         await _seed_line(

@@ -31,8 +31,9 @@ from flat_chat.listings.context import (
     OVERLAY_SIMPLIFY_TOLERANCE,
     MapOverlay,
     OverlayOrigin,
+    OverlayPoint,
 )
-from flat_chat.listings.models import TransitRoute, TransitRouteShape
+from flat_chat.listings.models import TransitRoute, TransitRouteShape, TransitStop
 
 logger = logging.getLogger(__name__)
 
@@ -84,4 +85,29 @@ class TransitRouteService:
             label=label,
             geojson=json.loads(row.geojson),
             origin=origin,
+            points=await self._stations(label),
         )
+
+    async def _stations(self, label: str) -> list[OverlayPoint]:
+        """Stations served by line `label`, as labelled points for the overlay.
+
+        The link is the stop's `lines_served` array (exact labels), so a direct
+        membership test finds them — no spatial snap to the centerline. Returns
+        `[]` when the line has no stops mapped (e.g. a bus shape); the frontend
+        then draws the bare line. Coordinates are rounded to the same precision
+        as the line geometry to keep the state snapshot small.
+        """
+        stmt = select(
+            TransitStop.name.label("name"),
+            geo_func.ST_X(TransitStop.geom).label("lon"),
+            geo_func.ST_Y(TransitStop.geom).label("lat"),
+        ).where(func.array_position(TransitStop.lines_served, label).is_not(None))
+        rows = (await self.db.execute(stmt)).all()
+        return [
+            OverlayPoint(
+                label=r.name,
+                lon=round(r.lon, OVERLAY_COORD_DIGITS),
+                lat=round(r.lat, OVERLAY_COORD_DIGITS),
+            )
+            for r in rows
+        ]

@@ -190,6 +190,18 @@ OVERLAY_CLUSTER_RADIUS_M = 500
 OVERLAY_SNAP_RADIUS_M = 150
 
 
+class OverlayPoint(BaseModel):
+    """A labelled point that decorates an overlay — e.g. a transit line's
+    stations. Semantics only (name + position); the frontend decides how to
+    draw it (dot + pulse), same division of labour as `MapOverlay` itself.
+    Coordinates are rounded to `OVERLAY_COORD_DIGITS` to keep the state snapshot
+    small (a 24-stop line is ~24 points)."""
+
+    label: str
+    lon: float
+    lat: float
+
+
 class MapOverlay(BaseModel):
     """One geometry drawn on the map, mirrored to the frontend via SessionState.
 
@@ -202,6 +214,9 @@ class MapOverlay(BaseModel):
         agent draw) and PERSIST across searches until removed/dismissed.
     `geojson` is a GeoJSON geometry or Feature — source-agnostic (a
     `named_places` shape or a transit route shape look identical here).
+    `points` are optional decorations on the geometry — currently the served
+    stations of a transit line (the frontend draws them as dots + line badges);
+    empty for everything else.
     """
 
     id: str
@@ -209,6 +224,7 @@ class MapOverlay(BaseModel):
     label: str
     geojson: dict
     origin: OverlayOrigin = "search"
+    points: list[OverlayPoint] = []
 
 
 # ---------------------------------------------------------------------------
