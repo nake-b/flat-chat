@@ -20,6 +20,7 @@ search uses the full geometry, not the centroid.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from geoalchemy2 import functions as geo_func
 from sqlalchemy import func, select
@@ -35,29 +36,18 @@ logger = logging.getLogger(__name__)
 LOCATE_LIMIT = 5
 
 
+@dataclass(slots=True, kw_only=True)
 class PlaceCandidate:
-    """One gazetteer hit. Plain dataclass-style container (not a Pydantic
-    model) — it's only ever formatted into prose by `locate_place`, never
-    serialized to the frontend."""
+    """One gazetteer hit. Plain stdlib dataclass (not a Pydantic model) — it's
+    only ever formatted into prose by `locate_place`, never serialized to the
+    frontend."""
 
-    __slots__ = ("place_ref", "kind", "name", "description", "lat", "lon")
-
-    def __init__(
-        self,
-        *,
-        place_ref: str,
-        kind: str,
-        name: str | None,
-        description: str | None,
-        lat: float | None,
-        lon: float | None,
-    ) -> None:
-        self.place_ref = place_ref
-        self.kind = kind
-        self.name = name
-        self.description = description
-        self.lat = lat
-        self.lon = lon
+    place_ref: str
+    kind: str
+    name: str | None
+    description: str | None
+    lat: float | None
+    lon: float | None
 
 
 class PlaceService:
