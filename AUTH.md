@@ -14,18 +14,25 @@ Companion decision doc: [`agent-compound-docs/decisions/session-persistence.md`]
   which is broken on Python 3.13+). Wired in `services/backend/src/flat_chat/users/auth.py`.
 - **Transport:** a single httpOnly, SameSite=Lax **cookie** carrying a JWT signed
   with `JWT_SECRET`. Same-origin (nginx / Vite proxy), so the browser sends it
-  automatically. `cookie_secure=False` for the HTTP MVP — flip to True behind HTTPS.
-- **Routes** (all under `/api/auth`, mounted in `main.py`): `register`, `login`,
-  `logout`, and the user routes (`/me`). Nginx proxies `/api/auth`.
+  automatically. The cookie `Secure` attribute is **config-driven** —
+  `COOKIE_SECURE=false` for the local HTTP MVP, `true` for any HTTPS deploy
+  (`Secure` governs the browser↔nginx leg, so set it `true` even though nginx may
+  talk plain HTTP to the backend; nginx already forwards `X-Forwarded-Proto`).
+- **Routes** (all under `/api/auth`, mounted in `main.py`): `login`, `logout`, and
+  the user routes (`/me`). **No public registration** — the register router is
+  deliberately not mounted (see Hardening below). Nginx proxies `/api/auth`.
 - **The identity seam is unchanged in shape.** `get_user_id()` in
   `core/dependencies.py` still returns a `str` user id and every route still
   depends on `Depends(get_user_id)` — but it now resolves the authenticated
   fastapi-users `current_active_user` from the cookie (401 when absent) instead of
   returning a constant. One function changed; no call sites did.
-- **Dev login.** `python -m flat_chat.users.seed` idempotently creates a real,
-  login-able user from `DEV_USER_EMAIL` / `DEV_USER_PASSWORD` (defaults
-  `dev@flat-chat.dev` / `dev`). This is the credential handed to reviewers. It is
-  a dev script, **not** a migration (migrations stay pure-schema).
+- **Accounts are seed-only.** `python -m flat_chat.users.seed` is the ONLY way
+  users are created (no public signup). It idempotently creates the admin
+  (`DEV_USER_EMAIL` / `DEV_USER_PASSWORD`, defaults `dev@flat-chat.dev` / `dev`,
+  `is_superuser`) and, when both `PROF_USER_EMAIL` / `PROF_USER_PASSWORD` are set,
+  a regular reviewer account. A dev script, **not** a migration (migrations stay
+  pure-schema). To add a user later: set env + re-run the seed, or create one via
+  the `UserManager` in a one-off script.
 - **Frontend.** A `LoginGate` wraps the app: it checks the session once, shows a
   login form when anonymous, and only mounts the conversation bring-up once
   authenticated. Sign-out lives in the chat header. See
@@ -101,6 +108,30 @@ gates `session.user_id == user_id`, raising `SessionNotFoundError` → **404 (no
 403)** on a mismatch so existence doesn't leak. Covered by
 `test_dispatch_history.py::test_foreign_session_is_rejected_before_run` and the
 REST equivalent `test_conversations_api.py::test_foreign_conversation_is_404_not_403`.
+
+## Hardening status & backlog
+
+Done:
+- **Public registration closed** — no `/api/auth/register`; accounts are seed-only,
+  so there's no signup endpoint to spam or enumerate.
+- **`cookie_secure` is config-driven** — set `COOKIE_SECURE=true` in prod (HTTPS);
+  the session cookie then never travels in cleartext.
+
+Deferred (tracked, not yet built):
+- **Login rate limiting / lockout (deferred by decision).** fastapi-users ships
+  none — `/api/auth/login` is brute-forceable. Before any non-trivial exposure, add
+  throttling: nginx `limit_req` on `/api/auth/login`, or `slowapi`, or a
+  failed-attempt counter in `UserManager.on_after_login`. Pairs with a strong (not
+  `dev`) password.
+- **Token revocation → switch to a server-side strategy.** Today the session is a
+  **stateless JWT** (`JWTStrategy`): logout only deletes the client cookie, and a
+  stolen token stays valid until expiry (no server-side kill switch). The fix is
+  fastapi-users' **`DatabaseStrategy`** — store access tokens in an `app.*` table
+  (one model + adapter + migration), swap `get_jwt_strategy` for the DB strategy.
+  Then logout truly invalidates, and "log out everywhere" = delete that user's
+  token rows. Cost is one indexed lookup per request — negligible, since we already
+  load `current_user` from the DB each request. Adopt when session control matters
+  (shared deployment, real accounts).
 
 ## Operational notes
 

@@ -15,7 +15,6 @@ from flat_chat.core.observability import (
     shutdown_observability,
 )
 from flat_chat.users.auth import (
-    UserCreate,
     UserRead,
     UserUpdate,
     auth_backend,
@@ -38,15 +37,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="flat-chat API", lifespan=lifespan)
 
-# Auth (fastapi-users) — all under /api/auth: login/logout (cookie), register,
-# and the user routes (/me). `get_user_id()` reads the cookie these set.
+# Auth (fastapi-users) — login/logout (cookie) + the user routes (/me), all under
+# /api/auth. `get_user_id()` reads the cookie these set. There is deliberately NO
+# register router: accounts are provisioned only by `python -m flat_chat.users.seed`
+# (no public signup — see AUTH.md). Re-add `get_register_router` (ideally gated)
+# if self-service signup is ever wanted.
 app.include_router(
     fastapi_users.get_auth_router(auth_backend),
-    prefix="/api/auth",
-    tags=["auth"],
-)
-app.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
     prefix="/api/auth",
     tags=["auth"],
 )

@@ -45,8 +45,7 @@ green `just check` means green CI.
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
 | `/api/auth/login` · `/logout`             | POST   | fastapi-users cookie auth (login is an OAuth2 password form). Sets/clears the httpOnly session cookie       |
-| `/api/auth/register`                      | POST   | Create an account (email + password, Argon2-hashed)                                                        |
-| `/api/auth/me`                            | GET    | Current authenticated user                                                                                 |
+| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only, see AUTH.md)                  |
 | `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`. Auth required  |
 | `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only, ownership-checked)                     |
 | `/api/conversations/{id}/state`           | GET    | Latest `SessionState` snapshot — the reload-recovery primitive (map/cards/active listing), ownership-checked |
@@ -145,8 +144,11 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `LOG_LEVEL`                | Log level for the `flat_chat` namespace (DEBUG / INFO / WARNING / ERROR). Third-party loggers stay at WARNING.         | `INFO`                             |
 | `JWT_SECRET`               | Signs the fastapi-users login cookie. **Required** (no insecure default ships). `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Rotating it logs everyone out. | — (required)                       |
 | `JWT_LIFETIME_SECONDS`     | Login cookie lifetime                                                                                                  | `604800` (7 days)                  |
-| `DEV_USER_EMAIL`           | Seeded dev login email (`python -m flat_chat.users.seed`)                                                              | `dev@flat-chat.dev`              |
-| `DEV_USER_PASSWORD`        | Seeded dev login password — override in any non-local deployment                                                       | `dev`                              |
+| `COOKIE_SECURE`            | Login cookie `Secure` attribute — `false` for local HTTP, `true` for HTTPS deploys                                     | `false`                            |
+| `DEV_USER_EMAIL`           | Seeded admin login email (`python -m flat_chat.users.seed`)                                                            | `dev@flat-chat.dev`                |
+| `DEV_USER_PASSWORD`        | Seeded admin login password — override in any non-local deployment                                                     | `dev`                              |
+| `PROF_USER_EMAIL`          | Optional reviewer login (regular user) — seeded only when both prof vars are set                                       | — (empty)                          |
+| `PROF_USER_PASSWORD`       | Optional reviewer login password                                                                                       | — (empty)                          |
 
 ## Debugging
 

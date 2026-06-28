@@ -34,10 +34,19 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(...)
     jwt_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days — generous for the MVP
 
-    # Seeded dev user (created by `python -m flat_chat.users.seed`). The login
-    # handed to reviewers; override both in any non-local deployment.
+    # Login cookie `Secure` attribute. FALSE for the local HTTP MVP; set TRUE in
+    # any HTTPS deployment (the browser↔nginx leg is what matters — nginx may
+    # still talk plain HTTP to the backend). See AUTH.md.
+    cookie_secure: bool = False
+
+    # Seeded accounts (created by `python -m flat_chat.users.seed`). There is NO
+    # public registration — users exist only via this script. The dev account is
+    # an admin (superuser); the optional professor account is a regular user and
+    # is only created when BOTH prof vars are set. Override in any deployment.
     dev_user_email: str = "dev@flat-chat.dev"
     dev_user_password: str = "dev"
+    prof_user_email: str = ""
+    prof_user_password: str = ""
 
     phoenix_enabled: bool = False
     phoenix_endpoint: str = "http://localhost:6006/v1/traces"

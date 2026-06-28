@@ -81,7 +81,7 @@ cookie_transport = CookieTransport(
     cookie_max_age=settings.jwt_lifetime_seconds,
     cookie_httponly=True,
     cookie_samesite="lax",
-    cookie_secure=False,  # MVP is served over HTTP; True behind HTTPS.
+    cookie_secure=settings.cookie_secure,  # False for local HTTP; True over HTTPS.
 )
 
 

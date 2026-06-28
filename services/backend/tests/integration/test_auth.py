@@ -1,14 +1,16 @@
 """HTTP integration tests for the fastapi-users auth flow.
 
-  POST /api/auth/register  — create an account (hashed password)
   POST /api/auth/login     — set the session cookie (OAuth2 form: username+password)
   GET  /api/auth/me        — current user (cookie-authed)
   + protected app routes 401 without the cookie, 200 with it.
+  + public registration is CLOSED (no /api/auth/register route).
 
-Mirrors test_conversations_api: one async engine + transaction rolled back on
-exit. Both `get_async_db` (used by the auth routes) and the session store are
-bound to that single connection via savepoints so every write — including the
-registered user — disappears at the end. Gated on ``TEST_DATABASE_URL``.
+There is no public registration, so the login test creates its user the same way
+production does — through the fastapi-users `UserManager` (Argon2-hashed), on the
+test's own connection. Mirrors test_conversations_api: one async engine +
+transaction rolled back on exit; both `get_async_db` (used by the auth routes) and
+the session store are bound to that connection via savepoints. Gated on
+``TEST_DATABASE_URL``.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -23,6 +26,8 @@ from flat_chat.chat.sessions import DbSessionStore
 from flat_chat.core.database import get_async_db
 from flat_chat.core.dependencies import get_session_store
 from flat_chat.main import app
+from flat_chat.users.auth import UserCreate, UserManager
+from flat_chat.users.models import User
 
 from ..conftest import DB_REQUIRED
 
@@ -57,7 +62,7 @@ async def _run(async_url, body):
                     async with httpx.AsyncClient(
                         transport=transport, base_url="http://test"
                     ) as client:
-                        return await body(client)
+                        return await body(client, factory)
                 finally:
                     app.dependency_overrides.pop(get_async_db, None)
                     app.dependency_overrides.pop(get_session_store, None)
@@ -71,22 +76,30 @@ def drive(async_url, body):
     return asyncio.run(_run(async_url, body))
 
 
-async def _register_and_login(client: httpx.AsyncClient) -> httpx.Response:
-    reg = await client.post(
-        "/api/auth/register", json={"email": EMAIL, "password": PASSWORD}
-    )
-    assert reg.status_code == 201, reg.text
+async def _create_user(factory, email: str, password: str) -> None:
+    """Provision a real, login-able user via the UserManager (Argon2 hash).
+
+    This is the production path (no public registration), bound to the test's
+    connection so it rolls back. Commits internally — visible to later requests on
+    the same connection.
+    """
+    async with factory() as session:
+        manager = UserManager(SQLAlchemyUserDatabase(session, User))
+        await manager.create(UserCreate(email=email, password=password))
+
+
+async def _login(client: httpx.AsyncClient, email: str, password: str):
     # fastapi-users login is an OAuth2 password form: username + password.
     return await client.post(
-        "/api/auth/login", data={"username": EMAIL, "password": PASSWORD}
+        "/api/auth/login", data={"username": email, "password": password}
     )
 
 
-def test_register_login_me_roundtrip(async_db_url):
-    async def body(client):
-        login = await _register_and_login(client)
-        # Cookie transport → 204 No Content + Set-Cookie; the client jar keeps it.
-        me = await client.get("/api/auth/me")
+def test_login_me_roundtrip(async_db_url):
+    async def body(client, factory):
+        await _create_user(factory, EMAIL, PASSWORD)
+        login = await _login(client, EMAIL, PASSWORD)
+        me = await client.get("/api/auth/me")  # client jar carries the cookie
         return login, me
 
     login, me = drive(async_db_url, body)
@@ -97,7 +110,7 @@ def test_register_login_me_roundtrip(async_db_url):
 
 
 def test_me_requires_cookie(async_db_url):
-    async def body(client):
+    async def body(client, factory):
         return await client.get("/api/auth/me")
 
     resp = drive(async_db_url, body)
@@ -105,13 +118,9 @@ def test_me_requires_cookie(async_db_url):
 
 
 def test_wrong_password_does_not_authenticate(async_db_url):
-    async def body(client):
-        await client.post(
-            "/api/auth/register", json={"email": EMAIL, "password": PASSWORD}
-        )
-        bad = await client.post(
-            "/api/auth/login", data={"username": EMAIL, "password": "wrong"}
-        )
+    async def body(client, factory):
+        await _create_user(factory, EMAIL, PASSWORD)
+        bad = await _login(client, EMAIL, "wrong")
         me = await client.get("/api/auth/me")
         return bad, me
 
@@ -123,9 +132,10 @@ def test_wrong_password_does_not_authenticate(async_db_url):
 def test_protected_app_route_gated_by_auth(async_db_url):
     """POST /api/conversations is 401 without auth, 200 once logged in."""
 
-    async def body(client):
+    async def body(client, factory):
         anon = await client.post("/api/conversations")
-        await _register_and_login(client)
+        await _create_user(factory, EMAIL, PASSWORD)
+        await _login(client, EMAIL, PASSWORD)
         authed = await client.post("/api/conversations")
         return anon, authed
 
@@ -133,3 +143,18 @@ def test_protected_app_route_gated_by_auth(async_db_url):
     assert anon.status_code == 401
     assert authed.status_code == 200
     assert authed.json()["id"]
+
+
+def test_public_registration_is_closed(async_db_url):
+    """No register router is mounted — signup is seed-only (see AUTH.md)."""
+
+    async def body(client, factory):
+        return await client.post(
+            "/api/auth/register", json={"email": EMAIL, "password": PASSWORD}
+        )
+
+    resp = drive(async_db_url, body)
+    # No register route is mounted. 404 (no path) or 405 (the /{id} users route
+    # claims the path for GET/PATCH/DELETE, so POST has no handler) — either way
+    # there is no way to self-register.
+    assert resp.status_code in (404, 405)
