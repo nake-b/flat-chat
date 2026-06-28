@@ -56,7 +56,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "external_object_id": dump.get("externalId") or dump.get("scrapedAdId"),
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
-
         "title": dump.get("title"),
         "headline": None,
         "description": dump.get("description"),
@@ -65,27 +64,27 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "bathrooms": parse_int_str(details.get("badezimmer")),
         "area_sqm": parse_sqm(details.get("wohnflaeche")),
         "apartment_type": details.get("wohnungstyp"),
-
         "cold_rent_eur": price.get("coldRentEur") or price.get("kaltmieteEur"),
         "warm_rent_eur": price.get("warmmieteEur"),
         "nebenkosten_eur": price.get("nebenkostenEur"),
         "rent_gross_eur": price.get("warmmieteEur"),
         "kaution_eur": price.get("kautionEur"),
-
         "address": dump.get("locality"),
         "postal_code": postal,
         "district": district,
         "city": "Berlin",
         # Validated through clean_berlin_coords so 0/0 and out-of-Berlin
         # sentinels become NULL instead of polluting geo-context queries.
-        **dict(zip(
-            ("latitude", "longitude"),
-            clean_berlin_coords(
-                geo.get("lat") if geo else None,
-                geo.get("lng") if geo else None,
-            ),
-        )),
-
+        **dict(
+            zip(
+                ("latitude", "longitude"),
+                clean_berlin_coords(
+                    geo.get("lat") if geo else None,
+                    geo.get("lng") if geo else None,
+                ),
+                strict=True,
+            )
+        ),
         "floor": parse_int_str(details.get("etage")),
         "floors_total": None,
         "construction_year": None,
@@ -93,13 +92,11 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "available_until": None,
         "min_stay_months": None,
         "max_stay_months": None,
-
         "heating": None,
         "main_energy_source": None,
         "energy_consumption_kwh": None,
         "final_energy_value_kwh": None,
         "energy_pass_type": None,
-
         "is_furnished": amenity_match(features, "möbliert", "moebliert"),
         "has_kitchen": amenity_match(features, "Einbauküche", "Pantryküche"),
         "has_bathroom": amenity_match(features, "Dusche", "Badewanne"),
@@ -109,11 +106,9 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "has_garden": amenity_match(features, "Garten"),
         "has_basement": amenity_match(features, "Keller"),
         "wbs_required": amenity_match(features, "WBS", "Wohnberechtigungsschein"),
-
         "lister_type": map_lister_type(seller.get("type")) if seller else None,
         "company_name": None,
         "company_website": None,
-
         "features": features,
         "images": _images(dump.get("images")),
         "key_facts": None,

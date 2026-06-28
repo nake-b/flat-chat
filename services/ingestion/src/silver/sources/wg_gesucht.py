@@ -61,7 +61,13 @@ def _floor_from_amenities(labels: list[str]) -> int | None:
 
 def _apartment_type_from_amenities(labels: list[str]) -> str | None:
     """Prefer the building-era descriptor (Altbau/Neubau/sanierter Altbau)."""
-    for needle in ("Sanierter Altbau", "sanierter Altbau", "Altbau", "Neubau", "Dachgeschoss"):
+    for needle in (
+        "Sanierter Altbau",
+        "sanierter Altbau",
+        "Altbau",
+        "Neubau",
+        "Dachgeschoss",
+    ):
         m = find_amenity(labels, needle)
         if m:
             return m
@@ -69,7 +75,15 @@ def _apartment_type_from_amenities(labels: list[str]) -> str | None:
 
 
 def _heating_from_amenities(labels: list[str]) -> str | None:
-    for needle in ("Zentralheizung", "Gasheizung", "Fernwärme", "Ölheizung", "Ofenheizung", "Fußbodenheizung", "Etagenheizung"):
+    for needle in (
+        "Zentralheizung",
+        "Gasheizung",
+        "Fernwärme",
+        "Ölheizung",
+        "Ofenheizung",
+        "Fußbodenheizung",
+        "Etagenheizung",
+    ):
         m = find_amenity(labels, needle)
         if m:
             return m
@@ -79,7 +93,11 @@ def _heating_from_amenities(labels: list[str]) -> str | None:
 def _energy_fields(labels: list[str]) -> dict:
     """Find the energy-pass amenity (the long comma-separated one) and parse it."""
     for label in labels:
-        if "Energieeffizienzklasse" in label or "Bedarfsausweis" in label or "Verbrauchsausweis" in label:
+        if (
+            "Energieeffizienzklasse" in label
+            or "Bedarfsausweis" in label
+            or "Verbrauchsausweis" in label
+        ):
             return parse_energy_label(label)
     return {}
 
@@ -105,7 +123,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "external_object_id": dump.get("externalId") or dump.get("scrapedAdId"),
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
-
         "title": dump.get("title"),
         "headline": None,
         "description": _description(dump.get("descriptions")),
@@ -117,27 +134,27 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "bathrooms": None,
         "area_sqm": float(dump["areaSqm"]) if dump.get("areaSqm") is not None else None,
         "apartment_type": _apartment_type_from_amenities(amenity_labels),
-
         "cold_rent_eur": price.get("kaltmieteEur"),
         "warm_rent_eur": price.get("warmmieteEur"),
         "nebenkosten_eur": price.get("nebenkostenEur"),
         "rent_gross_eur": price.get("warmmieteEur"),
         "kaution_eur": price.get("kautionEur"),
-
         "address": address.get("raw") or address.get("street"),
         "postal_code": address.get("postalCode"),
         "district": address.get("district"),
         "city": address.get("city"),
         # Validated through clean_berlin_coords so 0/0 and out-of-Berlin
         # sentinels become NULL instead of polluting geo-context queries.
-        **dict(zip(
-            ("latitude", "longitude"),
-            clean_berlin_coords(
-                geo.get("lat") if geo else None,
-                geo.get("lng") if geo else None,
-            ),
-        )),
-
+        **dict(
+            zip(
+                ("latitude", "longitude"),
+                clean_berlin_coords(
+                    geo.get("lat") if geo else None,
+                    geo.get("lng") if geo else None,
+                ),
+                strict=True,
+            )
+        ),
         "floor": _floor_from_amenities(amenity_labels),
         "floors_total": None,
         "construction_year": energy.get("construction_year"),
@@ -145,27 +162,27 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "available_until": parse_german_date(avail.get("until")),
         "min_stay_months": avail.get("minStayMonths"),
         "max_stay_months": avail.get("maxStayMonths"),
-
         "heating": _heating_from_amenities(amenity_labels),
         "main_energy_source": energy.get("main_energy_source"),
         "energy_consumption_kwh": energy.get("energy_consumption_kwh"),
         "final_energy_value_kwh": None,
         "energy_pass_type": energy.get("energy_pass_type"),
-
         "is_furnished": amenity_match(amenity_labels, "möbliert", "moebliert"),
-        "has_kitchen": amenity_match(amenity_labels, "Eigene Küche", "Kochnische", "Einbauküche"),
-        "has_bathroom": amenity_match(amenity_labels, "Eigenes Bad", "Dusche", "Badewanne"),
+        "has_kitchen": amenity_match(
+            amenity_labels, "Eigene Küche", "Kochnische", "Einbauküche"
+        ),
+        "has_bathroom": amenity_match(
+            amenity_labels, "Eigenes Bad", "Dusche", "Badewanne"
+        ),
         "has_elevator": amenity_match(amenity_labels, "Aufzug"),
         "has_balcony": amenity_match(amenity_labels, "Balkon"),
         "has_terrace": amenity_match(amenity_labels, "Terrasse"),
         "has_garden": amenity_match(amenity_labels, "Garten"),
         "has_basement": amenity_match(amenity_labels, "Keller", "Fahrradkeller"),
         "wbs_required": amenity_match(amenity_labels, "WBS", "Wohnberechtigungsschein"),
-
         "lister_type": map_lister_type(lister.get("type")),
         "company_name": None,
         "company_website": None,
-
         "features": amenity_labels,
         "images": _images(dump.get("images")),
         "key_facts": dump.get("keyFacts"),

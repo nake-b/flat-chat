@@ -60,7 +60,6 @@ from flat_chat.listings.thresholds import (
 
 from .geo_filters import (
     HospitalFilter,
-    KitaFilter,
     SchoolFilter,
     TransitFilter,
 )
@@ -370,15 +369,16 @@ class SearchService:
                     .where(np.kind == kind, np.src_id == src_id)
                     .scalar_subquery()
                 )
-                # No `type_=bool`: passing the Python `bool` builtin breaks
-                # SQLAlchemy's cache-key traversal for ST_DWithin (it expects a
-                # TypeEngine, not a type). ST_DWithin already returns a boolean
-                # predicate, so the cast is unnecessary here.
+                # `type_=Boolean` (the SQLAlchemy TypeEngine, NOT the Python
+                # `bool` builtin — that one breaks cache-key traversal) so this
+                # predicate is cacheable, matching the near_lat/near_lon
+                # ST_DWithin above (see the proximity-caching fix on main).
                 stmt = stmt.where(
                     geo_func.ST_DWithin(
                         cast(Listing.location, Geography),
                         cast(geom_subq, Geography),
                         radius_m,
+                        type_=Boolean,
                     )
                 )
 
@@ -412,7 +412,11 @@ class SearchService:
             stmt = self._apply_hospital_filter(stmt, params.hospital)
 
         if params.kita is not None:
-            stmt = self._apply_kita_filter(stmt, params.kita)
+            # Kitas carry no sub-type — pure proximity, same shape as
+            # near_park / near_playground / near_water.
+            stmt = self._apply_proximity_filter(
+                stmt, params.kita.distance, ListingNearbyKita
+            )
 
         if params.near_park is not None:
             # Cemeteries are excluded from listings_nearby_parks at ETL time.
@@ -549,22 +553,6 @@ class SearchService:
         if f.tier == "plan_hospital":
             subq = subq.where(nbr.tier == "plan_hospital")
         # f.tier == "any" → no tier predicate
-        return stmt.where(subq.exists())
-
-    def _apply_kita_filter(self, stmt: Select, f: KitaFilter) -> Select:
-        """EXISTS-any against `listings_nearby_kitas`.
-
-        Kitas carry no sub-type, so this is a pure proximity filter — but it
-        gets its own method (rather than `_apply_proximity_filter`) to keep
-        symmetry with the typed-filter family and leave room for a future
-        attribute (operator type, capacity) without reshaping the call site.
-        """
-        nbr = ListingNearbyKita
-        max_m = resolve_near_spec(f.distance)
-        subq = select(nbr.listing_id).where(
-            nbr.listing_id == Listing.id,
-            nbr.distance_m <= max_m,
-        )
         return stmt.where(subq.exists())
 
     def _apply_proximity_filter(self, stmt: Select, spec, model) -> Select:

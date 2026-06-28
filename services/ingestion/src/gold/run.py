@@ -32,8 +32,9 @@ import logging
 import sys
 import traceback
 
-from db import engine
 from sqlalchemy import text
+
+from db import engine
 
 from . import enrich_listings as gold
 
@@ -106,8 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     ok, empty_tables = _check_prerequisites()
     if not ok:
         logger.error(
-            "Cannot run gold: required `listings` table is empty. "
-            "Run silver.run first."
+            "Cannot run gold: required `listings` table is empty. Run silver.run first."
         )
         return 1
 

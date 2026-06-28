@@ -13,7 +13,7 @@ from shapely.geometry import Point
 
 from geo_context.transform.wfs import transform_wfs_layer
 
-_ALKIS_KEY = ("alkis_gebaeude", "alkis_gebaeude:gebaeudebauwerk")
+_ALKIS_KEY = ("alkis_gebaeude", "alkis_gebaeude:gebaeude")
 
 
 def _alkis_frame() -> gpd.GeoDataFrame:
@@ -60,3 +60,40 @@ def test_unaliased_columns_are_dropped() -> None:
     )
     assert "junk_col" not in out.columns
     assert "nam" not in out.columns  # renamed to `name`
+
+
+def _alkis_generic_frame() -> gpd.GeoDataFrame:
+    # Mix of generic-function names (dropped), a pattern hit ("Haus 7"), and
+    # specific proper-noun names that merely CONTAIN a generic word (kept).
+    names = [
+        "Kindertagesstätte",  # exact generic → drop
+        "Sporthalle",  # exact generic → drop
+        "KITA",  # case-insensitive generic → drop
+        "Haus 7",  # pattern → drop
+        "Kindertagesstätte Sonnenschein",  # specific → keep
+        "Technische Universität Berlin",  # proper noun → keep
+        "St.-Marien-Kirche",  # named church → keep
+    ]
+    return gpd.GeoDataFrame(
+        {
+            "nam": names,
+            "bezeich": [None] * len(names),
+            "geometry": [Point(13.4 + i / 100, 52.5) for i in range(len(names))],
+        },
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+
+
+def test_named_only_layer_drops_generic_function_names() -> None:
+    out = transform_wfs_layer(
+        _alkis_generic_frame(),
+        *_ALKIS_KEY,
+        extra_columns={"source": "alkis", "category": "building"},
+    )
+    kept = set(out["name"])
+    assert kept == {
+        "Kindertagesstätte Sonnenschein",
+        "Technische Universität Berlin",
+        "St.-Marien-Kirche",
+    }

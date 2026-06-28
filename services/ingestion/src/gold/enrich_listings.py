@@ -663,7 +663,8 @@ def enrich_greenery(conn: Connection) -> int:
             UPDATE listings_geo_context lgc
             SET greenery_profile = jsonb_build_object(
                     'green_m2_within_300m',
-                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0) + COALESCE(pg_m2, 0)
+                    COALESCE(park_m2, 0) + 0.5 * COALESCE(cem_m2, 0)
+                        + COALESCE(pg_m2, 0)
                 ),
                 enriched_at = now()
             FROM listings l,
@@ -777,16 +778,18 @@ def enrich_admin_areas(conn: Connection) -> int:
 def enrich_inside_ring(conn: Connection) -> int:
     """Flag whether the listing falls inside the low-emission zone (≈ ring).
 
-    The zone is a single feature in `inner_city_zone`; `ST_Contains`
-    against it yields a clean boolean per listing.
+    The zone is normally a single feature in `inner_city_zone`; an `EXISTS`
+    over the table yields a clean boolean per listing and stays correct even
+    if the source ever arrives multipart (a `LIMIT 1` would silently test one
+    arbitrary feature).
     """
     result = conn.execute(
         text(
             """
             UPDATE listings_geo_context lgc
-            SET inside_ring = ST_Contains(
-                    (SELECT geom FROM inner_city_zone LIMIT 1),
-                    l.location
+            SET inside_ring = EXISTS (
+                    SELECT 1 FROM inner_city_zone z
+                    WHERE ST_Contains(z.geom, l.location)
                 ),
                 enriched_at = now()
             FROM listings l

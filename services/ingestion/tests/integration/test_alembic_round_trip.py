@@ -115,11 +115,13 @@ def test_world_tables_created_in_world_schema() -> None:
     engine = sa.create_engine(_TEST_URL)
     with engine.connect() as conn:
         for tbl in ("listings", "listings_geo_context", "listings_nearby_transit"):
-            assert conn.execute(
-                sa.text(f"SELECT to_regclass('world.{tbl}')")
-            ).scalar() is not None, f"world.{tbl} missing"
+            assert (
+                conn.execute(sa.text(f"SELECT to_regclass('world.{tbl}')")).scalar()
+                is not None
+            ), f"world.{tbl} missing"
             # And NOT accidentally in public.
-            assert conn.execute(
-                sa.text(f"SELECT to_regclass('public.{tbl}')")
-            ).scalar() is None, f"{tbl} leaked into public"
+            assert (
+                conn.execute(sa.text(f"SELECT to_regclass('public.{tbl}')")).scalar()
+                is None
+            ), f"{tbl} leaked into public"
     engine.dispose()

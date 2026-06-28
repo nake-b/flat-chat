@@ -135,11 +135,8 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
     else:
         rooms = float(bedrooms)
 
-    if entity:
-        warm_rent = _cents(entity.get("price"))
-    else:
-        # Fallback tier: the card's microdata price is already whole euros.
-        warm_rent = card.get("priceEur")
+    # Fallback tier (no entity): the card's microdata price is already whole euros.
+    warm_rent = _cents(entity.get("price")) if entity else card.get("priceEur")
 
     features = _features(fac) + [b for b in card.get("badges") or [] if b]
 
@@ -148,7 +145,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
             str(entity["id"]) if entity.get("id") else dump.get("externalId")
         ),
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
-
         "title": ld.get("name") or og.get("og:title") or card.get("title"),
         "headline": None,
         "description": entity.get("description")
@@ -160,7 +156,6 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "bathrooms": parse_int_str(fac.get("bathroom_count")),
         "area_sqm": parse_sqm(fac.get("total_size")),
         "apartment_type": "studio" if str(fac.get("bedroom_count")) == "0" else None,
-
         # HousingAnywhere advertises one all-inclusive monthly figure; which
         # bills are included is flagged in the facilities map, not split out.
         "cold_rent_eur": None,
@@ -168,21 +163,22 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "nebenkosten_eur": None,
         "rent_gross_eur": warm_rent,
         "kaution_eur": _cents((costs.get("security-deposit") or {}).get("value")),
-
         "address": entity.get("street"),
         "postal_code": entity.get("postalCode"),
         "district": None,
         "city": entity.get("city") or "Berlin",
         # Validated through clean_berlin_coords so 0/0 and out-of-Berlin
         # sentinels become NULL instead of polluting geo-context queries.
-        **dict(zip(
-            ("latitude", "longitude"),
-            clean_berlin_coords(
-                entity.get("latitude") or parse_float_str(ld_geo.get("latitude")),
-                entity.get("longitude") or parse_float_str(ld_geo.get("longitude")),
-            ),
-        )),
-
+        **dict(
+            zip(
+                ("latitude", "longitude"),
+                clean_berlin_coords(
+                    entity.get("latitude") or parse_float_str(ld_geo.get("latitude")),
+                    entity.get("longitude") or parse_float_str(ld_geo.get("longitude")),
+                ),
+                strict=True,
+            )
+        ),
         "floor": None,
         "floors_total": None,
         "construction_year": None,
@@ -192,13 +188,11 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         # maxBookableDays is a booking-window setting, not a max stay — keep
         # it in key_facts only.
         "max_stay_months": None,
-
         "heating": fac.get("heating"),
         "main_energy_source": None,
         "energy_consumption_kwh": None,
         "final_energy_value_kwh": None,
         "energy_pass_type": None,
-
         "is_furnished": _fac_bool(fac, "bedroom_furnished", "furniture"),
         "has_kitchen": _fac_bool(fac, "kitchen"),
         "has_bathroom": _fac_bool(fac, "bathroom"),
@@ -210,11 +204,9 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         # NOT NULL in listings. HousingAnywhere is a furnished mid-term
         # platform — WBS (social housing) listings don't appear there.
         "wbs_required": False,
-
         "lister_type": map_lister_type(adv.get("type")),
         "company_name": None,
         "company_website": None,
-
         "features": features,
         "images": _images(entity.get("photoURLList")) or card.get("imageUrls") or [],
         "key_facts": {
