@@ -11,6 +11,7 @@ src/flat_chat/
   main.py              → FastAPI app + lifespan + router registration
   core/                → DB engines (sync + async), config, observability, deps
   api/                 → HTTP routes — thin
+                          auth.py     fastapi-users routers mounted under /api/auth
                           chat.py     POST /api/conversations + GET messages + GET state
                           agent.py    POST /api/agent (AG-UI SSE)
                           listings.py GET /api/listings/{id} (detail)
@@ -31,11 +32,13 @@ src/flat_chat/
                           service.py      ChatService — dispatches AG-UI run, history-authoritative
                           providers/      Provider dispatch (Anthropic / Azure)
   users/               → Identity domain (app.* owned).
-                          models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
+                          models.py       User ORM (fastapi-users columns)
+                          auth.py         fastapi-users wiring (UserManager,
+                                          cookie+JWT backend, current_active_user)
   search/              → Query execution domain
-                          service.py      SearchService — async, returns (markers, preview_cards, total)
-                          places.py       PlaceService — locate_place trigram lookup +
-                                          overlay_geometry (named_places → GeoJSON)
+                          service.py      SearchService — async, returns (markers, preview_cards, total, facets)
+                          places.py       PlaceService — locate_place trigram lookup over
+                                          world.named_places + overlay_geometry (→ GeoJSON)
                           transit_overlays.py TransitOverlayService — line name → route-shape
                                           GeoJSON + served stations (world.transit_stops via
                                           lines_served) as MapOverlay.points; display only,
@@ -129,6 +132,12 @@ now split by tier:
   the LLM and the card strip's first paint.
 - `total_results` — a real count (`len(result_markers)`, or `COUNT(*)`
   when the 5000 cap binds).
+- `facets` — whole-set aggregate stats (`ResultFacets`: price/area
+  min·median·max + per-Ortsteil counts) so the LLM grounds whole-set
+  summaries ("up to €1,950", "a mix of Prenzlauer Berg and Wedding")
+  instead of extrapolating from `preview_cards`. Plain nested model (no
+  custom serializer). `None` until a search returns ≥1 result. See
+  [`result-set-facets.md`](../../agent-compound-docs/decisions/result-set-facets.md).
 
 The rest of the cards hydrate on demand by id (see the batch route
 above). No more separate DataFrame + UiState split.
@@ -138,12 +147,20 @@ Decision doc: [`session-state-design.md`](../../agent-compound-docs/decisions/se
 ## Search query — B-tree on gold
 
 `SearchService.search()` joins `listings ⨝ listings_geo_context (⨝
-listings_embeddings)` and returns `(markers, preview_cards, total)` —
-all matching markers (hard-capped server-side at `MARKER_CAP`=5000), the
-top `PREVIEW_N`=10 tier-2 cards, and the count. There is no per-search
-`limit` arg anymore. The shared tier-2 projection lives in
-`listings/projection.py` and is reused by both this preview and
-`ListingService.get_cards(ids)`.
+listings_embeddings)` and returns `(markers, preview_cards, total,
+facets)` — all matching markers (hard-capped server-side at
+`MARKER_CAP`=5000), the top `PREVIEW_N`=10 tier-2 cards, the count, and
+whole-set facets. There is no per-search `limit` arg anymore. The shared
+tier-2 projection lives in `listings/projection.py` and is reused by both
+this preview and `ListingService.get_cards(ids)`.
+
+**Facets** (`_facets`) run two extra cheap aggregate queries over the SAME
+filtered set (both reuse `_apply_listing_filters` + `_apply_geo_context_filters`):
+a single-row `min`/`percentile_cont(0.5)`/`max` for warm rent and area, and a
+`GROUP BY listing_ortsteil` count. Computed in SQL (not from the in-memory
+markers) so price stays exact past `MARKER_CAP` and area — absent from markers —
+is covered. Skipped when `total == 0`. See
+[`result-set-facets.md`](../../agent-compound-docs/decisions/result-set-facets.md).
 
 **Deterministic order — the marker/preview prefix invariant.** Markers and
 preview are two separate executions (LIMIT `MARKER_CAP` vs `PREVIEW_N`) over
@@ -197,7 +214,8 @@ Pydantic AI composes the agent's system prompt as:
 2. **`@toolset.instructions`** (cached, static): tool protocol + phrase
    map. In `chat/tools.py`.
 3. **`@agent.instructions`** (uncached, per-turn): `<current_state>` +
-   `<user_focus>` from `build_dynamic_state_prompt`. In `chat/llm_context.py`.
+   `<result_facets>` (whole-set stats) + `<user_focus>` from
+   `build_dynamic_state_prompt`. In `chat/llm_context.py`.
 
 State-dependent rules ("don't reopen the active listing") MUST go in
 the dynamic layer or they'd break the prompt cache. ~5600 cached prefix
@@ -270,11 +288,15 @@ When adding a new search filter, add a test in the same change.
 
 ## TODOs
 
-- Auth not implemented — a single dummy user via the `get_user_id()` seam
-  (`core/dependencies.py`), upserted on demand by `DbSessionStore.create`.
-  `users.models.User` is designed for claim-in-place (add nullable
-  `email`/`password_hash`/`auth_provider`/`claimed_at`, UPDATE the same row on
-  signup → PK never changes). See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+- Auth: real password login via **fastapi-users** (`users/auth.py`). `get_user_id()`
+  (`core/dependencies.py`) resolves the authenticated user from a signed httpOnly
+  JWT cookie — still the single seam, so call sites never change. Argon2 via
+  `pwdlib`. Dev login seeded by `scripts/seed_users.py`. `JWT_SECRET` is
+  required. `POST /api/agent` is now ownership-checked (404-not-403). Per-user LLM
+  rate-limiting / cost-control gets its own service when built (not yet — no empty
+  placeholder). Logto is the
+  documented future migration; Authlib (social) deferred. See
+  [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - Bookmarks not implemented; slot ready (`listings/bookmarks_service.py`
   + `api/bookmarks.py` following the same pattern as listings). Decision: a
   per-user join table with a plain `listing_id` reference (see session-persistence.md).

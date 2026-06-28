@@ -26,7 +26,7 @@ from flat_chat.core.dependencies import get_session_store, get_user_id
 from flat_chat.listings.context import Marker
 from flat_chat.main import app
 
-from ..conftest import DB_REQUIRED
+from ..conftest import DB_REQUIRED, ensure_app_users
 
 pytestmark = DB_REQUIRED
 
@@ -40,6 +40,7 @@ async def _run_http(async_url, body, request_user=USER_A):
         async with engine.connect() as conn:
             trans = await conn.begin()
             try:
+                await ensure_app_users(conn, USER_A, USER_B)
                 factory = async_sessionmaker(
                     bind=conn,
                     expire_on_commit=False,

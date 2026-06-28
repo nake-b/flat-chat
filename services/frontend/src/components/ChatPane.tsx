@@ -1,12 +1,15 @@
 import { CopilotChat } from "@copilotkit/react-ui";
 
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
+import { useAuth } from "../hooks/useAuth";
 
 export function ChatPane({
   onNewConversation,
 }: {
   onNewConversation: () => void;
 }) {
+  const userEmail = useAuth((s) => s.user?.email);
+  const logout = useAuth((s) => s.logout);
   // One wildcard registration drives inline pills for every backend tool
   // call. The label per lifecycle phase lives in `state/toolStatus.ts`
   // (single source of UI copy). Adding a new tool = one entry there;
@@ -30,17 +33,34 @@ export function ChatPane({
         </span>
       </header>
 
-      {/* Slim action strip — right-aligned ghost link, separated from the
-          centred title so it doesn't compete with the brand. */}
-      <div className="flex items-center justify-end border-b border-paper-rule px-5 py-2">
-        <button
-          type="button"
-          onClick={onNewConversation}
-          title="Start a new conversation"
-          className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+      {/* Slim action strip — signed-in identity on the left, actions on the
+          right, separated from the centred title so it doesn't compete with
+          the brand. */}
+      <div className="flex items-center justify-between border-b border-paper-rule px-5 py-2">
+        <span
+          title={userEmail ?? undefined}
+          className="truncate font-mono text-[10px] tracking-[0.08em] text-ink-ghost"
         >
-          + New chat
-        </button>
+          {userEmail ?? ""}
+        </span>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={onNewConversation}
+            title="Start a new conversation"
+            className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+          >
+            + New chat
+          </button>
+          <button
+            type="button"
+            onClick={() => void logout()}
+            title="Sign out"
+            className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

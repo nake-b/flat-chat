@@ -23,15 +23,17 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.requests import Request
 
 import flat_chat.chat.service as service_mod
 from flat_chat.chat.service import ChatService
-from flat_chat.chat.sessions import InMemorySessionStore
+from flat_chat.chat.sessions import InMemorySessionStore, SessionNotFoundError
 
 USER = "00000000-0000-0000-0000-000000000001"
+OTHER_USER = "00000000-0000-0000-0000-0000000000bb"
 
 
 def _make_request(envelope: dict) -> Request:
@@ -91,7 +93,7 @@ async def _messages_seen_by_model(
     service_mod.build_chat_model = lambda: FunctionModel(stream_function=stream_fn)
     try:
         resp = await chat.dispatch_agent_request(
-            _make_request(_envelope(session.id, envelope_messages))
+            _make_request(_envelope(session.id, envelope_messages)), USER
         )
         async for _ in resp.body_iterator:  # drive the agent to completion
             pass
@@ -154,3 +156,36 @@ def test_first_turn_has_no_history_to_inject():
         )
     )
     assert seen == ["2 rooms in Kreuzberg"]
+
+
+def test_foreign_session_is_rejected_before_run():
+    """A conversation owned by USER is invisible to OTHER_USER over /api/agent.
+
+    Mirrors the REST `_load_owned` 404-not-403 contract: dispatch raises
+    SessionNotFoundError (→ 404 at the route) when the authenticated user_id
+    doesn't own the thread, BEFORE any model is built or run.
+    """
+
+    async def body() -> None:
+        store = InMemorySessionStore()
+        session = await store.create(USER)
+        chat = ChatService(
+            search_service=None,
+            listing_service=None,
+            place_service=None,
+            transit_overlay_service=None,
+            store=store,
+        )
+        # build_chat_model must never be reached — the gate is before it.
+        with pytest.raises(SessionNotFoundError):
+            await chat.dispatch_agent_request(
+                _make_request(
+                    _envelope(
+                        session.id,
+                        [{"id": "m1", "role": "user", "content": "hi"}],
+                    )
+                ),
+                OTHER_USER,
+            )
+
+    asyncio.run(body())

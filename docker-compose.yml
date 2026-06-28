@@ -50,6 +50,13 @@ services:
       - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
       - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006/v1/traces}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_LIFETIME_SECONDS=${JWT_LIFETIME_SECONDS:-604800}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - DEV_USER_EMAIL=${DEV_USER_EMAIL:-dev@flatchat.dev}
+      - DEV_USER_PASSWORD=${DEV_USER_PASSWORD:-dev}
+      - PROF_USER_EMAIL=${PROF_USER_EMAIL:-}
+      - PROF_USER_PASSWORD=${PROF_USER_PASSWORD:-}
     command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]

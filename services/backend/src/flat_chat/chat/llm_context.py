@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.search.schemas import NumericFacet, ResultFacets
 
 
 def xml_block(tag: str, body: str) -> str:
@@ -355,6 +356,10 @@ def build_dynamic_state_prompt(state: SessionState) -> str:
     view = LlmResultSetView(state)
     blocks: list[str] = [_current_state_block(view)]
 
+    facets_block = _result_facets_block(state.facets)
+    if facets_block is not None:
+        blocks.append(facets_block)
+
     focus_idx = _index_for_active(state)
     if focus_idx is not None and state.active_listing_detail is not None:
         focus_body = (
@@ -417,6 +422,60 @@ def _map_overlays_line(state: SessionState) -> str:
         f"{o.label} ({o.kind}, {o.origin})" for o in state.map_overlays
     )
     return f"  {xml_inline('map_overlays', drawn)}"
+
+
+def _result_facets_block(facets: ResultFacets | None) -> str | None:
+    """Render `<result_facets>` — aggregate stats over the WHOLE result set.
+
+    The agent's whole-set summaries ("up to €1,950", "a mix of Prenzlauer Berg
+    and Wedding") must come from here, not from the top-N `preview_cards` it can
+    see. Returns None when there's nothing to ground a claim on, so the block is
+    omitted rather than emitted empty. Lives in the per-turn (uncached) layer.
+    """
+    if facets is None:
+        return None
+
+    lines: list[str] = []
+    price = _format_numeric_facet(facets.price_warm_eur, prefix="€")
+    if price:
+        lines.append(f"  price: {price}")
+    area = _format_numeric_facet(facets.area_sqm, suffix=" m²")
+    if area:
+        lines.append(f"  area: {area}")
+    if facets.districts:
+        top = facets.districts[:6]
+        rendered = ", ".join(f"{d.district} {d.count}" for d in top)
+        more = len(facets.districts) - len(top)
+        if more > 0:
+            rendered += f", +{more} more"
+        lines.append(f"  neighbourhoods (by Ortsteil): {rendered}")
+
+    if not lines:
+        return None
+    return xml_block("result_facets", "\n".join(lines))
+
+
+def _format_numeric_facet(
+    facet: NumericFacet | None, *, prefix: str = "", suffix: str = ""
+) -> str | None:
+    """Format a NumericFacet as "min–max (median X)", collapsing to a single
+    value when min == max. Returns None when the facet has no values."""
+    if facet is None or (
+        facet.min is None and facet.median is None and facet.max is None
+    ):
+        return None
+
+    def fmt(v: float | None) -> str | None:
+        return f"{prefix}{v:,.0f}{suffix}" if v is not None else None
+
+    lo, mid, hi = fmt(facet.min), fmt(facet.median), fmt(facet.max)
+    if lo is not None and hi is not None and lo == hi:
+        rng = lo  # whole set shares one value
+    elif lo is not None and hi is not None:
+        rng = f"{lo}–{hi}"
+    else:
+        rng = lo or hi or ""
+    return f"{rng} (median {mid})" if mid is not None else rng
 
 
 def _index_for_active(state: SessionState) -> int | None:

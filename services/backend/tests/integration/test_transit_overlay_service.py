@@ -73,8 +73,12 @@ async def _seed_stop(
     await session.execute(
         sa.text(
             """
-            INSERT INTO world.transit_stops (stop_id, name, geom, modes_served, lines_served)
-            VALUES (:sid, :name, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), '{1}', :lines)
+            INSERT INTO world.transit_stops
+                (stop_id, name, geom, modes_served, lines_served)
+            VALUES (
+                :sid, :name, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
+                '{1}', :lines
+            )
             """
         ),
         {"sid": stop_id, "name": name, "lon": lon, "lat": lat, "lines": lines},
@@ -93,10 +97,20 @@ def test_route_geometry_attaches_served_stations(async_db_url):
             wkts=["LINESTRING(13.30 52.50, 13.40 52.48)"],
         )
         await _seed_stop(
-            session, stop_id="s1", name="Rathaus Steglitz", lon=13.321234, lat=52.456789, lines=["U7", "S1"]
+            session,
+            stop_id="s1",
+            name="Rathaus Steglitz",
+            lon=13.321234,
+            lat=52.456789,
+            lines=["U7", "S1"],
         )
         await _seed_stop(
-            session, stop_id="s2", name="Mehringdamm", lon=13.387, lat=52.493, lines=["U7"]
+            session,
+            stop_id="s2",
+            name="Mehringdamm",
+            lon=13.387,
+            lat=52.493,
+            lines=["U7"],
         )
         await _seed_stop(
             session, stop_id="s3", name="Elsewhere", lon=13.50, lat=52.40, lines=["U2"]
@@ -176,7 +190,9 @@ def test_route_geometry_collects_both_directions(async_db_url):
                 "LINESTRING(13.35 52.50, 13.30 52.50)",
             ],
         )
-        return await TransitOverlayService(session).route_geometry("U9", origin="pinned")
+        return await TransitOverlayService(session).route_geometry(
+            "U9", origin="pinned"
+        )
 
     overlay = _run(async_db_url, body)
     assert overlay is not None

@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from flat_chat.chat.models import Conversation, Message, SessionStateRow
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.state import ChatSession
-from flat_chat.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +133,9 @@ class DbSessionStore:
         conv_id = uuid4()
         user_uuid = UUID(user_id)
         async with self._session_factory() as db, db.begin():
-            # Materialize the (dummy) user on demand — the future
-            # anonymous-user upsert pattern.
-            await db.execute(
-                pg_insert(User)
-                .values(id=user_uuid)
-                .on_conflict_do_nothing(index_elements=[User.id])
-            )
+            # The user must already exist (created by `scripts/seed_users.py`);
+            # the conversation just references it. We don't fabricate users here —
+            # the FK enforces that. Tests create the user row first.
             db.add(Conversation(id=conv_id, user_id=user_uuid))
         return ChatSession(id=str(conv_id), user_id=user_id)
 

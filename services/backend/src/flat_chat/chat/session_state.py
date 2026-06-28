@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from flat_chat.listings.context import ListingCard, ListingDetail, Marker
 from flat_chat.listings.overlays import MapOverlay
-from flat_chat.search.schemas import SearchParams
+from flat_chat.search.schemas import ResultFacets, SearchParams
 
 
 class SessionState(BaseModel):
@@ -65,6 +65,12 @@ class SessionState(BaseModel):
     # Tier-2: top-N full cards kept hot (LLM context + card-strip first paint).
     preview_cards: list[ListingCard] = Field(default_factory=list)
     """The first PREVIEW_N cards. The rest hydrate on demand by id."""
+
+    facets: ResultFacets | None = None
+    """Aggregate stats (price/area ranges, neighbourhood counts) over the WHOLE
+    filtered set — lets the agent ground whole-set summaries instead of
+    extrapolating from `preview_cards`. Plain nested model: serializes/decodes
+    via default Pydantic (no custom serializer, unlike `result_markers`)."""
 
     # The active interaction (the focus)
     active_id: str | None = None

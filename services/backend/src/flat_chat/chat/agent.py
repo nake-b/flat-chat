@@ -63,7 +63,11 @@ def _honesty_block() -> str:
         "`search_apartments` in the same response. The `<order>` field of\n"
         "`<current_state>` is the ground truth; if it doesn't match your claim,\n"
         "you're lying. To change ordering, call `search_apartments` again with the\n"
-        "new `sort_by` and repeat all filters you want to keep.",
+        "new `sort_by` and repeat all filters you want to keep.\n"
+        "When you summarise the WHOLE result set (price range, area, which\n"
+        "neighbourhoods, how many), ground it in `<result_facets>` — those stats\n"
+        "cover every match. The listed cards are only the top few; do NOT infer\n"
+        "the set's price ceiling or neighbourhood mix from them.",
     )
 
 
