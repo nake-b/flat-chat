@@ -113,3 +113,45 @@ class SearchParams(BaseModel):
     # No per-search `limit`: the model returns every match as a marker (hard-
     # capped server-side at MARKER_CAP) + a fixed PREVIEW_N of full cards. The
     # LLM doesn't tune result count — "show everything on the map" is the point.
+
+
+# ---------------------------------------------------------------------------
+# Result-set facets — aggregate stats over the WHOLE filtered set.
+# ---------------------------------------------------------------------------
+
+
+class NumericFacet(BaseModel):
+    """min / median / max for a numeric column over the full result set.
+
+    Computed in SQL (not from the in-memory markers) so it stays exact even
+    when the MARKER_CAP truncation binds, and so it covers columns markers
+    don't carry (area). Any field is None when no matched row has a value.
+    """
+
+    min: float | None = None
+    median: float | None = None
+    max: float | None = None
+
+
+class DistrictCount(BaseModel):
+    """One neighbourhood bucket of the result set. `district` holds the Ortsteil
+    (ALKIS polygon assignment, e.g. "Prenzlauer Berg") — Berlin's neighbourhood
+    granularity, which is how users name areas. Listings without an Ortsteil
+    assignment (no pin/polygon) are excluded, so counts can sum to < total."""
+
+    district: str
+    count: int
+
+
+class ResultFacets(BaseModel):
+    """Aggregate stats over the entire filtered result set — NOT the preview.
+
+    Surfaced to the agent (via `<result_facets>` in the per-turn prompt) so its
+    whole-set summaries ("up to €1,950", "a mix of Prenzlauer Berg and Wedding")
+    are grounded in the full set rather than extrapolated from the top-N preview
+    cards the LLM can see. Produced by `SearchService._facets`.
+    """
+
+    price_warm_eur: NumericFacet | None = None
+    area_sqm: NumericFacet | None = None
+    districts: list[DistrictCount] = Field(default_factory=list)

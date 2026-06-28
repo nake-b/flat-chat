@@ -36,7 +36,12 @@ from flat_chat.listings.context import (
     NoiseProfile,
     SchoolCatchmentInfo,
 )
-from flat_chat.search.schemas import SearchParams
+from flat_chat.search.schemas import (
+    DistrictCount,
+    NumericFacet,
+    ResultFacets,
+    SearchParams,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture data
@@ -379,3 +384,58 @@ def test_dynamic_prompt_active_id_not_in_markers_omits_focus_block():
     ).ListingDetail(id="id-stale", title="Stale")
     out = build_dynamic_state_prompt(state)
     assert "<user_focus>" not in out
+
+
+# ---------------------------------------------------------------------------
+# <result_facets> — whole-set aggregate stats block
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_prompt_renders_result_facets_block():
+    state = _state(n_markers=33, n_preview=10, total=33)
+    state.facets = ResultFacets(
+        price_warm_eur=NumericFacet(min=620.0, median=1180.0, max=1950.0),
+        area_sqm=NumericFacet(min=28.0, median=64.0, max=112.0),
+        districts=[
+            DistrictCount(district="Prenzlauer Berg", count=21),
+            DistrictCount(district="Wedding", count=9),
+            DistrictCount(district="Mitte", count=3),
+        ],
+    )
+    out = build_dynamic_state_prompt(state)
+    assert "<result_facets>" in out
+    assert "price: €620–€1,950 (median €1,180)" in out
+    assert "area: 28 m²–112 m² (median 64 m²)" in out
+    assert "neighbourhoods (by Ortsteil): Prenzlauer Berg 21, Wedding 9, Mitte 3" in out
+
+
+def test_dynamic_prompt_omits_result_facets_when_absent():
+    # No facets (e.g. zero results) → no block at all, not an empty one.
+    state = _state(n_markers=3)
+    state.facets = None
+    out = build_dynamic_state_prompt(state)
+    assert "<result_facets>" not in out
+
+
+def test_result_facets_caps_districts_and_counts_overflow():
+    state = _state(n_markers=20, total=20)
+    state.facets = ResultFacets(
+        districts=[DistrictCount(district=f"O{i}", count=20 - i) for i in range(9)],
+    )
+    out = build_dynamic_state_prompt(state)
+    # Top 6 shown, the remaining 3 summarised as "+N more".
+    assert "O0 20" in out
+    assert "O5 15" in out
+    assert "O6 14" not in out
+    assert "+3 more" in out
+
+
+def test_result_facets_collapses_single_value_range():
+    # When every match shares one price, render the value once, not "X–X".
+    state = _state(n_markers=2, total=2)
+    state.facets = ResultFacets(
+        price_warm_eur=NumericFacet(min=900.0, median=900.0, max=900.0),
+    )
+    out = build_dynamic_state_prompt(state)
+    assert "price: €900 (median €900)" in out
+    assert "€900–€900" not in out
