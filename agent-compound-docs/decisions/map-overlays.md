@@ -1,6 +1,6 @@
 # Map geometry overlays — agent-drawn geometries + structural state emission
 
-**Status:** Implemented in `feat/map-geometry-overlays` (off `feat/geo-context-v2`), June 2026. `StateEmittingToolset` + `merge_incoming_state` + `MapOverlay`/`map_overlays` + `PlaceService.overlay_geometry` + `TransitRouteService` (route shape + served stations) + `show_on_map`/`hide_on_map`/`clear_map_overlays` tools + frontend `OverlayLayer`/`overlayStyles`/`OverlayLegend` (incl. station dots, line badges, breathing area overlays) + unit/integration tests.
+**Status:** Implemented in `feat/map-geometry-overlays` (off `feat/geo-context-v2`), June 2026. `StateEmittingToolset` + `merge_incoming_state` + `MapOverlay`/`map_overlays` + `PlaceService.overlay_geometry` + `TransitOverlayService` (route shape + served stations) + `show_on_map`/`hide_on_map`/`clear_map_overlays` tools + frontend `OverlayLayer`/`overlayStyles`/`OverlayLegend` (incl. station dots, line badges, breathing area overlays) + unit/integration tests.
 
 **Related docs:**
 - [`session-state-design.md`](session-state-design.md) — the SessionState shape overlays extend
@@ -48,7 +48,7 @@ Two motion/appearance details the frontend adds, all driven by one `prefers-redu
 
 ### 5. Transit lines are a separate display-only path — NOT in `named_places`
 
-Named places (Spree, parks, lakes, buildings) resolve via the existing `world.named_places` gazetteer — `PlaceService.overlay_geometry(place_ref)` returns the *same* geometry `near_place_ref` search uses, as simplified GeoJSON. Transit lines resolve via a new read-only `TransitRouteService` over `world.transit_routes`/`transit_route_shapes` (GTFS, already present from ingestion migration 0003 — **no ingestion/migration work needed**). `route_geometry` also attaches the line's **served stations** as `MapOverlay.points` (`OverlayPoint{label, lon, lat}`), resolved from `world.transit_stops` by a direct `lines_served` array match (the GTFS stop carries its lines) — **no spatial snap to the centerline**. The frontend draws these as station dots + the line badges.
+Named places (Spree, parks, lakes, buildings) resolve via the existing `world.named_places` gazetteer — `PlaceService.overlay_geometry(place_ref)` returns the *same* geometry `near_place_ref` search uses, as simplified GeoJSON. Transit lines resolve via a new read-only `TransitOverlayService` (`search/transit_overlays.py`) over `world.transit_routes`/`transit_route_shapes` (GTFS, already present from ingestion migration 0003 — **no ingestion/migration work needed**). `route_geometry` also attaches the line's **served stations** as `MapOverlay.points` (`OverlayPoint{label, lon, lat}`), resolved from `world.transit_stops` by a direct `lines_served` array match (the GTFS stop carries its lines) — **no spatial snap to the centerline**. The frontend draws these as station dots + the line badges.
 
 They are kept separate on purpose: a U-Bahn line does **not** belong in the search-near gazetteer. "Near the U8" means near a *stop served by* the U8 (matched via `listings_nearby_transit`), not near the line's centerline — a `near_place_ref` against a route polyline would match tunnel midpoints between stations. So transit geometry is display-only and the two never mix. The overlay concept unifies only at `SessionState.map_overlays` (source-agnostic GeoJSON).
 
@@ -59,7 +59,7 @@ They are kept separate on purpose: a U-Bahn line does **not** belong in the sear
 - **Removal:** `hide_on_map(targets=[…])` removes specific overlays by label or id — **type-agnostic** (it just drops entries from `map_overlays`, so it works for any current or future overlay kind, including future heatmaps), a pure state edit. A no-op (not an error) when a target isn't drawn. `clear_map_overlays()` wipes all. Hiding a `search`-origin overlay is transient — it **redraws on the next search** unless the underlying filter is dropped; pinned overlays stay gone. `<current_state>` lists each overlay as `label (kind, origin)` so the agent can target by label and reason about which lifetime applies.
 - A pinned overlay with the same id as a fresh search overlay wins (sticky). Corollary (a real UX edge): a line drawn via `show_on_map` is pinned, so removing the *filter* won't remove it — that's the inverse of the rule above, and `hide_on_map` / the legend `×` is how it goes.
 
-Geometry is simplified server-side (`ST_SimplifyPreserveTopology`, ~5 m tolerance + 5-digit coords; constants in `listings/context.py`) so the GeoJSON riding the snapshot stays small.
+Geometry is simplified server-side (`ST_SimplifyPreserveTopology`, ~5 m tolerance + 5-digit coords; constants in `listings/overlays.py`) so the GeoJSON riding the snapshot stays small.
 
 ### 7. Place geometry resolution (`PlaceService.overlay_geometry`)
 

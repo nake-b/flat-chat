@@ -49,7 +49,7 @@ def test_agent_advertises_listing_tools_via_capability():
         search_service=None,  # type: ignore[arg-type]  # never called (no tool calls)
         listing_service=None,  # type: ignore[arg-type]
         place_service=None,  # type: ignore[arg-type]
-        transit_route_service=None,  # type: ignore[arg-type]
+        transit_overlay_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-wiring"),
         state=SessionState(),
     )

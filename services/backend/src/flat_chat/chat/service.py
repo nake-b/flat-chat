@@ -20,7 +20,7 @@ from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
-from flat_chat.search.transit_routes import TransitRouteService
+from flat_chat.search.transit_overlays import TransitOverlayService
 
 try:
     from openinference.instrumentation import using_session
@@ -123,13 +123,13 @@ class ChatService:
         search_service: SearchService,
         listing_service: ListingService,
         place_service: PlaceService,
-        transit_route_service: TransitRouteService,
+        transit_overlay_service: TransitOverlayService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.place_service = place_service
-        self.transit_route_service = transit_route_service
+        self.transit_overlay_service = transit_overlay_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request) -> Response:
@@ -193,7 +193,7 @@ class ChatService:
             search_service=self.search_service,
             listing_service=self.listing_service,
             place_service=self.place_service,
-            transit_route_service=self.transit_route_service,
+            transit_overlay_service=self.transit_overlay_service,
             session=session,
             state=deps_state,
         )

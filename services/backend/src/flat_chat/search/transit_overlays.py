@@ -1,8 +1,9 @@
-"""TransitRouteService — resolve a transit line name to a drawable geometry.
+"""TransitOverlayService — resolve a transit line name to a drawable geometry.
 
 Agent-only, display-only. Turns a human line name ("U7", "S41", "M10") into a
 `MapOverlay` carrying the line's shape so the agent can draw it on the map
-("show me the U7", or auto-drawing the line a search filters on).
+("show me the U7", or auto-drawing the line a search filters on). Sits beside
+`PlaceService` as the second agent-only overlay-geometry resolver in `search/`.
 
 This is DELIBERATELY separate from the search-side transit filter. "Near the
 U8" means near a *stop served by* the U8 (matched via `listings_nearby_transit`,
@@ -26,19 +27,19 @@ from geoalchemy2 import functions as geo_func
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import (
+from flat_chat.listings.models import TransitRoute, TransitRouteShape, TransitStop
+from flat_chat.listings.overlays import (
     OVERLAY_COORD_DIGITS,
     OVERLAY_SIMPLIFY_TOLERANCE,
     MapOverlay,
     OverlayOrigin,
     OverlayPoint,
 )
-from flat_chat.listings.models import TransitRoute, TransitRouteShape, TransitStop
 
 logger = logging.getLogger(__name__)
 
 
-class TransitRouteService:
+class TransitOverlayService:
     """Resolve a transit line name to its map geometry. Agent-only."""
 
     def __init__(self, db: AsyncSession):

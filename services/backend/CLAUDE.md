@@ -36,10 +36,11 @@ src/flat_chat/
                           service.py      SearchService — async, returns (markers, preview_cards, total)
                           places.py       PlaceService — locate_place trigram lookup +
                                           overlay_geometry (named_places → GeoJSON)
-                          transit_routes.py TransitRouteService — line name → route-shape
+                          transit_overlays.py TransitOverlayService — line name → route-shape
                                           GeoJSON + served stations (world.transit_stops via
                                           lines_served) as MapOverlay.points; display only,
-                                          NOT the transit filter
+                                          NOT the transit filter (sits beside places.py as the
+                                          second agent-only overlay-geometry resolver)
                           schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
@@ -47,6 +48,8 @@ src/flat_chat/
                                           + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
                           types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py      ListingDetail + ListingCard + nested dataclasses
+                          overlays.py     MapOverlay + OverlayPoint + OVERLAY_* consts
+                                          (leaf-layer overlay vocab; both search/ resolvers import it)
                           projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
                           labels.py       bucket_*, walk_minutes, encode_modes, ...
                           thresholds.py   Single source of truth for numeric constants

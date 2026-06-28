@@ -80,7 +80,7 @@ class _NullPlaceService:
         return None
 
 
-class _NullTransitRouteService:
+class _NullTransitOverlayService:
     async def route_geometry(self, line, *, origin="search"):
         return None
 
@@ -93,7 +93,7 @@ def _ctx(
         search_service=search,
         listing_service=listing,
         place_service=place or _NullPlaceService(),
-        transit_route_service=transit or _NullTransitRouteService(),
+        transit_overlay_service=transit or _NullTransitOverlayService(),
         state=state,
     )
     return SimpleNamespace(deps=deps)
@@ -418,7 +418,7 @@ from flat_chat.chat.tools import (  # noqa: E402
     hide_on_map,
     show_on_map,
 )
-from flat_chat.listings.context import MapOverlay  # noqa: E402
+from flat_chat.listings.overlays import MapOverlay  # noqa: E402
 
 
 class _StubPlaceOverlay:

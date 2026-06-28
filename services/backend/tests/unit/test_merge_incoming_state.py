@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from flat_chat.chat.service import merge_incoming_state
 from flat_chat.chat.session_state import SessionState
-from flat_chat.listings.context import ListingCard, ListingDetail, MapOverlay
+from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import SearchParams
 
 

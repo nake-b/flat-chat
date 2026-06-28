@@ -82,7 +82,7 @@ async def _messages_seen_by_model(
         search_service=None,
         listing_service=None,
         place_service=None,
-        transit_route_service=None,
+        transit_overlay_service=None,
         store=store,
     )
     # Force the run to use our recording model — bypasses provider selection

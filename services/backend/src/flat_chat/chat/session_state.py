@@ -35,7 +35,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
-from flat_chat.listings.context import ListingCard, ListingDetail, MapOverlay, Marker
+from flat_chat.listings.context import ListingCard, ListingDetail, Marker
+from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import SearchParams
 
 

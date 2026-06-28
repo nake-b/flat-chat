@@ -36,6 +36,12 @@ def xml_block(tag: str, body: str) -> str:
     return f"<{tag}>\n{body.strip(chr(10))}\n</{tag}>"
 
 
+def xml_inline(tag: str, body: object) -> str:
+    """Single-line `<tag>body</tag>` — for leaf elements nested inside a block
+    (as opposed to `xml_block`, which wraps a multi-line body on its own lines)."""
+    return f"<{tag}>{body}</{tag}>"
+
+
 @dataclass
 class LlmResultSetView:
     """Thin formatter over the active SessionState — LLM-facing view.
@@ -373,8 +379,8 @@ def _current_state_block(view: LlmResultSetView) -> str:
 
     if view.state.search_params is None:
         body = (
-            "  <total>0</total>\n"
-            "  <note>No search has run yet in this conversation.</note>"
+            f"  {xml_inline('total', 0)}\n"
+            f"  {xml_inline('note', 'No search has run yet in this conversation.')}"
         )
         if overlays_line:
             body += "\n" + overlays_line
@@ -387,10 +393,10 @@ def _current_state_block(view: LlmResultSetView) -> str:
     filters_json = json.dumps(filters, default=str, sort_keys=True)
 
     lines = [
-        f"  <total>{view.total}</total>",
-        f"  <loaded>{len(view.state.preview_cards)}</loaded>",
-        f"  <order>{view.order_label()}</order>",
-        f"  <filters>{filters_json}</filters>",
+        f"  {xml_inline('total', view.total)}",
+        f"  {xml_inline('loaded', len(view.state.preview_cards))}",
+        f"  {xml_inline('order', view.order_label())}",
+        f"  {xml_inline('filters', filters_json)}",
     ]
     if overlays_line:
         lines.append(overlays_line)
@@ -410,7 +416,7 @@ def _map_overlays_line(state: SessionState) -> str:
     drawn = ", ".join(
         f"{o.label} ({o.kind}, {o.origin})" for o in state.map_overlays
     )
-    return f"  <map_overlays>{drawn}</map_overlays>"
+    return f"  {xml_inline('map_overlays', drawn)}"
 
 
 def _index_for_active(state: SessionState) -> int | None:

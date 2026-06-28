@@ -191,7 +191,7 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
             search_service=_MockSearch(),
             listing_service=None,
             place_service=None,
-            transit_route_service=None,
+            transit_overlay_service=None,
             store=store,
         )
         original = service_mod.build_chat_model
