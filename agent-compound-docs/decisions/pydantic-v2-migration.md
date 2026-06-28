@@ -35,14 +35,22 @@ still small (3 tools) keeps the migration cheap and attributable.
   the member, so they could never be kept in sync. Local dev + CI already
   resolve against the root lock. CI's `cache-dependency-glob` now points at the
   root `uv.lock`.
-  - **Follow-up (not in this PR)**: the Docker builds use `build:
-    services/backend/` (context = the service dir), so `uv sync` inside the
-    image can't see the workspace root and **re-resolves from `pyproject.toml`
-    each build** (non-frozen — it still gets the right versions, verified v2 in
-    the built image, but builds aren't reproducible). The proper fix is a
-    root-context build that `uv sync --frozen --package`s against the root lock —
-    a separate change touching both Dockerfiles + `.dockerignore` + the compose
-    build contexts. Worth doing, but out of scope here.
+- **Reproducible Docker builds (done in this PR).** The backend + ingestion
+  images now build from the **repo-root context** (`context: .` +
+  `dockerfile: services/<svc>/Dockerfile` in `docker-compose.yml`) so the build
+  can see the workspace `uv.lock`. Each Dockerfile copies the root
+  `pyproject.toml` + `uv.lock` + every member's `pyproject.toml`, then
+  `uv sync --frozen --no-dev --no-install-workspace --package flat-chat-<svc>`
+  for the cached dependency layer, copies the service source, and re-syncs to
+  link the editable package. `--frozen` makes the build **fail loudly** on any
+  lock/pyproject drift instead of silently re-resolving, so the image installs
+  exactly what CI tested (verified: `pydantic-ai-slim==2.0.0` in both built
+  images, matching the lock). Because the WORKDIR is the workspace root,
+  `ENV UV_NO_SYNC=1` stops the runtime `uv run` (Dockerfile CMD + compose
+  `command:`) from trying to auto-sync the *whole* workspace — including the
+  other member, whose source isn't in the image. A root `.dockerignore` keeps
+  the now-repo-wide context lean (the per-service `services/backend/.dockerignore`
+  was removed — only the context-root one is honored).
 
 ### Capability refactor (`chat/tools.py`, `chat/agent.py`)
 - New `ListingsCapability(AbstractCapability[ChatDeps])` returns the existing
