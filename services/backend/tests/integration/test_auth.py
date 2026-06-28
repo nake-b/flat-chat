@@ -20,8 +20,10 @@ import asyncio
 import httpx
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from httpx import ASGITransport
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import flat_chat.users.seed as seed_mod
 from flat_chat.chat.sessions import DbSessionStore
 from flat_chat.core.database import get_async_db
 from flat_chat.core.dependencies import get_session_store
@@ -158,3 +160,34 @@ def test_public_registration_is_closed(async_db_url):
     # claims the path for GET/PATCH/DELETE, so POST has no handler) — either way
     # there is no way to self-register.
     assert resp.status_code in (404, 405)
+
+
+def test_seed_is_idempotent(async_db_url):
+    """`python -m flat_chat.users.seed` is safe to re-run.
+
+    Exercises the seed's own per-account helper (`seed._create`) — the function
+    that owns the `UserAlreadyExists` skip — twice with the same email. The second
+    call must NOT raise and must NOT create a duplicate. Bound to the test
+    connection (fresh session per call, like `_create_user`) so it rolls back.
+    """
+
+    async def _seed_once(factory) -> None:
+        async with factory() as session:
+            manager = UserManager(SQLAlchemyUserDatabase(session, User))
+            await seed_mod._create(manager, EMAIL, PASSWORD, is_superuser=True)
+
+    async def body(client, factory):
+        await _seed_once(factory)
+        await _seed_once(factory)  # re-run: must skip, not error
+        # Raw SQL (not an ORM column comparison): the hand-rolled `User` declares
+        # `email: str` under TYPE_CHECKING, so `User.email == EMAIL` types as bool.
+        # Mirrors conftest.ensure_app_users.
+        async with factory() as session:
+            rows = await session.execute(
+                text("SELECT is_superuser FROM app.users WHERE email = :email"),
+                {"email": EMAIL},
+            )
+            return rows.scalars().all()
+
+    superuser_flags = drive(async_db_url, body)
+    assert superuser_flags == [True]  # exactly one row, seeded as admin
