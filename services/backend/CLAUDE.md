@@ -19,8 +19,8 @@ src/flat_chat/
                           agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
                           tools.py        FunctionToolset[ChatDeps] + ListingsCapability
                                           (search/open/page/locate_place/show_on_map/
-                                          clear_map_overlays); get_toolset() returns the
-                                          toolset wrapped in StateEmittingToolset
+                                          hide_on_map/clear_map_overlays); get_toolset()
+                                          returns the toolset wrapped in StateEmittingToolset
                           state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
                                           on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
@@ -37,11 +37,14 @@ src/flat_chat/
                           places.py       PlaceService — locate_place trigram lookup +
                                           overlay_geometry (named_places → GeoJSON)
                           transit_routes.py TransitRouteService — line name → route-shape
-                                          GeoJSON (overlay display only; NOT the transit filter)
+                                          GeoJSON + served stations (world.transit_stops via
+                                          lines_served) as MapOverlay.points; display only,
+                                          NOT the transit filter
                           schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
-                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places ORMs
+                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places
+                                          + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
                           types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py      ListingDetail + ListingCard + nested dataclasses
                           projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
