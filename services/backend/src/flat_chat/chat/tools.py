@@ -1,7 +1,10 @@
+from dataclasses import dataclass
 from datetime import date
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import FunctionToolset, RunContext, ToolReturn
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import AgentToolset
 
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
@@ -562,3 +565,24 @@ def _return_with_state(*, return_value: str, session_state) -> ToolReturn:
             ),
         ],
     )
+
+
+@dataclass
+class ListingsCapability(AbstractCapability[ChatDeps]):
+    """The apartment search + listing tools bundled as a v2 capability.
+
+    The tools (`search_apartments`, `open_listing`, `get_result_page`) and
+    their `@toolset.instructions` protocol guidance are unchanged — this only
+    wraps the existing `FunctionToolset` so the agent is composed via
+    `capabilities=[...]` (Pydantic AI v2's primary extension primitive) instead
+    of a bare `toolsets=[...]`. `get_toolset` is called once at Agent
+    construction, so the toolset's tools are all registered by then.
+
+    New agent-callable tool groups (e.g. the map/frontend command tools and
+    distance tools) should land as their OWN capabilities — optionally with
+    `defer_loading=True` to keep them out of the cached prompt prefix until the
+    model loads them. See agent-compound-docs/decisions/pydantic-v2-migration.md.
+    """
+
+    def get_toolset(self) -> AgentToolset[ChatDeps] | None:
+        return toolset

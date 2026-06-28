@@ -23,7 +23,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: services/backend/uv.lock
+          # Root workspace lock is the single source of truth — `uv sync` from
+          # services/backend resolves against it (this is a uv workspace). The
+          # old per-service locks were deleted in the v2 migration.
+          cache-dependency-glob: uv.lock
 
       - name: Sync dependencies
         run: uv sync --all-extras --dev
