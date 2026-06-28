@@ -95,6 +95,25 @@ scraper keeps its own `puppeteer` and passes it in. `USER_AGENT=` pins a UA;
 
 Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/gold-platinum-layers.md).
 
+## Poster-PII minimization — never store who posted a listing
+
+We keep listing *facts*, never the original poster's identity. `src/pii.py`
+holds `strip_pii(record, source, tier)` — a denylist of poster-identity
+key-paths (name, phone, profile URL, member/active-since, online-status,
+embedded-state blobs) per `(tier, source)`. It runs in **both** loaders
+(`bronze/loader.py`, `iron/loader.py`), the single funnel every record (live +
+replayed) passes through, so identity never reaches `raw_listings.data` /
+`iron_cards.data`. Only the non-identifying `type` (→ silver `lister_type`)
+survives. Silver additionally runs `redact_freetext()` (`silver/sources/common.py`)
+over `listings.description` to strip phone/email/WhatsApp pasted into the body.
+
+`scripts/scrub_poster_pii.py` is the one-off idempotent cleanup of rows that
+predate these guards (`uv run python -m scripts.scrub_poster_pii [--dry-run]`),
+reusing the same spec. **Adding a new scraper:** emit only `type`, extend
+`_STRIP_PATHS` in `pii.py`, pipe `description` through `redact_freetext`, and
+extend `tests/integration/test_pii_scan.py`. Full record + the audit SQL:
+[`poster-pii-minimization.md`](../../agent-compound-docs/decisions/poster-pii-minimization.md).
+
 ## Chain triggers
 
 - `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then

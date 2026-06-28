@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from db import get_session, get_table
+from pii import strip_pii
 
 
 def _row_to_iron(record: dict) -> dict:
@@ -46,6 +47,9 @@ def _row_to_iron(record: dict) -> dict:
             f"external_id={external_id!r}, detail_url={detail_url!r}, "
             f"scraped_at={scraped_at!r}"
         )
+
+    # Strip poster PII before it ever reaches the DB. See pii.py.
+    record = strip_pii(record, source, "iron")
 
     return {
         "source_name": source,

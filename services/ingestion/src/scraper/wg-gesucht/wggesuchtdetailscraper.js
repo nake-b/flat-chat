@@ -314,6 +314,12 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
       })();
 
       // ---- Lister info ---------------------------------------------------
+      // PRIVACY: only the derived lister *type* (private/agency) is kept. The
+      // poster's name is read locally ONLY to classify the type via the agency
+      // heuristic below, then discarded — it is never returned/stored. The
+      // "member since" date, online-status, and verified flag (all of which
+      // fingerprint the individual poster) are not collected. See
+      // services/ingestion/src/pii.py.
       result.lister = (() => {
         const candidates = [
           ...document.querySelectorAll('.user_profile_info, .panel.rhs_contact_information, .contact_box_sticky'),
@@ -322,32 +328,10 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
         const node = visible || candidates[0] || null;
         if (!node) return null;
 
+        // Local-only — used for the agency heuristic, then dropped.
         const name =
           clean(node.querySelector('.text-bold, .user_name, .user_profile_link, a[href*="/user/"]')?.textContent) ||
           null;
-
-        const memberSinceEl = [...node.querySelectorAll('p, span, div')].find((n) =>
-          /Member since|Mitglied seit|Im Forum seit/i.test(n.textContent || '')
-        );
-        const memberSince = memberSinceEl ? clean(memberSinceEl.textContent) : null;
-
-        const verified = !!node.querySelector(
-          '.mdi-check-circle-outline, [class*="verified" i], img[alt*="verified" i], img[alt*="verifiziert" i]'
-        );
-
-        // "Online: 3 hours" is rendered in the availability/contact strip on
-        // the live page — grab the value via a label-based search across the
-        // whole document rather than only inside the lister box.
-        const online = (() => {
-          const labelEl = [...document.querySelectorAll('span.section_panel_detail, b, span')].find((n) =>
-            /^\s*Online\s*:?\s*$/i.test((n.textContent || '').trim())
-          );
-          if (!labelEl) return null;
-          const valueEl =
-            labelEl.parentElement?.querySelector('.section_panel_value') ||
-            labelEl.nextElementSibling;
-          return valueEl ? clean(valueEl.textContent) : null;
-        })();
 
         // Heuristic: company suffix in the name, a premium/company badge,
         // or text mentioning "Wohnungsverwaltung"/"Hausverwaltung" → agency.
@@ -357,7 +341,7 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
         );
         const type = nameLooksAgency || badgeLooksAgency ? 'agency' : 'private';
 
-        return { name, type, memberSince, verified, online };
+        return { type };
       })();
 
       // ---- Tags / chips --------------------------------------------------
