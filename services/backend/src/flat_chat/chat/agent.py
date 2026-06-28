@@ -14,7 +14,7 @@ from pydantic_ai import Agent, RunContext
 
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.tools import toolset
+from flat_chat.chat.tools import ListingsCapability
 
 
 def _role_block() -> str:
@@ -103,11 +103,15 @@ INSTRUCTIONS = "\n\n".join(
 
 
 # Module-level Agent is the canonical Pydantic AI pattern — the Agent is
-# immutable config (toolset binding, instructions, retries). Per-request state
-# (model, deps, history) is passed at `agent.run(...)` time, so no DI needed.
+# immutable config (capability binding, instructions, retries). Per-request
+# state (model, deps, history) is passed at `agent.run(...)` time, so no DI
+# needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
+# primitive) — `ListingsCapability` wraps the existing search/listing toolset;
+# future tool groups (map/frontend command tools, distance tools) add their own
+# capabilities. See agent-compound-docs/decisions/pydantic-v2-migration.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    toolsets=[toolset],
+    capabilities=[ListingsCapability()],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

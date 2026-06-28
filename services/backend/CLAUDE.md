@@ -16,8 +16,8 @@ src/flat_chat/
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(toolsets=[toolset], instructions=...)
-                          tools.py        FunctionToolset[ChatDeps]
+                          agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
+                          tools.py        FunctionToolset[ChatDeps] + ListingsCapability
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
                           state.py        ChatSession (+ user_id) + ChatDeps

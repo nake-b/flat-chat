@@ -131,6 +131,7 @@ def setup_observability() -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from phoenix.otel import PROJECT_NAME, BatchSpanProcessor, HTTPSpanExporter
         from pydantic_ai import Agent
+        from pydantic_ai.models.instrumented import InstrumentationSettings
 
         provider = TracerProvider(
             resource=Resource.create({PROJECT_NAME: "default"}),
@@ -143,7 +144,19 @@ def setup_observability() -> None:
             BatchSpanProcessor(HTTPSpanExporter(endpoint=settings.phoenix_endpoint))
         )
         trace.set_tracer_provider(provider)
-        Agent.instrument_all()
+        # Pydantic AI v2 defaults the instrumentation data format to version 5
+        # (aggregated token usage on the run span). The current
+        # `openinference-instrumentation-pydantic-ai` (0.1.x) was built for the
+        # version-4 format and reads per-request usage attributes, so we pin
+        # version=4 (tracer_provider=None → the global provider set above) to
+        # keep Phoenix rendering token usage. Drop this pin once an openinference
+        # release supports version 5. See agent-compound-docs/decisions/
+        # pydantic-v2-migration.md.
+        Agent.instrument_all(
+            InstrumentationSettings(
+                version=4, use_aggregated_usage_attribute_names=False
+            )
+        )
         logger.info("Phoenix observability enabled → %s", settings.phoenix_endpoint)
     except ImportError:
         logger.warning("Phoenix deps not installed — run: uv sync")

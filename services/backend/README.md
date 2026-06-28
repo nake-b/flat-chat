@@ -69,7 +69,7 @@ src/flat_chat/
 │   └── models.py        # User ORM (app schema) + DUMMY_USER_ID (the get_user_id seam)
 ├── chat/
 │   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + dynamic-instruction injection
-│   ├── tools.py         # FunctionToolset[ChatDeps]: search / page / details; mirrors into UiState
+│   ├── tools.py         # FunctionToolset[ChatDeps] + ListingsCapability: search / page / details; mirrors into UiState
 │   ├── state.py         # ChatSession (history + SessionState + user_id), ChatDeps (StateHandler-compatible)
 │   ├── models.py        # app-schema ORMs: Conversation, Message, SessionStateRow
 │   ├── sessions.py      # SessionStore Protocol + InMemory + DbSessionStore (Postgres, per-session asyncio.Lock)
