@@ -32,7 +32,7 @@ from flat_chat.listings.models import Listing
 from flat_chat.main import app
 from flat_chat.users.models import User
 
-from ..conftest import DB_REQUIRED
+from ..conftest import DB_REQUIRED, ensure_app_users
 from ..fixtures.factories import gold_row as _gold_row
 from ..fixtures.factories import listing_row as _listing_row
 
@@ -56,6 +56,9 @@ async def _run_http(
         async with engine.connect() as conn:
             trans = await conn.begin()
             try:
+                # Auth columns are NOT NULL and `BookmarkService` no longer
+                # fabricates users — seed the real user rows the FK needs.
+                await ensure_app_users(conn, USER_A, USER_B)
                 for listing_kwargs, gold_kwargs in seeds:
                     await conn.execute(sa.insert(Listing).values(**listing_kwargs))
                     if gold_kwargs is not None:
@@ -132,8 +135,9 @@ def test_add_bookmark_is_idempotent(async_db_url):
     assert count == 1
 
 
-def test_add_bookmark_creates_user_on_demand(async_db_url):
-    """A user with no prior conversation can bookmark — the user row is upserted."""
+def test_add_bookmark_for_authenticated_user(async_db_url):
+    """An authenticated user can bookmark — the FK resolves against their real
+    `app.users` row (no on-demand user fabrication post-auth)."""
     listing = _listing_row()
 
     async def body(client, session):

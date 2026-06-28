@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from flat_chat.listings.bookmarks_models import Bookmark
 from flat_chat.listings.context import ListingCard
 from flat_chat.listings.service import ListingService
-from flat_chat.users.models import User
 
 
 class BookmarkService:
@@ -36,18 +35,12 @@ class BookmarkService:
     async def add(self, user_id: str, listing_id: str) -> None:
         """Upsert a bookmark. Idempotent — re-adding is a no-op.
 
-        Also upserts the user row in the same transaction. `DbSessionStore.create`
-        lazily materialises the dummy user on the first conversation, but a
-        brand-new user may bookmark before chatting; without the upsert here
-        the FK would fail.
+        The caller is always an authenticated user (the route resolves
+        `get_user_id` → `current_active_user`), so the `app.users` row already
+        exists and the FK is satisfied — no user upsert needed here.
         """
         user_uuid = uuid.UUID(user_id)
         listing_uuid = uuid.UUID(listing_id)
-        await self.db.execute(
-            pg_insert(User)
-            .values(id=user_uuid)
-            .on_conflict_do_nothing(index_elements=["id"])
-        )
         await self.db.execute(
             pg_insert(Bookmark)
             .values(user_id=user_uuid, listing_id=listing_uuid)

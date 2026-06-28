@@ -16,7 +16,7 @@ seed; the dev user is created by `scripts/seed_users.py`. See AUTH.md and
 agent-compound-docs/decisions/session-persistence.md.
 
 Revision ID: 0002_user_auth_columns
-Revises: 0001_app_users_sessions
+Revises: 0002_app_bookmarks
 Create Date: 2026-06-28
 """
 
@@ -26,7 +26,12 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0002_user_auth_columns"
-down_revision: str | Sequence[str] | None = "0001_app_users_sessions"
+# Chained after 0002_app_bookmarks (both originally branched from
+# 0001_app_users_sessions) to linearize the app-schema history into a single
+# head. Order is immaterial — auth adds columns to app.users, bookmarks adds a
+# table — but a DB already at 0002_app_bookmarks reconciles by applying just
+# this migration on the next `upgrade head`.
+down_revision: str | Sequence[str] | None = "0002_app_bookmarks"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

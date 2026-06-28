@@ -257,7 +257,11 @@ class DbSessionStore:
             await db.execute(
                 update(Conversation)
                 .where(Conversation.id == conv_uuid)
-                .values(updated_at=func.now())
+                # clock_timestamp() (real wall-clock), not now()
+                # (transaction_timestamp, constant within a txn) — so two saves
+                # in one transaction still get distinct, correctly-ordered
+                # updated_at values.
+                .values(updated_at=func.clock_timestamp())
             )
 
             existing = await db.scalar(
@@ -312,7 +316,7 @@ class DbSessionStore:
                 .values(conversation_id=conv_uuid, snapshot=snapshot)
                 .on_conflict_do_update(
                     index_elements=[SessionStateRow.conversation_id],
-                    set_={"snapshot": snapshot, "updated_at": func.now()},
+                    set_={"snapshot": snapshot, "updated_at": func.clock_timestamp()},
                 )
             )
 
