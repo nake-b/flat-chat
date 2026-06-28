@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # public registration — users exist only via this script. The dev account is
     # an admin (superuser); the optional professor account is a regular user and
     # is only created when BOTH prof vars are set. Override in any deployment.
-    dev_user_email: str = "dev@flat-chat.dev"
+    dev_user_email: str = "dev@flatchat.dev"
     dev_user_password: str = "dev"
     prof_user_email: str = ""
     prof_user_password: str = ""

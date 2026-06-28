@@ -30,7 +30,7 @@ Companion decision doc: [`agent-compound-docs/decisions/session-persistence.md`]
   created (no public signup) — run it with
   `uv run --project services/backend python scripts/seed_users.py`. It idempotently
   creates the admin (`DEV_USER_EMAIL` / `DEV_USER_PASSWORD`, defaults
-  `dev@flat-chat.dev` / `dev`, `is_superuser`) and, when both `PROF_USER_EMAIL` /
+  `dev@flatchat.dev` / `dev`, `is_superuser`) and, when both `PROF_USER_EMAIL` /
   `PROF_USER_PASSWORD` are set, a regular reviewer account. A standalone
   operational script, **not** a migration (migrations stay pure-schema). To add a
   user later: set env + re-run the seed, or create one via the `UserManager` in a

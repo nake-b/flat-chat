@@ -29,7 +29,7 @@ function Splash({ children }: { children: ReactNode }) {
 
 function LoginForm() {
   const login = useAuth((s) => s.login);
-  const [email, setEmail] = useState("dev@flat-chat.dev");
+  const [email, setEmail] = useState("dev@flatchat.dev");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

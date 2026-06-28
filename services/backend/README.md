@@ -145,7 +145,7 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `JWT_SECRET`               | Signs the fastapi-users login cookie. **Required** (no insecure default ships). `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Rotating it logs everyone out. | — (required)                       |
 | `JWT_LIFETIME_SECONDS`     | Login cookie lifetime                                                                                                  | `604800` (7 days)                  |
 | `COOKIE_SECURE`            | Login cookie `Secure` attribute — `false` for local HTTP, `true` for HTTPS deploys                                     | `false`                            |
-| `DEV_USER_EMAIL`           | Seeded admin login email (`scripts/seed_users.py`)                                                                     | `dev@flat-chat.dev`                |
+| `DEV_USER_EMAIL`           | Seeded admin login email (`scripts/seed_users.py`)                                                                     | `dev@flatchat.dev`                 |
 | `DEV_USER_PASSWORD`        | Seeded admin login password — override in any non-local deployment                                                     | `dev`                              |
 | `PROF_USER_EMAIL`          | Optional reviewer login (regular user) — seeded only when both prof vars are set                                       | — (empty)                          |
 | `PROF_USER_PASSWORD`       | Optional reviewer login password                                                                                       | — (empty)                          |
