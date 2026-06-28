@@ -131,7 +131,7 @@ class ChatService:
         self.place_service = place_service
         self.store = store
 
-    async def dispatch_agent_request(self, request: Request) -> Response:
+    async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
         # Parse the AG-UI request envelope first so we can resolve the
         # session from its `thread_id` / conversation_id. The adapter
         # subsequently runs the agent, streams events back, and reads
@@ -162,18 +162,20 @@ class ChatService:
         run_id_var.set(adapter.run_input.run_id or "")
         logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
 
-        # TODO(auth): ownership check. The REST routes (GET /messages, /state)
-        # 404 a foreign conversation via `_load_owned`, but this mutation path
-        # resolves the session purely from the envelope's thread_id with no
-        # `user_id` comparison — so once `get_user_id()` returns a real user
-        # (stage 2/3), any caller could continue someone else's thread. Moot
-        # today (single dummy user). When auth lands, gate `get()` here on the
-        # request user the same way `_load_owned` does. See AUTH.md.
+        # Ownership check — mirrors `api/chat.py:_load_owned` for the REST reads.
+        # The session is resolved from the envelope's thread_id; gate it on the
+        # authenticated `user_id` so a caller who knows (or guesses) a foreign
+        # thread_id can't continue or read someone else's conversation through
+        # the agent. A mismatch is reported as "not found" (not "forbidden") so
+        # existence doesn't leak — same 404-not-403 contract as the REST routes.
         try:
             session = await self.store.get(session_id)
         except SessionNotFoundError:
             logger.warning("Agent request for unknown session")
             raise
+        if session.user_id != user_id:
+            logger.warning("Agent request for foreign session — 404")
+            raise SessionNotFoundError(session_id)
 
         # Session exists, so lock() will not raise. Resolve the lock here so
         # the inner generator below holds a reference for the stream's

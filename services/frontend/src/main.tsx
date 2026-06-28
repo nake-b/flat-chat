@@ -6,6 +6,7 @@ import { HttpAgent } from "@ag-ui/client";
 import App from "./App";
 import { AGENT_NAME } from "./state/UiState";
 import { ConversationRecovery } from "./components/ConversationRecovery";
+import { LoginGate } from "./components/LoginGate";
 import {
   createConversation,
   getConversationState,
@@ -153,6 +154,8 @@ function Bootstrap() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Bootstrap />
+    <LoginGate>
+      <Bootstrap />
+    </LoginGate>
   </StrictMode>,
 );

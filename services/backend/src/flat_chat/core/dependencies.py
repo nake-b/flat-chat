@@ -17,7 +17,8 @@ from flat_chat.listings.bookmarks_service import BookmarkService
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
-from flat_chat.users.models import DUMMY_USER_ID
+from flat_chat.users.auth import current_active_user
+from flat_chat.users.models import User
 
 # Process-lifetime singleton — survives across requests, dies with the worker.
 # Owns its own DB sessions (via AsyncSessionLocal), independent of the request
@@ -29,15 +30,19 @@ def get_session_store() -> SessionStore:
     return _session_store
 
 
-def get_user_id() -> str:
-    """Stage-1 identity seam — returns a fixed dummy user id (no auth yet).
+async def get_user_id(user: User = Depends(current_active_user)) -> str:
+    """The identity seam — resolves the authenticated user id from the cookie.
 
-    The dummy user row is upserted on demand in `DbSessionStore.create`. Stage 2
-    (anonymous per-browser cookie) and stage 3 (real auth → JWT `sub`) replace ONLY
-    this function — every route depends on `Depends(get_user_id)`, so call sites
-    never change. See session-persistence.md.
+    Every route that needs identity depends on `Depends(get_user_id)`; this is the
+    ONE place auth is wired in, so call sites never change. Resolves the
+    fastapi-users `current_active_user` (401 when there's no valid session cookie)
+    and returns its id as a string — the shape the storage layer + ownership
+    checks expect. See AUTH.md.
+
+    Tests override this dependency directly (`app.dependency_overrides[get_user_id]`)
+    to run as an arbitrary user without minting a real cookie.
     """
-    return DUMMY_USER_ID
+    return str(user.id)
 
 
 def get_listing_service(

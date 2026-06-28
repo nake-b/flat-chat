@@ -13,7 +13,8 @@ Status: **implemented** (this is the as-built record; supersedes the former
 - **`app.*` schema** (backend-owned, migration `0001_app_users_sessions`):
   `users`, `conversations`, `messages`, `session_state`.
 - **`DbSessionStore`** behind the existing `SessionStore` Protocol (now async).
-- **`get_user_id()` seam** returning a single hardcoded **dummy** user (no auth).
+- **`get_user_id()` seam** — now resolves the authenticated fastapi-users user
+  from the session cookie (real password auth; see [`AUTH.md`](../../AUTH.md)).
 - **Backend is history-authoritative** — it can run the agent on DB-reconstructed
   history, so a reload preserves agent memory even if the frontend chat is empty.
 - **Endpoints**: `GET /api/conversations/{id}/state` (new recovery primitive),
@@ -55,10 +56,14 @@ Status: **implemented** (this is the as-built record; supersedes the former
 
 ## Data model (`app.*`)
 
-- `users(id, created_at, updated_at)` — minimal. The dummy user is **upserted on
-  demand** in `DbSessionStore.create` (`INSERT … ON CONFLICT DO NOTHING`), NOT
-  seeded by a migration — keeps the migration pure-schema (clean round-trip) and
-  matches the future anonymous-user upsert path.
+- `users(id, created_at, updated_at, email, hashed_password, is_active,
+  is_superuser, is_verified)` — the auth columns (migration `0002`) are **NOT NULL**
+  for `email`/`hashed_password`: every user is a real account, no dummy/placeholder
+  rows. `DbSessionStore.create` no longer fabricates a user — a conversation can
+  only reference a user that already exists (created by the seed script). The dev
+  user is created by `scripts/seed_users.py` (idempotent operational script), NOT a
+  migration — keeps migrations pure-schema. `0002` adds NOT-NULL columns with no
+  default, so it runs against an empty `app.users` (fresh/refreshed dev DB).
 - `conversations(id pk, user_id fk→app.users CASCADE, title, archived_at, created_at, updated_at)`
   — `id` == AG-UI `thread_id` (client-supplied, no server default). `title` is
   populated by a background LLM call after the first completed turn (see "Sidebar
@@ -100,15 +105,17 @@ Status: **implemented** (this is the as-built record; supersedes the former
   is robust to tool-message count inflation that would break a length comparison.
 - **Linear history, no branching.** A goal-directed search assistant doesn't need
   it; adding a nullable `parent_id` later is additive. `seq` is display-order only.
-- **Auth: dummy user now, claim-in-place later.** A single `get_user_id()`
-  dependency is the only thing that changes across stages: stage 1 fixed dummy id →
-  stage 2 anonymous per-browser cookie → stage 3 real auth (JWT `sub`). The `users`
-  row is designed for **claim-in-place** (add nullable `email`/`password_hash`/
-  `auth_provider`/`claimed_at` and UPDATE the same row on signup) so the PK never
-  changes and conversations/bookmarks never re-key. For real auth later, the
-  research favoured **self-hosted Logto** (lightest OSS IdP, official FastAPI +
-  React SDKs) or `fastapi-users` + Authlib; **Clerk/Firebase are disqualified**
-  (US-only data, GDPR) and `passlib` is dead on Python 3.13+ (use `pwdlib`).
+- **Auth: real password login via fastapi-users** (shipped — see
+  [`AUTH.md`](../../AUTH.md)). The single `get_user_id()` dependency is still the
+  only identity seam, but it now resolves the authenticated fastapi-users
+  `current_active_user` from a signed httpOnly JWT cookie instead of a constant.
+  Passwords are Argon2-hashed via `pwdlib`. The planned stage 2 (anonymous cookie)
+  was **skipped** — there was no anonymous data to preserve for a fresh,
+  reviewer-facing deployment, so we went straight to real accounts. **Logto** is
+  kept as the documented future migration (social/OIDC, multi-app); **Authlib**
+  (social) is deferred; **Clerk/Firebase** stay disqualified (US data, GDPR).
+  The `app.users` PK is unchanged (`gen_random_uuid()` from `0001`), so
+  conversations/bookmarks never re-key.
 - **Bookmarks: planned, not built.** When added: a per-user join table keyed
   `UNIQUE(user_id, listing_id)`. Decision (overriding the earlier snapshot
   recommendation): **keep a plain `listing_id` reference** (the team's call). Note

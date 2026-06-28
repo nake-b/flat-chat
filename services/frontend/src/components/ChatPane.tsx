@@ -3,8 +3,11 @@ import { CopilotChat } from "@copilotkit/react-ui";
 import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import { useSidebarOpen } from "../hooks/useSidebarOpen";
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
+import { useAuth } from "../hooks/useAuth";
 
 export function ChatPane() {
+  const userEmail = useAuth((s) => s.user?.email);
+  const logout = useAuth((s) => s.logout);
   // One wildcard registration drives inline pills for every backend tool
   // call. The label per lifecycle phase lives in `state/toolStatus.ts`
   // (single source of UI copy). Adding a new tool = one entry there;
@@ -93,6 +96,25 @@ export function ChatPane() {
           the Berlin Real Estate (AI) Agent
         </span>
       </header>
+
+      {/* Slim action strip — signed-in identity on the left, sign-out on the
+          right. "+ New chat" lives in the conversation sidebar, not here. */}
+      <div className="flex items-center justify-between border-b border-paper-rule px-5 py-2">
+        <span
+          title={userEmail ?? undefined}
+          className="truncate font-mono text-[10px] tracking-[0.08em] text-ink-ghost"
+        >
+          {userEmail ?? ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => void logout()}
+          title="Sign out"
+          className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+        >
+          Sign out
+        </button>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <CopilotChat
