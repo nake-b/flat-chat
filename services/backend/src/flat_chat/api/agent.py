@@ -8,7 +8,7 @@ from flat_chat.chat.service import (
     LlmProviderUnavailableError,
 )
 from flat_chat.chat.sessions import SessionNotFoundError
-from flat_chat.core.dependencies import get_chat_service
+from flat_chat.core.dependencies import get_chat_service, get_user_id
 
 router = APIRouter()
 
@@ -39,6 +39,7 @@ def runtime_threads() -> dict[str, list[object]]:
 @router.post("")
 async def run_agent(
     request: Request,
+    user_id: str = Depends(get_user_id),
     chat: ChatService = Depends(get_chat_service),
 ) -> Response:
     """AG-UI streaming endpoint.
@@ -64,7 +65,7 @@ async def run_agent(
     that CopilotKit issues over GET.
     """
     try:
-        response = await chat.dispatch_agent_request(request)
+        response = await chat.dispatch_agent_request(request, user_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
     except InvalidAgentRequestError as exc:

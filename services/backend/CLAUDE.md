@@ -11,6 +11,7 @@ src/flat_chat/
   main.py              → FastAPI app + lifespan + router registration
   core/                → DB engines (sync + async), config, observability, deps
   api/                 → HTTP routes — thin
+                          auth.py     fastapi-users routers mounted under /api/auth
                           chat.py     POST /api/conversations + GET messages + GET state
                           agent.py    POST /api/agent (AG-UI SSE)
                           listings.py GET /api/listings/{id} (detail)
@@ -26,7 +27,9 @@ src/flat_chat/
                           service.py      ChatService — dispatches AG-UI run, history-authoritative
                           providers/      Provider dispatch (Anthropic / Azure)
   users/               → Identity domain (app.* owned).
-                          models.py       User ORM + DUMMY_USER_ID (get_user_id seam)
+                          models.py       User ORM (fastapi-users columns)
+                          auth.py         fastapi-users wiring (UserManager,
+                                          cookie+JWT backend, current_active_user)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total, facets)
                           places.py       PlaceService — locate_place trigram lookup over world.named_places
@@ -271,11 +274,15 @@ When adding a new search filter, add a test in the same change.
 
 ## TODOs
 
-- Auth not implemented — a single dummy user via the `get_user_id()` seam
-  (`core/dependencies.py`), upserted on demand by `DbSessionStore.create`.
-  `users.models.User` is designed for claim-in-place (add nullable
-  `email`/`password_hash`/`auth_provider`/`claimed_at`, UPDATE the same row on
-  signup → PK never changes). See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+- Auth: real password login via **fastapi-users** (`users/auth.py`). `get_user_id()`
+  (`core/dependencies.py`) resolves the authenticated user from a signed httpOnly
+  JWT cookie — still the single seam, so call sites never change. Argon2 via
+  `pwdlib`. Dev login seeded by `scripts/seed_users.py`. `JWT_SECRET` is
+  required. `POST /api/agent` is now ownership-checked (404-not-403). Per-user LLM
+  rate-limiting / cost-control gets its own service when built (not yet — no empty
+  placeholder). Logto is the
+  documented future migration; Authlib (social) deferred. See
+  [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - Bookmarks not implemented; slot ready (`listings/bookmarks_service.py`
   + `api/bookmarks.py` following the same pattern as listings). Decision: a
   per-user join table with a plain `listing_id` reference (see session-persistence.md).

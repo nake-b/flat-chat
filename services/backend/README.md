@@ -44,10 +44,12 @@ green `just check` means green CI.
 | Endpoint                                  | Method | Description                                                                                                |
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
-| `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`                |
+| `/api/auth/login` · `/logout`             | POST   | fastapi-users cookie auth (login is an OAuth2 password form). Sets/clears the httpOnly session cookie       |
+| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only, see AUTH.md)                  |
+| `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`. Auth required  |
 | `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only, ownership-checked)                     |
 | `/api/conversations/{id}/state`           | GET    | Latest `SessionState` snapshot — the reload-recovery primitive (map/cards/active listing), ownership-checked |
-| `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas      |
+| `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas. Auth + ownership-checked (404-not-403) |
 
 The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx. Sending a new user message goes through `/api/agent` (AG-UI streaming). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed when the agent path landed.
 
@@ -140,6 +142,13 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |
 | `PHOENIX_ENDPOINT`         | Phoenix OTLP endpoint                                                                                                  | `http://localhost:6006/v1/traces`  |
 | `LOG_LEVEL`                | Log level for the `flat_chat` namespace (DEBUG / INFO / WARNING / ERROR). Third-party loggers stay at WARNING.         | `INFO`                             |
+| `JWT_SECRET`               | Signs the fastapi-users login cookie. **Required** (no insecure default ships). `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Rotating it logs everyone out. | — (required)                       |
+| `JWT_LIFETIME_SECONDS`     | Login cookie lifetime                                                                                                  | `604800` (7 days)                  |
+| `COOKIE_SECURE`            | Login cookie `Secure` attribute — `false` for local HTTP, `true` for HTTPS deploys                                     | `false`                            |
+| `DEV_USER_EMAIL`           | Seeded admin login email (`scripts/seed_users.py`)                                                                     | `dev@flatchat.dev`                 |
+| `DEV_USER_PASSWORD`        | Seeded admin login password — override in any non-local deployment                                                     | `dev`                              |
+| `PROF_USER_EMAIL`          | Optional reviewer login (regular user) — seeded only when both prof vars are set                                       | — (empty)                          |
+| `PROF_USER_PASSWORD`       | Optional reviewer login password                                                                                       | — (empty)                          |
 
 ## Debugging
 
