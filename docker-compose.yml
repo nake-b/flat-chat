@@ -124,6 +124,10 @@ services:
       - NOMINATIM_BASE_URL=${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
       - GEOCODER_USER_AGENT=${GEOCODER_USER_AGENT:-flat-chat-geocoder/1.0 (+https://github.com/nake-b/flat-chat)}
       - GEOCODER_RATE_LIMIT_S=${GEOCODER_RATE_LIMIT_S:-1.0}
+      # Silver freshness cutoff: listings scraped before this ISO date are
+      # treated as stale and excluded from `listings` on every silver run
+      # (skipped in transform + pruned). Advance it to drop an older batch.
+      - SILVER_MIN_SCRAPED_AT=${SILVER_MIN_SCRAPED_AT:-2026-06-01}
 
   # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
   # Opt-in via `--profile geo-context`; does not run on `docker compose up`.
