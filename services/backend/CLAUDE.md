@@ -233,6 +233,16 @@ them for result-time label application (`noise_total_lden=58` → `"lively"`).
 Both directions share the same numbers. A threshold tweak is one place
 to edit; no gold rebuild needed.
 
+The same numbers also reach the **LLM** without drift: the
+`search_apartments` docstring + phrase map (`chat/tools.py`) write the
+distance ladder / noise / greenery / density cutoffs as `{{TOKEN}}`
+sentinels, rendered from the constants by `render_threshold_tokens` /
+`describe_distance_ladder` (`listings/labels.py`). Because Pydantic AI
+parses docstrings eagerly, `search_apartments` is registered manually
+(`toolset.tool(...)`) AFTER its `__doc__` is rendered — don't re-add the
+`@toolset.tool` decorator or the sentinels would ship raw. Guarded by
+`test_search_tool_docs_generated_from_thresholds`.
+
 Each constant traces to a row in
 [`geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md).
 
