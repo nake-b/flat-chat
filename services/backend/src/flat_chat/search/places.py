@@ -28,7 +28,8 @@ from geoalchemy2 import functions as geo_func
 from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.context import (
+from flat_chat.listings.models import named_places
+from flat_chat.listings.overlays import (
     OVERLAY_CLUSTER_RADIUS_M,
     OVERLAY_COORD_DIGITS,
     OVERLAY_SIMPLIFY_TOLERANCE,
@@ -36,7 +37,6 @@ from flat_chat.listings.context import (
     MapOverlay,
     OverlayOrigin,
 )
-from flat_chat.listings.models import named_places
 
 logger = logging.getLogger(__name__)
 

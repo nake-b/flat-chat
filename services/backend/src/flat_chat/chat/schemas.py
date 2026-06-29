@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field
 from flat_chat.listings.context import (
     ListingCard,
     ListingDetail,
-    MapOverlay,
     MarkerChannel,
     TravelTimeFilter,
 )
-from flat_chat.search.schemas import SearchParams
+from flat_chat.listings.overlays import MapOverlay
+from flat_chat.search.schemas import ResultFacets, SearchParams
 
 
 class ConversationResponse(BaseModel):
@@ -60,6 +60,7 @@ class SessionStateResponse(BaseModel):
     total_results: int = 0
     result_markers: ColumnarMarkers = Field(default_factory=ColumnarMarkers)
     preview_cards: list[ListingCard] = Field(default_factory=list)
+    facets: ResultFacets | None = None
     active_id: str | None = None
     active_listing_detail: ListingDetail | None = None
     map_overlays: list[MapOverlay] = Field(default_factory=list)

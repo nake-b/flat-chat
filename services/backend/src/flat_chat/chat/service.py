@@ -21,7 +21,7 @@ from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
-from flat_chat.search.transit_routes import TransitRouteService
+from flat_chat.search.transit_overlays import TransitOverlayService
 
 try:
     from openinference.instrumentation import using_session
@@ -124,18 +124,18 @@ class ChatService:
         search_service: SearchService,
         listing_service: ListingService,
         place_service: PlaceService,
-        transit_route_service: TransitRouteService,
+        transit_overlay_service: TransitOverlayService,
         routing_service: RoutingService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.place_service = place_service
-        self.transit_route_service = transit_route_service
+        self.transit_overlay_service = transit_overlay_service
         self.routing_service = routing_service
         self.store = store
 
-    async def dispatch_agent_request(self, request: Request) -> Response:
+    async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
         # Parse the AG-UI request envelope first so we can resolve the
         # session from its `thread_id` / conversation_id. The adapter
         # subsequently runs the agent, streams events back, and reads
@@ -166,18 +166,20 @@ class ChatService:
         run_id_var.set(adapter.run_input.run_id or "")
         logger.info("Agent dispatch: %s", _summarise_prompt(adapter.run_input))
 
-        # TODO(auth): ownership check. The REST routes (GET /messages, /state)
-        # 404 a foreign conversation via `_load_owned`, but this mutation path
-        # resolves the session purely from the envelope's thread_id with no
-        # `user_id` comparison — so once `get_user_id()` returns a real user
-        # (stage 2/3), any caller could continue someone else's thread. Moot
-        # today (single dummy user). When auth lands, gate `get()` here on the
-        # request user the same way `_load_owned` does. See AUTH.md.
+        # Ownership check — mirrors `api/chat.py:_load_owned` for the REST reads.
+        # The session is resolved from the envelope's thread_id; gate it on the
+        # authenticated `user_id` so a caller who knows (or guesses) a foreign
+        # thread_id can't continue or read someone else's conversation through
+        # the agent. A mismatch is reported as "not found" (not "forbidden") so
+        # existence doesn't leak — same 404-not-403 contract as the REST routes.
         try:
             session = await self.store.get(session_id)
         except SessionNotFoundError:
             logger.warning("Agent request for unknown session")
             raise
+        if session.user_id != user_id:
+            logger.warning("Agent request for foreign session — 404")
+            raise SessionNotFoundError(session_id)
 
         # Session exists, so lock() will not raise. Resolve the lock here so
         # the inner generator below holds a reference for the stream's
@@ -196,7 +198,7 @@ class ChatService:
             search_service=self.search_service,
             listing_service=self.listing_service,
             place_service=self.place_service,
-            transit_route_service=self.transit_route_service,
+            transit_overlay_service=self.transit_overlay_service,
             routing_service=self.routing_service,
             session=session,
             state=deps_state,
@@ -296,6 +298,14 @@ def merge_incoming_state(
       still present in the incoming set; additions in the envelope are ignored
       (overlay content is agent-owned). This makes dismissal sticky and
       agent-visible without letting the UI inject geometry.
+
+      Subtlety: absence-from-incoming is read as *dismissal*, which is correct
+      only because CopilotKit applies the agent's `StateSnapshotEvent` (the
+      freshly-drawn overlay) during the SSE stream, and the composer is locked
+      until the stream ends — so the next envelope always reflects the latest
+      drawn set. A future "send while streaming" path would break that
+      invariant (a just-drawn overlay could be absent and get dropped); it would
+      need an explicit dismissed-id list rather than set-difference.
 
     `incoming is None` (parse failure / pre-overlay client) → persisted wins
     untouched.

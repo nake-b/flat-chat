@@ -412,8 +412,8 @@ async def search_apartments(
 
     # Execute the search. SearchService drops null-coordinate listings and
     # returns markers (EVERY match, ≤ MARKER_CAP), the top-N preview cards,
-    # and the total.
-    markers, preview, total = await ctx.deps.search_service.search(params)
+    # the total, and whole-set facets (price/area ranges, neighbourhood counts).
+    markers, preview, total, facets = await ctx.deps.search_service.search(params)
 
     # SessionState is the canonical in-memory snapshot. Both the LLM (via
     # build_dynamic_state_prompt) and the frontend (via the AG-UI state
@@ -422,6 +422,7 @@ async def search_apartments(
     ctx.deps.state.total_results = total
     ctx.deps.state.result_markers = markers
     ctx.deps.state.preview_cards = preview
+    ctx.deps.state.facets = facets
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 
@@ -647,19 +648,23 @@ async def show_on_map(
             '(e.g. "U7") to draw something.'
         )
 
+    # Resolve each ref/line to a geometry and pin it; track what resolved
+    # (`drawn`) vs what didn't (`missed`) so the return note can report both.
     drawn: list[str] = []
     missed: list[str] = []
 
+    # Places: each opaque place_ref → a named_places geometry via PlaceService.
     for ref in places:
         overlay = await ctx.deps.place_service.overlay_geometry(ref, origin="pinned")
         if overlay is not None:
-            _upsert_overlay(ctx.deps.state, overlay)
+            _upsert_overlay(ctx.deps.state, overlay)  # replaces a same-id overlay
             drawn.append(overlay.label)
         else:
             missed.append(f'place_ref "{ref}"')
 
+    # Transit lines: line name → route-shape geometry (display-only resolver).
     for line in lines:
-        overlay = await ctx.deps.transit_route_service.route_geometry(
+        overlay = await ctx.deps.transit_overlay_service.route_geometry(
             line, origin="pinned"
         )
         if overlay is not None:
@@ -723,6 +728,8 @@ async def hide_on_map(ctx: RunContext[ChatDeps], targets: list[str]) -> str:
     if not wanted:
         return "Tell me which overlay to hide (a label or id from the map)."
 
+    # Match case-insensitively on either id or label — the agent passes whatever
+    # it saw in <current_state> (usually the label, e.g. "U8").
     norm = {w.casefold() for w in wanted}
     removed = [
         o for o in overlays if o.id.casefold() in norm or o.label.casefold() in norm
@@ -730,16 +737,21 @@ async def hide_on_map(ctx: RunContext[ChatDeps], targets: list[str]) -> str:
     if not removed:
         return f"Nothing matching {', '.join(wanted)} is on the map right now."
 
+    # Drop the matched overlays by id (label collisions are theoretically
+    # possible; id is the stable key).
     removed_ids = {o.id for o in removed}
     ctx.deps.state.map_overlays = [o for o in overlays if o.id not in removed_ids]
 
     note = f"Removed {', '.join(o.label for o in removed)} from the map."
 
+    # Report any targets that matched nothing (not an error — just feedback).
     matched = {o.id.casefold() for o in removed} | {o.label.casefold() for o in removed}
     not_found = [w for w in wanted if w.casefold() not in matched]
     if not_found:
         note += f" ({', '.join(not_found)} wasn't drawn.)"
 
+    # A `search`-origin overlay is redrawn by the next search (it mirrors an
+    # active filter), so warn that hiding alone won't keep it off the map.
     search_tied = [o.label for o in removed if o.origin == "search"]
     if search_tied:
         note += (
@@ -779,7 +791,7 @@ async def _rebuild_search_overlays(ctx: RunContext[ChatDeps], params) -> None:
 
     if params.transit is not None and params.transit.lines:
         for line in params.transit.lines:
-            overlay = await ctx.deps.transit_route_service.route_geometry(
+            overlay = await ctx.deps.transit_overlay_service.route_geometry(
                 line, origin="search"
             )
             if overlay is not None and overlay.id not in kept_ids:

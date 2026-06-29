@@ -26,11 +26,17 @@ dependencies = [
     # instrumentation version 4). We pin Pydantic AI's emitted instrumentation
     # to version 4 in core/observability.py so this enrichment still renders.
     "openinference-instrumentation-pydantic-ai>=0.1,<0.2",
+    "fastapi-users[sqlalchemy]>=15.0.5",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.11",
+    # Floor at the locked formatter version. ruff's `format` style changes
+    # between releases, so a stale local ruff (the old `>=0.11` floor) silently
+    # reformats files CI's locked ruff rejects — `ruff format --check` then fails
+    # in CI only. Floor == lock keeps local and CI byte-identical. Always invoke
+    # via `uv run ruff` so the locked version is used, not a global/IDE install.
+    "ruff>=0.15.12",
     # ty<0.0.54 flaked on the GtfsMode dict-comprehension inference (passed
     # locally, failed in CI on the same 0.0.34 build). Floor at the version
     # that infers it deterministically.

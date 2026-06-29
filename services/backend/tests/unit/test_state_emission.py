@@ -148,7 +148,9 @@ class _MockSearch:
     async def search(self, params):
         markers = [Marker(id="x1", lat=52.5, lng=13.4, channel_value=1000.0)]
         preview = [ListingCard(id="x1", title="Apt", lat=52.5, lng=13.4)]
-        return markers, preview, 1
+        # (markers, preview, total, facets) — facets added by the result-set
+        # facets feature; this test doesn't assert on them.
+        return markers, preview, 1, None
 
 
 def _request(envelope: dict) -> Request:
@@ -191,7 +193,7 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
             search_service=_MockSearch(),
             listing_service=None,
             place_service=None,
-            transit_route_service=None,
+            transit_overlay_service=None,
             routing_service=None,
             store=store,
         )
@@ -207,7 +209,7 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
                 "context": [],
                 "forwardedProps": {},
             }
-            resp = await chat.dispatch_agent_request(_request(envelope))
+            resp = await chat.dispatch_agent_request(_request(envelope), _USER)
             chunks = [chunk async for chunk in resp.body_iterator]
         finally:
             service_mod.build_chat_model = original

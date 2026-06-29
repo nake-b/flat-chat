@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from flat_chat.routing.service import RoutingService
     from flat_chat.search.places import PlaceService
     from flat_chat.search.service import SearchService
-    from flat_chat.search.transit_routes import TransitRouteService
+    from flat_chat.search.transit_overlays import TransitOverlayService
 
 
 @dataclass
@@ -68,7 +68,7 @@ class ChatDeps:
     search_service: SearchService
     listing_service: ListingService
     place_service: PlaceService
-    transit_route_service: TransitRouteService
+    transit_overlay_service: TransitOverlayService
     routing_service: RoutingService
     session: ChatSession
     # Overwritten per-request by the dispatch path from session.state +

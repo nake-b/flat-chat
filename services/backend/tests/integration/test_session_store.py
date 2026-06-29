@@ -31,7 +31,7 @@ from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import DbSessionStore, SessionNotFoundError
 from flat_chat.listings.context import Marker
 
-from ..conftest import DB_REQUIRED
+from ..conftest import DB_REQUIRED, ensure_app_users
 
 pytestmark = DB_REQUIRED
 
@@ -44,6 +44,7 @@ async def _run_with_store(async_url, body):
         async with engine.connect() as conn:
             trans = await conn.begin()
             try:
+                await ensure_app_users(conn, USER)
                 factory = async_sessionmaker(
                     bind=conn,
                     expire_on_commit=False,

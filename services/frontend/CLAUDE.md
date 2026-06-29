@@ -17,7 +17,9 @@ src/
     conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
     toolStatus.ts         → Tool-name → status-pill label registry
     overlayStyles.ts      → Map-overlay APPEARANCE registry: (kind, geometry type) → paint
-                            (frontend owns colors/opacity; backend sends semantics only)
+                            (frontend owns colors/opacity; backend sends semantics only).
+                            Also owns the motion constants: breathing area overlays,
+                            transit station dots + pulsing aura, BVG line-badge palette
     cardCache.ts          → zustand store of lazily-hydrated tier-2 ListingCards (by id)
   hooks/
     useSessionState.ts    → CANONICAL. useCoAgent<SessionState> + activate() + dismissOverlay()
@@ -27,7 +29,9 @@ src/
     session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
     ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
-    ChatPane.tsx, MapPane.tsx (incl. OverlayLayer), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
+    ChatPane.tsx, MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
+                            pins: breathing fills, transit station dots + line badges, via one
+                            prefers-reduced-motion-gated rAF loop), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
     OverlayLegend.tsx     → chips for drawn map_overlays, each with × dismiss
 ```
 

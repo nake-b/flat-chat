@@ -62,7 +62,7 @@ def test_null_noise_optimistic_includes_listing_in_quiet_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(max_noise="quiet"))
+        results, _preview, _, _ = await service.search(SearchParams(max_noise="quiet"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -81,7 +81,7 @@ def test_null_density_drops_listing_from_sparse_filter(async_db_url):
     ]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(density="sparse"))
+        results, _preview, _, _ = await service.search(SearchParams(density="sparse"))
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -96,7 +96,7 @@ def test_missing_transit_junction_row_drops_listing_from_transit_filter(async_db
 
     async def body(service):
         params = SearchParams(transit=TransitFilter(distance="near"))
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)
@@ -119,7 +119,7 @@ def test_null_inside_ring_drops_listing_from_ring_filter(async_db_url):
 
     async def body(service):
         params = SearchParams(inside_ring=True)
-        results, _preview, _ = await service.search(params)
+        results, _preview, _, _ = await service.search(params)
         return {r.id for r in results}
 
     ids = _drive(async_db_url, seeds, body)
@@ -133,7 +133,7 @@ def test_missing_park_junction_row_drops_listing_from_near_park_filter(async_db_
     seeds = [(no_park, _gold_row(no_park["id"]))]
 
     async def body(service):
-        results, _preview, _ = await service.search(SearchParams(near_park="near"))
+        results, _preview, _, _ = await service.search(SearchParams(near_park="near"))
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body)

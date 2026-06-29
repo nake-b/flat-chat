@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import Marker
+from flat_chat.search.schemas import DistrictCount, NumericFacet, ResultFacets
 
 
 def _state_with_markers(n: int) -> SessionState:
@@ -159,3 +160,36 @@ def test_validator_allows_absent_values_column():
     state = SessionState.model_validate(envelope)
     assert [m.id for m in state.result_markers] == ["a", "b"]
     assert all(m.channel_value is None for m in state.result_markers)
+
+
+def test_facets_round_trip():
+    # `facets` is a plain nested model (no custom serializer like markers): it
+    # must survive model_dump → model_validate so the AG-UI envelope echo
+    # doesn't drop it on the way back in.
+    state = SessionState(
+        total_results=33,
+        facets=ResultFacets(
+            price_warm_eur=NumericFacet(min=620.0, median=1180.0, max=1950.0),
+            area_sqm=NumericFacet(min=28.0, median=64.0, max=112.0),
+            districts=[
+                DistrictCount(district="Prenzlauer Berg", count=21),
+                DistrictCount(district="Wedding", count=9),
+            ],
+        ),
+    )
+    restored = SessionState.model_validate(state.model_dump())
+    assert restored.facets is not None
+    assert restored.facets.price_warm_eur.max == 1950.0
+    assert restored.facets.area_sqm.median == 64.0
+    assert [d.district for d in restored.facets.districts] == [
+        "Prenzlauer Berg",
+        "Wedding",
+    ]
+    assert restored.facets.districts[0].count == 21
+
+
+def test_facets_defaults_to_none():
+    # No search yet → no facets; must round-trip as None (omitted block).
+    assert SessionState().facets is None
+    restored = SessionState.model_validate(SessionState().model_dump())
+    assert restored.facets is None

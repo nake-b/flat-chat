@@ -17,7 +17,10 @@ export interface StoredMessage {
 }
 
 export async function createConversation(): Promise<Conversation> {
-  const res = await fetch("/api/conversations", { method: "POST" });
+  const res = await fetch("/api/conversations", {
+    method: "POST",
+    credentials: "include",
+  });
   if (!res.ok) {
     throw new Error(`Failed to create conversation: ${res.status}`);
   }
@@ -30,7 +33,10 @@ export async function createConversation(): Promise<Conversation> {
 export async function getConversationState(
   id: string,
 ): Promise<SessionState | null> {
-  const res = await fetch(`/api/conversations/${encodeURIComponent(id)}/state`);
+  const res = await fetch(
+    `/api/conversations/${encodeURIComponent(id)}/state`,
+    { credentials: "include" },
+  );
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load conversation state: ${res.status}`);
@@ -44,6 +50,7 @@ export async function getConversationMessages(
 ): Promise<StoredMessage[]> {
   const res = await fetch(
     `/api/conversations/${encodeURIComponent(id)}/messages`,
+    { credentials: "include" },
   );
   if (res.status === 404) return [];
   if (!res.ok) {

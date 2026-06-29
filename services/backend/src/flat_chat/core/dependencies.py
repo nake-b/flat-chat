@@ -18,8 +18,9 @@ from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
-from flat_chat.search.transit_routes import TransitRouteService
-from flat_chat.users.models import DUMMY_USER_ID
+from flat_chat.search.transit_overlays import TransitOverlayService
+from flat_chat.users.auth import current_active_user
+from flat_chat.users.models import User
 
 # Process-lifetime singleton — survives across requests, dies with the worker.
 # Owns its own DB sessions (via AsyncSessionLocal), independent of the request
@@ -31,15 +32,19 @@ def get_session_store() -> SessionStore:
     return _session_store
 
 
-def get_user_id() -> str:
-    """Stage-1 identity seam — returns a fixed dummy user id (no auth yet).
+async def get_user_id(user: User = Depends(current_active_user)) -> str:
+    """The identity seam — resolves the authenticated user id from the cookie.
 
-    The dummy user row is upserted on demand in `DbSessionStore.create`. Stage 2
-    (anonymous per-browser cookie) and stage 3 (real auth → JWT `sub`) replace ONLY
-    this function — every route depends on `Depends(get_user_id)`, so call sites
-    never change. See session-persistence.md.
+    Every route that needs identity depends on `Depends(get_user_id)`; this is the
+    ONE place auth is wired in, so call sites never change. Resolves the
+    fastapi-users `current_active_user` (401 when there's no valid session cookie)
+    and returns its id as a string — the shape the storage layer + ownership
+    checks expect. See AUTH.md.
+
+    Tests override this dependency directly (`app.dependency_overrides[get_user_id]`)
+    to run as an arbitrary user without minting a real cookie.
     """
-    return DUMMY_USER_ID
+    return str(user.id)
 
 
 def get_listing_service(
@@ -61,10 +66,10 @@ def get_place_service(
     return PlaceService(db)
 
 
-def get_transit_route_service(
+def get_transit_overlay_service(
     db: AsyncSession = Depends(get_async_db),
-) -> TransitRouteService:
-    return TransitRouteService(db)
+) -> TransitOverlayService:
+    return TransitOverlayService(db)
 
 
 def get_routing_service() -> RoutingService:
@@ -77,7 +82,9 @@ def get_chat_service(
     search_service: SearchService = Depends(get_search_service),
     listing_service: ListingService = Depends(get_listing_service),
     place_service: PlaceService = Depends(get_place_service),
-    transit_route_service: TransitRouteService = Depends(get_transit_route_service),
+    transit_overlay_service: TransitOverlayService = Depends(
+        get_transit_overlay_service
+    ),
     routing_service: RoutingService = Depends(get_routing_service),
     store: SessionStore = Depends(get_session_store),
 ):
@@ -89,7 +96,7 @@ def get_chat_service(
         search_service=search_service,
         listing_service=listing_service,
         place_service=place_service,
-        transit_route_service=transit_route_service,
+        transit_overlay_service=transit_overlay_service,
         routing_service=routing_service,
         store=store,
     )
