@@ -93,7 +93,11 @@ async def _run_turn(
     capture: _CaptureTasks,
 ) -> None:
     chat = ChatService(
-        search_service=None, listing_service=None, place_service=None, store=store
+        search_service=None,
+        listing_service=None,
+        place_service=None,
+        transit_overlay_service=None,
+        store=store,
     )
     original_build = service_mod.build_chat_model
     service_mod.build_chat_model = lambda: chat_model

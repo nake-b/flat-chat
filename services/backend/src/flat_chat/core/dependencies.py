@@ -17,6 +17,7 @@ from flat_chat.listings.bookmarks_service import BookmarkService
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
+from flat_chat.search.transit_overlays import TransitOverlayService
 from flat_chat.users.auth import current_active_user
 from flat_chat.users.models import User
 
@@ -71,10 +72,19 @@ def get_place_service(
     return PlaceService(db)
 
 
+def get_transit_overlay_service(
+    db: AsyncSession = Depends(get_async_db),
+) -> TransitOverlayService:
+    return TransitOverlayService(db)
+
+
 def get_chat_service(
     search_service: SearchService = Depends(get_search_service),
     listing_service: ListingService = Depends(get_listing_service),
     place_service: PlaceService = Depends(get_place_service),
+    transit_overlay_service: TransitOverlayService = Depends(
+        get_transit_overlay_service
+    ),
     store: SessionStore = Depends(get_session_store),
 ):
     # Import here to break the import cycle: chat/service.py imports
@@ -85,5 +95,6 @@ def get_chat_service(
         search_service=search_service,
         listing_service=listing_service,
         place_service=place_service,
+        transit_overlay_service=transit_overlay_service,
         store=store,
     )

@@ -22,6 +22,7 @@ from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
+from flat_chat.search.transit_overlays import TransitOverlayService
 
 try:
     from openinference.instrumentation import using_session
@@ -124,11 +125,13 @@ class ChatService:
         search_service: SearchService,
         listing_service: ListingService,
         place_service: PlaceService,
+        transit_overlay_service: TransitOverlayService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.place_service = place_service
+        self.transit_overlay_service = transit_overlay_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
@@ -183,31 +186,18 @@ class ChatService:
         # StreamingResponse consumes the iterator after the function returns.
         lock = self.store.lock(session_id)
 
-        # Hydrate deps.state. Two sources merge here:
-        #   1. The session's persisted SessionState (results, search_params,
-        #      etc. — what tools mutated on prior turns and the store saved)
-        #   2. The incoming AG-UI envelope's state (frontend-driven changes,
-        #      especially `active_id` after a card click + the HTTP-fetched
-        #      `active_listing_detail` the frontend wrote back to state)
-        # The envelope wins for fields the frontend owns (active_id,
-        # active_listing_detail); the session wins for fields the agent
-        # owns (results, search_params, total_results).
-        # Deep copy: tools currently REASSIGN the tier lists (result_markers /
-        # preview_cards) so a shallow copy would be safe today, but a future
-        # tool that mutates a list in place (e.g. `.append`) would corrupt the
-        # persisted session state mid-run before `on_complete` reassigns it.
-        deps_state = session.state.model_copy(deep=True)
+        # Hydrate deps.state by merging the persisted server state (agent-owned
+        # fields) with the incoming AG-UI envelope (frontend-owned fields). The
+        # ownership rule lives in `merge_incoming_state` — one edit-site when a
+        # frontend-owned field is added.
         incoming_state = _extract_incoming_state(adapter)
-        if incoming_state is not None:
-            if incoming_state.active_id is not None:
-                deps_state.active_id = incoming_state.active_id
-            if incoming_state.active_listing_detail is not None:
-                deps_state.active_listing_detail = incoming_state.active_listing_detail
+        deps_state = merge_incoming_state(session.state, incoming_state)
 
         deps = ChatDeps(
             search_service=self.search_service,
             listing_service=self.listing_service,
             place_service=self.place_service,
+            transit_overlay_service=self.transit_overlay_service,
             session=session,
             state=deps_state,
         )
@@ -319,6 +309,61 @@ async def _generate_and_persist_title(
             )
     except Exception:
         logger.exception("Background title generation failed for %s", session_id)
+
+
+# Fields the FRONTEND owns — the only ones an incoming envelope may change.
+# Everything else (results, search_params, total_results, overlay *content*)
+# is agent-owned: the persisted server state always wins, so a malformed or
+# stale frontend push can never clobber it. See agent-vs-http-data-flow.md and
+# session-state-design.md.
+_FRONTEND_OWNED_SCALAR_FIELDS = ("active_id", "active_listing_detail")
+
+
+def merge_incoming_state(
+    persisted: SessionState, incoming: SessionState | None
+) -> SessionState:
+    """Build the per-run SessionState from persisted (server) + incoming (UI).
+
+    Deep-copies `persisted` (tools currently REASSIGN the tier lists, but a
+    future in-place `.append` would otherwise corrupt the stored session
+    mid-run before `on_complete` reassigns it), then layers the frontend-owned
+    fields on top:
+
+    - `active_id` / `active_listing_detail` — the card the user clicked + the
+      tier-3 detail the frontend HTTP-fetched and wrote back. Applied when
+      present so the agent's next turn already has the user's focus.
+    - `map_overlays` — the frontend may only **remove** overlays (the user
+      dismissing one), never add them. We keep persisted overlays whose `id` is
+      still present in the incoming set; additions in the envelope are ignored
+      (overlay content is agent-owned). This makes dismissal sticky and
+      agent-visible without letting the UI inject geometry.
+
+      Subtlety: absence-from-incoming is read as *dismissal*, which is correct
+      only because CopilotKit applies the agent's `StateSnapshotEvent` (the
+      freshly-drawn overlay) during the SSE stream, and the composer is locked
+      until the stream ends — so the next envelope always reflects the latest
+      drawn set. A future "send while streaming" path would break that
+      invariant (a just-drawn overlay could be absent and get dropped); it would
+      need an explicit dismissed-id list rather than set-difference.
+
+    `incoming is None` (parse failure / pre-overlay client) → persisted wins
+    untouched.
+    """
+    merged = persisted.model_copy(deep=True)
+    if incoming is None:
+        return merged
+
+    if incoming.active_id is not None:
+        merged.active_id = incoming.active_id
+    if incoming.active_listing_detail is not None:
+        merged.active_listing_detail = incoming.active_listing_detail
+
+    # Dismissal: intersect persisted overlays with the ids the frontend still
+    # shows. Only shrinks the set — never adds.
+    visible_ids = {o.id for o in incoming.map_overlays}
+    merged.map_overlays = [o for o in merged.map_overlays if o.id in visible_ids]
+
+    return merged
 
 
 async def _with_session_and_lock(

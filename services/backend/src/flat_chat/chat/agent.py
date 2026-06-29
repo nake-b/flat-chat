@@ -106,9 +106,12 @@ INSTRUCTIONS = "\n\n".join(
 # immutable config (capability binding, instructions, retries). Per-request
 # state (model, deps, history) is passed at `agent.run(...)` time, so no DI
 # needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
-# primitive) — `ListingsCapability` wraps the existing search/listing toolset;
-# future tool groups (map/frontend command tools, distance tools) add their own
-# capabilities. See agent-compound-docs/decisions/pydantic-v2-migration.md.
+# primitive) — `ListingsCapability` wraps the search/listing toolset in
+# `StateEmittingToolset` (inside its `get_toolset`), so any `deps.state` mutation
+# a tool makes auto-emits a STATE_SNAPSHOT — emission is structural, not
+# something each tool remembers (see state_emission.py). Future tool groups
+# (map/frontend command tools, distance tools) add their own capabilities.
+# See agent-compound-docs/decisions/pydantic-v2-migration.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
     capabilities=[ListingsCapability()],

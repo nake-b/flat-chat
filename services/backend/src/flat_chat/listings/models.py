@@ -37,6 +37,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     Table,
     Text,
@@ -474,6 +475,59 @@ class ListingNearbyLandmark(Base):
     category: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# =========================================================================
+# `world.transit_routes` + `world.transit_route_shapes` — VBB GTFS, base
+# tables (migration 0003). Read-only here, used ONLY to draw a transit line on
+# the map (e.g. "show me the U7"): resolve a human line name → route_id(s) →
+# the canonical LineString per direction. These are NOT used for "near U8"
+# search filtering — that matches stops via `listings_nearby_transit` (a stop
+# on the line, not the line centerline). We map a SUBSET of columns (the drift
+# test allows a subset); `color`/`text_color`/`long_name` are intentionally
+# omitted — overlay appearance is the frontend's job, keyed by line name.
+# =========================================================================
+
+
+class TransitRoute(Base):
+    """One GTFS route. We read it to map a `short_name` ("U7") → `route_id`."""
+
+    __tablename__ = "transit_routes"
+    __table_args__ = {"schema": "world"}
+
+    route_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    short_name: Mapped[str | None] = mapped_column(Text)
+    route_type: Mapped[int] = mapped_column(SmallInteger)
+
+
+class TransitRouteShape(Base):
+    """One canonical LineString per (route_id, direction_id). The geometry we
+    draw on the map for a transit line."""
+
+    __tablename__ = "transit_route_shapes"
+    __table_args__ = {"schema": "world"}
+
+    route_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    direction_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    geom: Mapped[object] = mapped_column(Geometry("LINESTRING", srid=4326))
+
+
+class TransitStop(Base):
+    """One GTFS stop. Read-only, display-only — used to decorate a drawn transit
+    line with its served stations (dots + line badges on the overlay). The
+    line→stop link is the `lines_served` array (exact labels like `U8`/`S1`), so
+    a line's stations resolve with a direct array match — no spatial snap to the
+    centerline. Like the route tables, this is NOT the "near U8" search path
+    (that's `listings_nearby_transit`). We map a subset of columns; `modes_served`
+    is omitted (the drift test allows a subset)."""
+
+    __tablename__ = "transit_stops"
+    __table_args__ = {"schema": "world"}
+
+    stop_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    geom: Mapped[object] = mapped_column(Geometry("POINT", srid=4326))
+    lines_served: Mapped[list[str]] = mapped_column(ARRAY(Text))
 
 
 # =========================================================================

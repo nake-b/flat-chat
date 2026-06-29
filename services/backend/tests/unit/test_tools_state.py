@@ -23,9 +23,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from ag_ui.core import EventType
-from pydantic_ai import ToolReturn
-
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.tools import (
     get_result_page,
@@ -83,11 +80,28 @@ class _MockListingService:
         return [self._cards[i] for i in ids if i in self._cards]
 
 
-def _ctx(state: SessionState, *, search=None, listing=None) -> SimpleNamespace:
+class _NullPlaceService:
+    """overlay_geometry stub — returns no geometry (search overlay rebuild is
+    exercised, but no DB)."""
+
+    async def overlay_geometry(self, place_ref, *, origin="search"):
+        return None
+
+
+class _NullTransitOverlayService:
+    async def route_geometry(self, line, *, origin="search"):
+        return None
+
+
+def _ctx(
+    state: SessionState, *, search=None, listing=None, place=None, transit=None
+) -> SimpleNamespace:
     """Build the minimum RunContext shape the tools actually access."""
     deps = SimpleNamespace(
         search_service=search,
         listing_service=listing,
+        place_service=place or _NullPlaceService(),
+        transit_overlay_service=transit or _NullTransitOverlayService(),
         state=state,
     )
     return SimpleNamespace(deps=deps)
@@ -115,7 +129,9 @@ def _card(idx: int) -> ListingCard:
 # ---------------------------------------------------------------------------
 
 
-def test_search_apartments_populates_state_and_emits_snapshot():
+def test_search_apartments_populates_state():
+    # The tool now just mutates state + returns prose; the STATE_SNAPSHOT is
+    # emitted structurally by StateEmittingToolset (see test_state_emission.py).
     markers = [_marker(1), _marker(2)]
     preview = [_card(1), _card(2)]
     facets = ResultFacets(
@@ -128,7 +144,7 @@ def test_search_apartments_populates_state_and_emits_snapshot():
 
     result = asyncio.run(search_apartments(ctx, rooms_min=2.0))
 
-    assert isinstance(result, ToolReturn)
+    assert isinstance(result, str)
     assert state.search_params is not None
     assert state.search_params.rooms_min == 2.0
     assert state.total_results == 42
@@ -137,9 +153,8 @@ def test_search_apartments_populates_state_and_emits_snapshot():
     # Whole-set facets are plumbed onto the state for the agent prompt.
     assert state.facets is not None
     assert state.facets.price_warm_eur.max == 1200.0
-    # State snapshot accompanies the return value for the frontend.
-    assert len(result.metadata) == 1
-    assert result.metadata[0].type == EventType.STATE_SNAPSHOT
+    # The tool itself returns plain prose; the STATE_SNAPSHOT is emitted by the
+    # StateEmittingToolset wrapper, exercised end-to-end in test_state_emission.py.
 
 
 def test_search_apartments_clears_active_detail_from_previous_search():
@@ -273,7 +288,7 @@ def test_open_listing_single_index_sets_active_and_loads_detail():
 
     result = asyncio.run(open_listing(_ctx(state, listing=listing), indices=[1]))
 
-    assert isinstance(result, ToolReturn)
+    assert isinstance(result, str)
     assert state.active_id == "id-1"
     assert state.active_listing_detail is detail
     # tier-3 detail fetched by resolved id; no card hydration (in preview).
@@ -317,7 +332,7 @@ def test_open_listing_beyond_preview_hydrates_card_for_prose():
     assert listing.detail_calls == ["id-12"]
     # The prose card (index 12, beyond preview) was hydrated.
     assert listing.cards_calls == [["id-12"]]
-    assert "Apt #12" in str(result.return_value)
+    assert "Apt #12" in result
 
 
 def test_open_listing_out_of_range_clears_detail_and_keeps_active_id():
@@ -335,8 +350,8 @@ def test_open_listing_out_of_range_clears_detail_and_keeps_active_id():
     assert state.active_listing_detail is None
     assert state.active_id == "previous-id"
     assert listing.detail_calls == []
-    assert isinstance(result, ToolReturn)
-    assert "out of range" in str(result.return_value)
+    assert isinstance(result, str)
+    assert "out of range" in result
 
 
 # ---------------------------------------------------------------------------
@@ -408,3 +423,189 @@ def test_tools_are_importable():
     assert callable(search_apartments)
     assert callable(open_listing)
     assert callable(get_result_page)
+
+
+# ---------------------------------------------------------------------------
+# Map overlays — show_on_map / clear_map_overlays / search auto-draw
+# ---------------------------------------------------------------------------
+
+
+from flat_chat.chat.tools import (  # noqa: E402
+    clear_map_overlays,
+    hide_on_map,
+    show_on_map,
+)
+from flat_chat.listings.overlays import MapOverlay  # noqa: E402
+
+
+class _StubPlaceOverlay:
+    """overlay_geometry returns a fixed overlay (or None) — records origin."""
+
+    def __init__(self, overlay: MapOverlay | None):
+        self._overlay = overlay
+        self.origins: list[str] = []
+
+    async def overlay_geometry(self, place_ref, *, origin="search"):
+        self.origins.append(origin)
+        if self._overlay is None:
+            return None
+        # echo the requested origin so callers can assert it
+        return self._overlay.model_copy(update={"origin": origin})
+
+
+class _StubTransitOverlay:
+    def __init__(self, overlay: MapOverlay | None):
+        self._overlay = overlay
+        self.origins: list[str] = []
+
+    async def route_geometry(self, line, *, origin="search"):
+        self.origins.append(origin)
+        if self._overlay is None:
+            return None
+        return self._overlay.model_copy(update={"origin": origin})
+
+
+def _place_overlay(ref: str = "park:7") -> MapOverlay:
+    return MapOverlay(
+        id=f"place:{ref}", kind="place", label="Tiergarten", geojson={"type": "Point"}
+    )
+
+
+def _line_overlay(line: str = "U7") -> MapOverlay:
+    return MapOverlay(
+        id=f"transit_line:{line}",
+        kind="transit_line",
+        label=line,
+        geojson={"type": "LineString"},
+    )
+
+
+def test_show_on_map_requires_an_argument():
+    state = SessionState()
+    out = asyncio.run(show_on_map(_ctx(state)))
+    assert "at least one" in out
+    assert state.map_overlays == []
+
+
+def test_show_on_map_pins_a_transit_line():
+    state = SessionState()
+    transit = _StubTransitOverlay(_line_overlay("U7"))
+    ctx = _ctx(state, transit=transit)
+
+    out = asyncio.run(show_on_map(ctx, transit_lines=["U7"]))
+
+    assert "U7" in out
+    assert [o.id for o in state.map_overlays] == ["transit_line:U7"]
+    # show_on_map pins (survives the next search).
+    assert state.map_overlays[0].origin == "pinned"
+    assert transit.origins == ["pinned"]
+
+
+def test_show_on_map_draws_multiple_lines_in_one_call():
+    # Batch draw: one atomic call resolves + pins every line (no parallel-call
+    # race on shared state). The stub echoes whatever line it's asked for.
+    class _MultiTransit:
+        def __init__(self):
+            self.origins = []
+
+        async def route_geometry(self, line, *, origin="search"):
+            self.origins.append(origin)
+            return _line_overlay(line).model_copy(update={"origin": origin})
+
+    state = SessionState()
+    ctx = _ctx(state, transit=_MultiTransit())
+    out = asyncio.run(show_on_map(ctx, transit_lines=["U8", "U9"]))
+
+    assert "U8" in out and "U9" in out
+    assert [o.id for o in state.map_overlays] == [
+        "transit_line:U8",
+        "transit_line:U9",
+    ]
+
+
+def test_show_on_map_missing_geometry_reports_and_draws_nothing():
+    state = SessionState()
+    ctx = _ctx(state, transit=_StubTransitOverlay(None))
+    out = asyncio.run(show_on_map(ctx, transit_lines=["X99"]))
+    assert "Couldn't find" in out
+    assert state.map_overlays == []
+
+
+def test_hide_on_map_removes_by_label_and_id():
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U8"), _line_overlay("U9"), _place_overlay()]
+    # mix a label ("U8") and an id ("transit_line:U9") — both should match.
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["U8", "transit_line:U9"]))
+    assert "U8" in out and "U9" in out
+    assert [o.id for o in state.map_overlays] == ["place:park:7"]
+
+
+def test_hide_on_map_not_drawn_is_a_no_op_message():
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U8")]
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["S7"]))
+    assert "Nothing matching" in out
+    # untouched
+    assert [o.id for o in state.map_overlays] == ["transit_line:U8"]
+
+
+def test_hide_on_map_hints_when_overlay_is_an_active_search_filter():
+    state = SessionState()
+    u8 = _line_overlay("U8")
+    u8.origin = "search"  # tied to a live filter
+    state.map_overlays = [u8]
+    out = asyncio.run(hide_on_map(_ctx(state), targets=["U8"]))
+    assert "Removed U8" in out
+    assert "drop that filter" in out
+    assert state.map_overlays == []
+
+
+def test_clear_map_overlays_empties_and_reports():
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U7"), _place_overlay()]
+    out = asyncio.run(clear_map_overlays(_ctx(state)))
+    assert "Cleared 2" in out
+    assert state.map_overlays == []
+
+
+def test_clear_map_overlays_when_empty():
+    state = SessionState()
+    out = asyncio.run(clear_map_overlays(_ctx(state)))
+    assert "No geometries" in out
+
+
+def test_search_auto_draws_place_and_keeps_pinned():
+    # A pinned line overlay must survive a search; a near_place_ref search adds
+    # its place overlay as origin="search".
+    state = SessionState()
+    state.map_overlays = [_line_overlay("U7")]  # pinned-style, but origin defaults
+    state.map_overlays[0].origin = "pinned"
+
+    search = _MockSearchService([_marker(1)], [_card(1)], total=1)
+    place = _StubPlaceOverlay(_place_overlay("park:7"))
+    ctx = _ctx(state, search=search, place=place)
+
+    asyncio.run(search_apartments(ctx, near_place_ref="park:7", radius_km=1.0))
+
+    ids = {o.id: o.origin for o in state.map_overlays}
+    assert ids == {"transit_line:U7": "pinned", "place:park:7": "search"}
+    assert place.origins == ["search"]
+
+
+def test_search_replaces_previous_search_overlays():
+    # A prior search overlay is dropped when a new search runs without anchors.
+    state = SessionState()
+    state.map_overlays = [
+        MapOverlay(
+            id="place:park:1",
+            kind="place",
+            label="Old",
+            geojson={"type": "Point"},
+            origin="search",
+        )
+    ]
+    search = _MockSearchService([_marker(1)], [_card(1)], total=1)
+    asyncio.run(search_apartments(_ctx(state, search=search), rooms_min=1.0))
+
+    # No anchors → no search overlays; the stale one is gone.
+    assert state.map_overlays == []
