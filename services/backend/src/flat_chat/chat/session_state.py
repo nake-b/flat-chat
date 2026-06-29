@@ -12,14 +12,14 @@ JSON-Patch deltas; tools emit a fresh snapshot per mutation (see
 
 Three tiers, co-located:
   - `result_markers` — tier-1, EVERY match (≤ MARKER_CAP), thin
-    {id,lat,lng,price}. The map plots these; the count is its length.
+    {id,lat,lng,channel_value}. The map plots these; the count is its length.
   - `preview_cards` — tier-2, the top-N full cards kept hot for the LLM and
     the card strip's first paint. The rest hydrate on demand by id via
     `GET /api/listings?ids=…&view=card`.
   - `active_listing_detail` — tier-3, the open listing.
 
 Wire compaction: `result_markers` serializes to a columnar dict
-`{ids,lats,lngs,prices}` (~200 KB at 5k vs ~425 KB array-of-objects) via
+`{ids,lats,lngs,values}` (~200 KB at 5k vs ~425 KB array-of-objects) via
 `@field_serializer`, and decodes back via the paired `@field_validator`. The
 pair MUST be symmetric: the AG-UI envelope echoes this state back every turn
 and `chat/service.py:_extract_incoming_state` calls `model_validate` on it —
@@ -35,7 +35,14 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
-from flat_chat.listings.context import ListingCard, ListingDetail, MapOverlay, Marker
+from flat_chat.listings.context import (
+    ListingCard,
+    ListingDetail,
+    MapOverlay,
+    Marker,
+    MarkerChannel,
+    TravelTimeFilter,
+)
 from flat_chat.search.schemas import SearchParams
 
 
@@ -85,6 +92,21 @@ class SessionState(BaseModel):
     """Geometries currently drawn on the map. GeoJSON rides as-is (no columnar
     packing); kept small via server-side simplification at resolution time."""
 
+    # The active map visualization channel — names the single scalar each
+    # `Marker.channel_value` carries (default = warm rent). `apply_travel_time`
+    # flips this to the commute channel; the frontend colours pins accordingly.
+    marker_channel: MarkerChannel = Field(default_factory=MarkerChannel)
+    """What `result_markers[*].channel_value` means right now. One descriptor
+    for the whole set (never per marker). See `listings.context.MarkerChannel`."""
+
+    # Active travel-time lens, if any. Selection-slice input re-applied by the
+    # shared marker derivation so the commute filter survives a follow-up
+    # `search_apartments` (which otherwise rebuilds markers from SQL only). None
+    # = no commute lens active.
+    travel_time_filter: TravelTimeFilter | None = None
+    """The anchor + mode + optional max-minutes of the active commute lens.
+    Set by `apply_travel_time`; consumed by `RoutingService.resolve`."""
+
     @field_serializer("result_markers")
     def _serialize_markers(self, markers: list[Marker]) -> dict[str, list]:
         """Columnar wire form: drop repeated keys, round coords to ~1 m.
@@ -96,7 +118,9 @@ class SessionState(BaseModel):
             "ids": [m.id for m in markers],
             "lats": [round(m.lat, 5) for m in markers],
             "lngs": [round(m.lng, 5) for m in markers],
-            "prices": [m.price_warm_eur for m in markers],
+            # The single active-channel scalar (warm rent by default, commute
+            # minutes under a travel lens). `marker_channel` names it.
+            "values": [m.channel_value for m in markers],
         }
 
     @field_validator("result_markers", mode="before")
@@ -122,19 +146,23 @@ class SessionState(BaseModel):
             n = len(ids)
             lats = columns.get("lats") or []
             lngs = columns.get("lngs") or []
-            # `prices` is legitimately absent on old/empty envelopes; default
-            # it to all-None. Any present column, though, must match `ids`.
-            prices = columns.get("prices")
-            if prices is None:
-                prices = [None] * n
-            if len(lats) != n or len(lngs) != n or len(prices) != n:
+            # The channel-value column is legitimately absent on old/empty
+            # envelopes; default it to all-None. Accept the legacy "prices" key
+            # so snapshots persisted before the channel generalization still
+            # decode. Any present column, though, must match `ids`.
+            values = columns.get("values")
+            if values is None:
+                values = columns.get("prices")
+            if values is None:
+                values = [None] * n
+            if len(lats) != n or len(lngs) != n or len(values) != n:
                 raise ValueError(
                     "columnar result_markers has mismatched column lengths "
                     f"(ids={n}, lats={len(lats)}, lngs={len(lngs)}, "
-                    f"prices={len(prices)})"
+                    f"values={len(values)})"
                 )
             return [
-                {"id": i, "lat": la, "lng": lo, "price_warm_eur": pr}
-                for i, la, lo, pr in zip(ids, lats, lngs, prices, strict=True)
+                {"id": i, "lat": la, "lng": lo, "channel_value": v}
+                for i, la, lo, v in zip(ids, lats, lngs, values, strict=True)
             ]
         return value

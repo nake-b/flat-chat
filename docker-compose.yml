@@ -50,6 +50,11 @@ services:
       - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
       - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006/v1/traces}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Travel-time engines (the `routing` profile). Default to the service
+      # hostnames; when that profile isn't up, apply_travel_time degrades
+      # gracefully (the agent offers to proceed without commute times).
+      - OSRM_URL=${OSRM_URL:-http://osrm:5000}
+      - MOTIS_URL=${MOTIS_URL:-http://motis:8080}
     command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
@@ -167,6 +172,34 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - JINA_API_KEY=${JINA_API_KEY:-}
     command: ["uv", "run", "--no-dev", "python", "-m", "platinum.run"]
+
+  # Travel-time routing engines. Internal-only (no published port); the backend
+  # reaches them by hostname. Opt-in via `--profile routing` because they need a
+  # one-time data prep (`scripts/prep-routing.sh`, which builds the graphs into
+  # the bind-mounted dirs below) — like the out-of-band tiles file. Without the
+  # profile the backend still runs; apply_travel_time just degrades gracefully.
+  # See agent-compound-docs/decisions/travel-time-routing.md.
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    profiles:
+      - routing
+    volumes:
+      - ./data/routing/osrm:/data:ro
+    # MLD pipeline (prep-routing.sh ran extract/partition/customize). The raised
+    # --max-table-size covers a full result set (MARKER_CAP=5000) in one /table.
+    command:
+      ["osrm-routed", "--algorithm", "mld", "--max-table-size", "5500",
+       "/data/berlin-latest.osrm"]
+
+  motis:
+    image: ghcr.io/motis-project/motis:latest
+    profiles:
+      - routing
+    working_dir: /work
+    volumes:
+      - ./data/routing/motis:/work
+    # Serves the import output in /work/data (prep-routing.sh ran `motis import`).
+    command: ["/motis", "server"]
 
 volumes:
   postgres_data:

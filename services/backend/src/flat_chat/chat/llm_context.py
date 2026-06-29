@@ -392,9 +392,29 @@ def _current_state_block(view: LlmResultSetView) -> str:
         f"  <order>{view.order_label()}</order>",
         f"  <filters>{filters_json}</filters>",
     ]
+    travel_line = _travel_lens_line(view.state)
+    if travel_line:
+        lines.append(travel_line)
     if overlays_line:
         lines.append(overlays_line)
     return xml_block("current_state", "\n".join(lines))
+
+
+def _travel_lens_line(state: SessionState) -> str:
+    """One line describing the active commute lens, so the agent knows the map
+    is already coloured by travel time (and won't redundantly re-apply it).
+
+    Empty when no lens is active. States anchor, mode, and whether it's a hard
+    filter (a cutoff) or annotate-only."""
+    filt = state.travel_time_filter
+    if filt is None:
+        return ""
+    how = "car" if filt.mode == "car" else "transit"
+    if filt.max_minutes is not None:
+        scope = f"filtering to ≤{filt.max_minutes} min"
+    else:
+        scope = "colour/annotate only (no cutoff)"
+    return f"  <travel_lens>{how} time to {filt.anchor_label}; {scope}</travel_lens>"
 
 
 def _map_overlays_line(state: SessionState) -> str:

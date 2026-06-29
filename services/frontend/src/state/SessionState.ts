@@ -251,24 +251,31 @@ export type SearchParams = Record<string, unknown>;
 // ---------------------------------------------------------------------------
 // ResultMarkers — the COLUMNAR wire shape for the full result set (≤5000
 // matches). Parallel, index-aligned arrays: the i-th match is
-// { id: ids[i], lat: lats[i], lng: lngs[i], price_warm_eur: prices[i] }.
-// This is what CopilotKit stores verbatim — it's both the map source and
-// the ordered result set. Decode into objects with `decodeMarkers()`.
+// { id: ids[i], lat: lats[i], lng: lngs[i], channel_value: values[i] }.
+// `values` is the single active visualization scalar (warm rent by default,
+// commute minutes under a travel lens — see `MarkerChannel`). This is what
+// CopilotKit stores verbatim — both the map source and the ordered result
+// set. Decode into objects with `decodeMarkers()`.
 // ---------------------------------------------------------------------------
 
 export interface ResultMarkers {
   ids: string[];
   lats: number[];
   lngs: number[];
-  prices: (number | null)[];
+  values: (number | null)[];
+  // Legacy column name for snapshots persisted before the channel
+  // generalization; `decodeMarkers` falls back to it. New backends emit
+  // `values`.
+  prices?: (number | null)[];
 }
 
 // A single decoded marker — one row zipped out of the parallel arrays.
+// `channel_value` is whatever `SessionState.marker_channel` currently names.
 export interface MarkerPoint {
   id: string;
   lat: number;
   lng: number;
-  price_warm_eur: number | null;
+  channel_value: number | null;
 }
 
 // Zip the parallel arrays into objects. Guards null/undefined → []. Length
@@ -278,6 +285,7 @@ export function decodeMarkers(
   m: ResultMarkers | null | undefined,
 ): MarkerPoint[] {
   if (!m || !m.ids) return [];
+  const col = m.values ?? m.prices; // back-compat with the legacy key
   const out: MarkerPoint[] = [];
   for (let i = 0; i < m.ids.length; i++) {
     const lat = m.lats?.[i];
@@ -289,10 +297,34 @@ export function decodeMarkers(
       id: m.ids[i],
       lat,
       lng,
-      price_warm_eur: m.prices?.[i] ?? null,
+      channel_value: col?.[i] ?? null,
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// MarkerChannel — names the single scalar every marker's `channel_value`
+// carries (the active map visualization channel). Mirror of
+// listings/context.py:MarkerChannel. Backend sets SEMANTICS (`key` + `label`);
+// APPEARANCE (colour ramp / domain / number format) is decided here in
+// `state/channelStyles.ts`, keyed off `key`. Default `price_warm` → the plain
+// pin (no heatmap); `commute_min` → a travel-time ramp.
+// ---------------------------------------------------------------------------
+
+export interface MarkerChannel {
+  key: string;
+  label: string | null;
+}
+
+// The active commute lens, if any. Mirror of context.py:TravelTimeFilter.
+// Drives the channel label + (when max_minutes is set) the dropped markers.
+export interface TravelTimeFilter {
+  anchor_label: string;
+  anchor_lat: number;
+  anchor_lng: number;
+  mode: "transit" | "car";
+  max_minutes: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,16 +384,20 @@ export interface SessionState {
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
   map_overlays: MapOverlay[];
+  marker_channel: MarkerChannel;
+  travel_time_filter: TravelTimeFilter | null;
 }
 
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   search_params: null,
   total_results: 0,
-  result_markers: { ids: [], lats: [], lngs: [], prices: [] },
+  result_markers: { ids: [], lats: [], lngs: [], values: [] },
   preview_cards: [],
   active_id: null,
   active_listing_detail: null,
   map_overlays: [],
+  marker_channel: { key: "price_warm", label: null },
+  travel_time_filter: null,
 }) as SessionState;
 
 export const AGENT_NAME = "berlin-agent";

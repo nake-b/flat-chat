@@ -1,19 +1,23 @@
+import logging
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.state_emission import StateEmittingToolset
+from flat_chat.listings.context import MarkerChannel, TravelTimeFilter
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
     NearSpec,
     NoiseLabel,
 )
+from flat_chat.routing.service import RoutingError
 from flat_chat.search.geo_filters import (
     HospitalFilter,
     KitaFilter,
@@ -21,6 +25,8 @@ from flat_chat.search.geo_filters import (
     TransitFilter,
 )
 from flat_chat.search.schemas import SearchParams, SortBy
+
+logger = logging.getLogger(__name__)
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 
@@ -54,6 +60,10 @@ Tools:
   - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
     Indices in the CSV are absolute (1..N of the whole result set), not
     page-local.
+  - `apply_travel_time(near_place_ref=…, mode=…, max_minutes=…)` — add a
+    commute lens to the ACTIVE results: colour the map by travel time to a
+    place and (with `max_minutes`) drop listings over the cutoff. Transit or
+    car. Run a search first; the lens persists across later searches.
   - `show_on_map(place_refs=[…], transit_lines=[…])` — DRAW geometries on the
     map (named places via their `place_ref`, transit lines by name like "U7")
     WITHOUT filtering. For "draw the U8 so I can see these listings against it",
@@ -85,6 +95,20 @@ Schlachtensee"):
 Generic proximity ("near A park", "near A lake/kita/school") is NOT a named
 place — use the category filter directly (`near_park`, `near_water`, `kita`,
 `school`), no `locate_place`.
+
+Travel time / commute. When the user cares about how far listings are from a
+specific place ("near my work at TU Berlin", "≤30 min by U-Bahn from Alex",
+"how's the drive to the airport?"):
+  1. `locate_place(...)` to get the destination's `place_ref` (same as named
+     search),
+  2. `apply_travel_time(near_place_ref="…", mode="transit"|"car",
+     max_minutes=…)` on the ALREADY-SEARCHED result set. It does NOT search —
+     run `search_apartments` first. It recolours the map by travel time and, if
+     `max_minutes` is given, drops listings over that cutoff.
+Decide filter vs. annotate by the user's words: a stated limit ("under 30 min")
+→ pass `max_minutes`; "I care about the commute" / "show me how far" → omit it
+(colour + annotate only, nothing dropped). Default `mode` is transit; use "car"
+for "drive"/"by car". The lens sticks across later searches until changed.
 
 After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight
 of what stands out (transit, noise, neighbourhood character) — the detail
@@ -140,6 +164,17 @@ filters for `search_apartments`:
   - "clear the map" /
     "remove all the lines" /
     "hide everything"           → clear_map_overlays()
+  - "≤30 min by U-Bahn from
+    TU Berlin" / "within 25 min
+    transit of my work"         → locate_place(…) → apply_travel_time(
+                                  near_place_ref=…, mode="transit", max_minutes=30)
+  - "max 20 min drive to the
+    airport"                    → locate_place(…) → apply_travel_time(
+                                  near_place_ref=…, mode="car", max_minutes=20)
+  - "I work at TU Berlin, show
+    me the commute" / "how far
+    is each from …"             → locate_place(…) → apply_travel_time(
+                                  near_place_ref=…, mode="transit")  # no cutoff
 </phrase_map>
 """
 
@@ -395,9 +430,135 @@ async def search_apartments(
     # overlays; pinned overlays (from show_on_map) survive.
     await _rebuild_search_overlays(ctx, params)
 
+    # Re-apply the active commute lens (if any) so a refinement keeps the travel
+    # filter/heatmap instead of silently reverting to price. No-op when no lens
+    # is set (just leaves markers on the default price channel).
+    await _apply_travel_lens(ctx)
+
     # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
     # the tool just returns prose for the LLM.
-    return LlmResultSetView(ctx.deps.state).summary(preview)
+    return LlmResultSetView(ctx.deps.state).summary(ctx.deps.state.preview_cards)
+
+
+@toolset.tool
+async def apply_travel_time(
+    ctx: RunContext[ChatDeps],
+    near_place_ref: str,
+    mode: Literal["transit", "car"] = "transit",
+    max_minutes: int | None = None,
+) -> str:
+    """Add a travel-time (commute) lens to the ACTIVE result set.
+
+    Run `search_apartments` first — this annotates / filters the listings that
+    search already found; it does not search. Recolours the map pins by travel
+    time to `near_place_ref` (green = near, red = far) and shows the minutes on
+    each card.
+
+    Args:
+        near_place_ref: A `place_ref` from `locate_place` for the destination
+            (e.g. the user's workplace / university / a landmark).
+        mode: "transit" (public transport, default) or "car" (driving).
+        max_minutes: If set, DROP listings further than this many minutes (a
+            hard commute filter). If omitted, keep all listings and only
+            colour/annotate by travel time.
+
+    The lens persists across later `search_apartments` refinements until the
+    user changes the destination/mode or it's cleared.
+    """
+    state = ctx.deps.state
+    if not state.result_markers:
+        return (
+            "There's no active result set yet. Run search_apartments first, "
+            "then I can add a travel-time lens to those listings."
+        )
+
+    anchor = await ctx.deps.place_service.anchor_point(near_place_ref)
+    if anchor is None:
+        raise ModelRetry(
+            f"Could not resolve place_ref {near_place_ref!r}. Call locate_place "
+            "first and pass one of the returned place_ref tokens."
+        )
+    label, lat, lon = anchor
+
+    state.travel_time_filter = TravelTimeFilter(
+        anchor_label=label,
+        anchor_lat=lat,
+        anchor_lng=lon,
+        mode=mode,
+        max_minutes=max_minutes,
+    )
+
+    # Draw the destination so the user sees results in relation to it. Pinned so
+    # it survives subsequent searches (like an explicit show_on_map).
+    overlay = await ctx.deps.place_service.overlay_geometry(
+        near_place_ref, origin="pinned"
+    )
+    if overlay is not None:
+        _upsert_overlay(state, overlay)
+
+    try:
+        await _apply_travel_lens(ctx)
+    except RoutingError as exc:
+        # Routing is a fallible external dependency: drop the lens and tell the
+        # agent so it can offer to proceed without travel time.
+        state.travel_time_filter = None
+        state.marker_channel = MarkerChannel()
+        logger.warning("apply_travel_time failed: %s", exc)
+        return (
+            f"I couldn't reach the {mode} routing service to compute travel "
+            f"times to {label}. The listings are unchanged — want me to "
+            "continue without the commute filter?"
+        )
+
+    how = "driving" if mode == "car" else "transit"
+    if max_minutes is not None:
+        return (
+            f"Filtered to {state.total_results} listings within {max_minutes} "
+            f"min {how} of {label}. The map is now coloured by travel time "
+            "(green = closer)."
+        )
+    return (
+        f"Coloured the map by {how} time to {label} (green = closer). "
+        f"All {state.total_results} listings are still shown."
+    )
+
+
+async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
+    """Derive `channel_value` + `marker_channel` from the active travel lens.
+
+    Shared by `search_apartments` (re-apply after a refinement) and
+    `apply_travel_time` (apply on demand). Stateless w.r.t. ordering: keeps the
+    search's sort order, only annotating each marker with travel minutes and —
+    when `max_minutes` is set — dropping the ones over the cutoff. Filtering
+    preserves order, so `preview_cards` stays a true prefix of `result_markers`.
+
+    No lens → resets to the default `price_warm` channel (markers keep the price
+    value search already wrote). Raises `RoutingError` on engine failure."""
+    state = ctx.deps.state
+    filt = state.travel_time_filter
+    if filt is None:
+        if state.marker_channel.key != "price_warm":
+            state.marker_channel = MarkerChannel()
+        return
+
+    minutes_by_id = await ctx.deps.routing_service.resolve(state.result_markers, filt)
+
+    new_markers = []
+    for m in state.result_markers:
+        minutes = minutes_by_id.get(m.id)
+        if filt.max_minutes is not None and (
+            minutes is None or minutes > filt.max_minutes
+        ):
+            continue  # over the cutoff (or unreachable) → drop
+        new_markers.append(m.model_copy(update={"channel_value": minutes}))
+
+    surviving = {m.id for m in new_markers}
+    state.result_markers = new_markers
+    state.total_results = len(new_markers)
+    state.preview_cards = [c for c in state.preview_cards if c.id in surviving]
+    state.marker_channel = MarkerChannel(
+        key="commute_min", label=f"min to {filt.anchor_label}"
+    )
 
 
 @toolset.tool

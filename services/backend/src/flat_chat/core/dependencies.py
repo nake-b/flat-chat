@@ -11,9 +11,11 @@ from pydantic_ai import Embedder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.chat.sessions import DbSessionStore, SessionStore
+from flat_chat.core.config import settings
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
 from flat_chat.listings.service import ListingService
+from flat_chat.routing.service import RoutingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.search.transit_routes import TransitRouteService
@@ -65,11 +67,18 @@ def get_transit_route_service(
     return TransitRouteService(db)
 
 
+def get_routing_service() -> RoutingService:
+    # Stateless w.r.t. the DB in phase 1 (talks to the OSRM/MOTIS engines over
+    # HTTP); phase-2 hub lookups will add a `db` dependency here.
+    return RoutingService(osrm_url=settings.osrm_url, motis_url=settings.motis_url)
+
+
 def get_chat_service(
     search_service: SearchService = Depends(get_search_service),
     listing_service: ListingService = Depends(get_listing_service),
     place_service: PlaceService = Depends(get_place_service),
     transit_route_service: TransitRouteService = Depends(get_transit_route_service),
+    routing_service: RoutingService = Depends(get_routing_service),
     store: SessionStore = Depends(get_session_store),
 ):
     # Import here to break the import cycle: chat/service.py imports
@@ -81,5 +90,6 @@ def get_chat_service(
         listing_service=listing_service,
         place_service=place_service,
         transit_route_service=transit_route_service,
+        routing_service=routing_service,
         store=store,
     )

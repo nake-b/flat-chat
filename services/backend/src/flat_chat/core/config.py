@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"
 
+    # Routing engines (internal compose services; no public port). OSRM serves
+    # car drive-time matrices; MOTIS serves public-transit travel times. Both
+    # reached backend→service by hostname. See agent-compound-docs/decisions/
+    # travel-time-routing.md.
+    osrm_url: str = "http://osrm:5000"
+    motis_url: str = "http://motis:8080"
+
     phoenix_enabled: bool = False
     phoenix_endpoint: str = "http://localhost:6006/v1/traces"
 

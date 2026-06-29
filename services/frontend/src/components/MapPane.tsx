@@ -17,6 +17,8 @@ import type { Feature, FeatureCollection, Point } from "geojson";
 import { useSessionState } from "../hooks/useSessionState";
 import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
+import type { MarkerChannel } from "../state/SessionState";
+import { channelColorExpression } from "../state/channelStyles";
 import {
   BADGE_TEXT_COLOR,
   FLOW_DASH_SEQUENCE,
@@ -49,6 +51,7 @@ import {
   overlayShape,
 } from "../state/overlayStyles";
 import { OverlayLegend } from "./OverlayLegend";
+import { ChannelLegend } from "./ChannelLegend";
 import {
   REFRAME_MAX_ZOOM,
   REFRAME_MS,
@@ -322,6 +325,26 @@ const PIN_LAYER: SymbolLayerSpecification = {
   },
 };
 
+// Pin paint for the active visualization channel. Default channel (`price_warm`)
+// → today's grey/hover look; a ramped channel (commute) → heatmap over
+// `channel_value`, hover still wins for affordance. Overrides PIN_LAYER.paint at
+// render time so the colour follows `marker_channel`.
+function buildPinPaint(
+  channel: MarkerChannel | null | undefined,
+): SymbolLayerSpecification["paint"] {
+  return {
+    "icon-color": [
+      "case",
+      ["boolean", ["feature-state", "hover"], false],
+      RED,
+      channelColorExpression(channel, GREY),
+    ],
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": 1.2,
+    "icon-color-transition": { duration: 140, delay: 0 },
+  };
+}
+
 // The SELECTED listing's pin — its own single-feature, UNCLUSTERED source drawn
 // on top of everything. This is what fixes "selecting a listing shows the
 // cluster bubble, not a pin": the clustered `unclustered-point` layer has no
@@ -493,6 +516,7 @@ export function MapPane() {
       <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
       <OverlayLegend />
+      <ChannelLegend />
     </div>
   );
 }
@@ -819,11 +843,21 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
       geometry: { type: "Point" as const, coordinates: [m.lng, m.lat] },
       properties: {
         id: m.id,
-        price_warm_eur: m.price_warm_eur,
+        // The active visualization channel's scalar — drives the pin heatmap
+        // when a non-default channel (e.g. commute) is active. `null` renders
+        // in the channel's "no data" colour.
+        channel_value: m.channel_value,
       },
     }));
     return { type: "FeatureCollection", features };
   }, [markers]);
+
+  // Pin paint follows the active visualization channel (grey/hover by default;
+  // a commute heatmap once a travel lens is applied).
+  const pinPaint = useMemo(
+    () => buildPinPaint(state?.marker_channel),
+    [state?.marker_channel],
+  );
 
   // id → [lng, lat] for the active result set, so a card/pin click can pan
   // the map to the selected listing.
@@ -853,7 +887,7 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
           type: "Feature",
           id: activeId,
           geometry: { type: "Point", coordinates: center },
-          properties: { id: activeId, price_warm_eur: null },
+          properties: { id: activeId, channel_value: null },
         },
       ],
     };
@@ -995,7 +1029,7 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
       >
         <Layer {...CLUSTER_LAYER} />
         <Layer {...CLUSTER_COUNT_LAYER} />
-        <Layer {...PIN_LAYER} />
+        <Layer {...PIN_LAYER} paint={pinPaint} />
       </Source>
       {/* Declared after the clustered source so the active pin draws on top. */}
       <Source id="active-apartment" type="geojson" data={activeGeojson}>
@@ -1007,5 +1041,5 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
 
 interface ApartmentProps {
   id: string;
-  price_warm_eur: number | null;
+  channel_value: number | null;
 }

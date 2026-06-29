@@ -146,7 +146,7 @@ _USER = "00000000-0000-0000-0000-000000000001"
 
 class _MockSearch:
     async def search(self, params):
-        markers = [Marker(id="x1", lat=52.5, lng=13.4, price_warm_eur=1000.0)]
+        markers = [Marker(id="x1", lat=52.5, lng=13.4, channel_value=1000.0)]
         preview = [ListingCard(id="x1", title="Apt", lat=52.5, lng=13.4)]
         return markers, preview, 1
 
@@ -192,6 +192,7 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
             listing_service=None,
             place_service=None,
             transit_route_service=None,
+            routing_service=None,
             store=store,
         )
         original = service_mod.build_chat_model

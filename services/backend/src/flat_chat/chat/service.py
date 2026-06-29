@@ -18,6 +18,7 @@ from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
+from flat_chat.routing.service import RoutingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.search.transit_routes import TransitRouteService
@@ -124,12 +125,14 @@ class ChatService:
         listing_service: ListingService,
         place_service: PlaceService,
         transit_route_service: TransitRouteService,
+        routing_service: RoutingService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.place_service = place_service
         self.transit_route_service = transit_route_service
+        self.routing_service = routing_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request) -> Response:
@@ -194,6 +197,7 @@ class ChatService:
             listing_service=self.listing_service,
             place_service=self.place_service,
             transit_route_service=self.transit_route_service,
+            routing_service=self.routing_service,
             session=session,
             state=deps_state,
         )

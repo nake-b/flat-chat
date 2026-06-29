@@ -135,12 +135,57 @@ class DensityProfile(BaseModel):
 
 class Marker(BaseModel):
     """One map marker — tier-1. lat/lng are required (search drops
-    null-coordinate listings before projecting), price may be null."""
+    null-coordinate listings before projecting).
+
+    `channel_value` is the ONE active visualization scalar for this marker —
+    whatever `SessionState.marker_channel` currently names. By default that is
+    the warm rent (the `price_warm` channel); after `apply_travel_time` it is
+    the commute time in minutes (the `commute_min` channel). The map colours
+    pins by this value against a per-channel ramp owned by the frontend
+    (`state/channelStyles.ts`); identity lives once in `marker_channel`, never
+    repeated per marker. May be null (e.g. a listing with no price, or
+    unreachable in the active travel lens) → rendered in a neutral "no data"
+    colour."""
 
     id: str
     lat: float
     lng: float
-    price_warm_eur: float | None = None
+    channel_value: float | None = None
+
+
+class MarkerChannel(BaseModel):
+    """Names the single scalar every `Marker.channel_value` currently carries —
+    the active map visualization channel. Lives once in `SessionState`, not per
+    marker. The backend sets SEMANTICS (`key` + human `label`); the frontend
+    owns APPEARANCE (colour ramp / domain / number format) keyed off `key` in
+    `state/channelStyles.ts` — same semantics/appearance split as `MapOverlay`.
+
+    Default `price_warm` → the frontend renders the plain pin (today's look, no
+    heatmap); `commute_min` → a travel-time ramp. Adding a future channel (e.g.
+    a noise heatmap) is one registry entry + the backend populating that scalar,
+    nothing structural."""
+
+    key: str = "price_warm"
+    label: str | None = None
+
+
+class TravelTimeFilter(BaseModel):
+    """The active commute lens — a resolved anchor + travel mode + optional
+    cutoff. Carried in `SessionState` so the shared marker derivation can
+    re-apply it after a follow-up `search_apartments` (which rebuilds markers
+    from SQL and would otherwise drop the lens). `RoutingService.resolve`
+    consumes it to compute per-listing travel time.
+
+    `anchor_label` is the human name ("TU Berlin") used for the channel label
+    and any isochrone overlay; `anchor_lat`/`anchor_lng` are the resolved
+    coordinates. `max_minutes` set → hard filter (drop listings over the limit);
+    None → annotate + colour only (no filtering)."""
+
+    anchor_label: str
+    anchor_lat: float
+    anchor_lng: float
+    mode: Literal["transit", "car"]
+    max_minutes: int | None = None
 
 
 # ---------------------------------------------------------------------------

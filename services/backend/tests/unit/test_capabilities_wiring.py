@@ -32,6 +32,7 @@ EXPECTED_TOOLS = {
     "open_listing",
     "get_result_page",
     "locate_place",
+    "apply_travel_time",
     "show_on_map",
     "hide_on_map",
     "clear_map_overlays",
@@ -50,6 +51,7 @@ def test_agent_advertises_listing_tools_via_capability():
         listing_service=None,  # type: ignore[arg-type]
         place_service=None,  # type: ignore[arg-type]
         transit_route_service=None,  # type: ignore[arg-type]
+        routing_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-wiring"),
         state=SessionState(),
     )

@@ -3,7 +3,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
 import { useCardCache } from "../state/cardCache";
-import { decodeMarkers, type ListingCard, type MarkerPoint } from "../state/SessionState";
+import {
+  decodeMarkers,
+  type ListingCard,
+  type MarkerChannel,
+  type MarkerPoint,
+} from "../state/SessionState";
+import { channelStyle } from "../state/channelStyles";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -253,6 +259,7 @@ export function CardStrip() {
                 ) : (
                   <SkeletonCard
                     marker={m}
+                    channel={state?.marker_channel ?? null}
                     index={idx + 1}
                     hovered={hoverId === m.id}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
@@ -399,17 +406,33 @@ function ApartmentCard({
 // Carries hover wiring so map ↔ strip highlight still works pre-hydration.
 function SkeletonCard({
   marker,
+  channel,
   index,
   hovered,
   onClick,
   onHoverChange,
 }: {
   marker: MarkerPoint;
+  channel: MarkerChannel | null;
   index: number;
   hovered: boolean;
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
+  // Show the active channel's scalar as the instant anchor: warm rent (€) under
+  // the default channel, or the channel's own format (e.g. "32 min") under a
+  // travel lens. The full card hydrates the rest tier-2.
+  const style = channelStyle(channel);
+  const value = marker.channel_value;
+  const valueLabel = style ? style.legendTitle : "warm";
+  const valueText =
+    value != null
+      ? style
+        ? style.format(value)
+        : `€${Math.round(value).toLocaleString("de-DE")}`
+      : style
+        ? "—"
+        : "€—";
   return (
     <button
       type="button"
@@ -435,12 +458,10 @@ function SkeletonCard({
         <div className="flex items-end justify-between border-t border-paper-rule pt-1.5">
           <div className="flex flex-col">
             <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
-              warm
+              {valueLabel}
             </span>
             <span className="font-mono text-lg font-medium tabular-nums tracking-tight text-ink">
-              {marker.price_warm_eur != null
-                ? `€${Math.round(marker.price_warm_eur).toLocaleString("de-DE")}`
-                : "€—"}
+              {valueText}
             </span>
           </div>
           <div className="h-3 w-10 animate-pulse bg-paper-rule" />

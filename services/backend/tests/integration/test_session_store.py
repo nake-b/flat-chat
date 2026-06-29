@@ -89,8 +89,8 @@ def test_create_then_get_roundtrips_history_and_state(async_db_url):
         session.state = SessionState(
             total_results=3,
             result_markers=[
-                Marker(id="a", lat=52.5012, lng=13.4012, price_warm_eur=1200.0),
-                Marker(id="b", lat=52.4999, lng=13.3888, price_warm_eur=None),
+                Marker(id="a", lat=52.5012, lng=13.4012, channel_value=1200.0),
+                Marker(id="b", lat=52.4999, lng=13.3888, channel_value=None),
             ],
         )
         await store.save(session)

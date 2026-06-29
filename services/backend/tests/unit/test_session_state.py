@@ -1,12 +1,17 @@
 """Unit tests for `SessionState` wire serialization (review hole #11).
 
 `result_markers` is a `list[Marker]` in memory but ships columnar
-(`{ids,lats,lngs,prices}`) on the wire. The `@field_serializer` /
+(`{ids,lats,lngs,values}`) on the wire. The `@field_serializer` /
 `@field_validator` pair MUST be symmetric: every turn the AG-UI envelope
 echoes the frontend's state back and `chat/service.py:_extract_incoming_state`
 runs `SessionState.model_validate(raw)` on it. If the validator can't decode
 the columnar shape, validation fails, the `try/except` drops ALL incoming
 state, and the frontend's `active_id` write-back is silently lost.
+
+The `values` column carries `Marker.channel_value` — the single active
+visualization scalar (warm rent by default, commute minutes under a travel
+lens). The legacy `prices` key is still accepted on decode for snapshots
+persisted before the channel generalization.
 
 No DB, no LLM.
 """
@@ -27,7 +32,7 @@ def _state_with_markers(n: int) -> SessionState:
             id=f"id-{i}",
             lat=52.5 + i / 1000,
             lng=13.4 + i / 1000,
-            price_warm_eur=1000.0 + i,
+            channel_value=1000.0 + i,
         )
         for i in range(n)
     ]
@@ -40,8 +45,9 @@ def test_markers_serialize_to_columnar_wire_shape():
     dumped = state.model_dump()
     markers = dumped["result_markers"]
     # Columnar dict, not an array of objects.
-    assert set(markers) == {"ids", "lats", "lngs", "prices"}
+    assert set(markers) == {"ids", "lats", "lngs", "values"}
     assert markers["ids"] == ["id-0", "id-1", "id-2"]
+    assert markers["values"] == [1000.0, 1001.0, 1002.0]
     assert len(markers["lats"]) == 3
     # Coords rounded to 5 dp at the wire boundary.
     assert all(round(v, 5) == v for v in markers["lats"])
@@ -55,6 +61,7 @@ def test_serializer_validator_round_trip():
         m.id for m in state.result_markers
     ]
     assert restored.result_markers[0].lat == state.result_markers[0].lat
+    assert restored.result_markers[0].channel_value == 1000.0
     assert restored.total_results == state.total_results
 
 
@@ -68,14 +75,31 @@ def test_validator_decodes_columnar_envelope_and_preserves_active_id():
             "ids": ["a", "b"],
             "lats": [52.5, 52.6],
             "lngs": [13.4, 13.5],
-            "prices": [1200, None],
+            "values": [1200, None],
         },
         "active_id": "b",
     }
     state = SessionState.model_validate(envelope)
     assert [m.id for m in state.result_markers] == ["a", "b"]
-    assert state.result_markers[1].price_warm_eur is None
+    assert state.result_markers[0].channel_value == 1200
+    assert state.result_markers[1].channel_value is None
     assert state.active_id == "b"
+
+
+def test_validator_accepts_legacy_prices_key():
+    # Snapshots persisted before the channel generalization used the `prices`
+    # key; decode must still accept it and map it onto channel_value.
+    envelope = {
+        "result_markers": {
+            "ids": ["a", "b"],
+            "lats": [52.5, 52.6],
+            "lngs": [13.4, 13.5],
+            "prices": [1200, None],
+        },
+    }
+    state = SessionState.model_validate(envelope)
+    assert state.result_markers[0].channel_value == 1200
+    assert state.result_markers[1].channel_value is None
 
 
 def test_validator_accepts_plain_list_of_markers():
@@ -101,30 +125,30 @@ def test_validator_raises_on_mismatched_column_lengths():
             "ids": ["a", "b", "c"],
             "lats": [52.5, 52.6],  # short by one
             "lngs": [13.4, 13.5, 13.6],
-            "prices": [1, 2, 3],
+            "values": [1, 2, 3],
         }
     }
     with pytest.raises(ValidationError):
         SessionState.model_validate(envelope)
 
 
-def test_validator_raises_on_short_prices_column():
-    # `prices` may be ABSENT (defaults to all-None), but a PRESENT-but-short
-    # prices column is a corrupt payload and must raise.
+def test_validator_raises_on_short_values_column():
+    # `values` may be ABSENT (defaults to all-None), but a PRESENT-but-short
+    # values column is a corrupt payload and must raise.
     envelope = {
         "result_markers": {
             "ids": ["a", "b"],
             "lats": [52.5, 52.6],
             "lngs": [13.4, 13.5],
-            "prices": [1200],  # present but short
+            "values": [1200],  # present but short
         }
     }
     with pytest.raises(ValidationError):
         SessionState.model_validate(envelope)
 
 
-def test_validator_allows_absent_prices_column():
-    # Old/empty envelopes legitimately omit `prices` — defaults to all-None.
+def test_validator_allows_absent_values_column():
+    # Old/empty envelopes legitimately omit the value column — all-None.
     envelope = {
         "result_markers": {
             "ids": ["a", "b"],
@@ -134,4 +158,4 @@ def test_validator_allows_absent_prices_column():
     }
     state = SessionState.model_validate(envelope)
     assert [m.id for m in state.result_markers] == ["a", "b"]
-    assert all(m.price_warm_eur is None for m in state.result_markers)
+    assert all(m.channel_value is None for m in state.result_markers)

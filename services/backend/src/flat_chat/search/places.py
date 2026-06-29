@@ -118,6 +118,39 @@ class PlaceService:
             for r in rows
         ]
 
+    async def anchor_point(self, place_ref: str) -> tuple[str, float, float] | None:
+        """Resolve a `place_ref` to `(label, lat, lon)` — the routing anchor.
+
+        Returns the place's name and its geometry centroid (a single point even
+        for a line/polygon, via `ST_Centroid`). Used by `apply_travel_time` to
+        feed the OSRM/MOTIS engines. `None` for an unknown/garbage ref. The
+        centroid is a fine anchor: seed-alias points sit on their target, and a
+        polygon's centroid is its middle — both snap to the nearest road/stop at
+        the engine."""
+        from .service import _parse_place_ref  # same package; no import cycle
+
+        parsed = _parse_place_ref(place_ref)
+        if parsed is None:
+            return None
+        kind, src_id = parsed
+
+        np = named_places.c
+        centroid = geo_func.ST_Centroid(np.geom)
+        row = (
+            await self.db.execute(
+                select(
+                    np.name,
+                    geo_func.ST_Y(centroid).label("lat"),
+                    geo_func.ST_X(centroid).label("lon"),
+                )
+                .where(np.kind == kind, np.src_id == src_id)
+                .limit(1)
+            )
+        ).first()
+        if row is None or row.lat is None or row.lon is None:
+            return None
+        return (row.name or place_ref, row.lat, row.lon)
+
     async def overlay_geometry(
         self, place_ref: str, *, origin: OverlayOrigin = "search"
     ) -> MapOverlay | None:

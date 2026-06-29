@@ -140,6 +140,8 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |
 | `PHOENIX_ENDPOINT`         | Phoenix OTLP endpoint                                                                                                  | `http://localhost:6006/v1/traces`  |
 | `LOG_LEVEL`                | Log level for the `flat_chat` namespace (DEBUG / INFO / WARNING / ERROR). Third-party loggers stay at WARNING.         | `INFO`                             |
+| `OSRM_URL`                 | OSRM car-routing engine (the `routing` profile). Used by `apply_travel_time` (mode=car). Degrades gracefully if down.  | `http://osrm:5000`                 |
+| `MOTIS_URL`                | MOTIS transit-routing engine (the `routing` profile). Used by `apply_travel_time` (mode=transit). Degrades gracefully. | `http://motis:8080`                |
 
 ## Debugging
 
