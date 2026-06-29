@@ -33,7 +33,15 @@ function getPool() {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set');
     }
-    _pool = new Pool({ connectionString });
+    // Pin the search_path to `world, public` so unqualified table names
+    // (iron_cards, raw_listings) resolve to the ingestion-owned `world`
+    // schema — mirrors the Python engine in db.py. Passed as a libpq startup
+    // option so it applies before any query runs (an `on('connect')` SET
+    // would race with the first query on a fresh connection).
+    _pool = new Pool({
+      connectionString,
+      options: '-c search_path=world,public',
+    });
   }
   return _pool;
 }
