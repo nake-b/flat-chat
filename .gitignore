@@ -243,3 +243,5 @@ docker-compose.overlays.yml
 # Local DB snapshot tarball (large; backup/restore artifact, never source).
 flat-chat-db-snapshot.tgz
 backup-pre-split-*.sql
+# Postgres volume export tarballs (Docker-Desktop-importable PGDATA snapshots).
+psql-volume-*.tar.gz
