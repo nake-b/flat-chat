@@ -31,9 +31,13 @@ from flat_chat.listings.thresholds import (
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
     GREENERY_BUFFER_M,
+    GREENERY_LEAFY_MIN_M2,
+    GREENERY_VERY_LEAFY_MIN_M2,
     NOISE_LIVELY_MAX_LDEN,
     NOISE_QUIET_MAX_LDEN,
 )
+
+_SQM_PER_HECTARE = 10_000
 
 EXPECTED_TOOLS = {
     "search_apartments",
@@ -69,6 +73,18 @@ def test_agent_advertises_listing_tools_via_capability():
 
     asyncio.run(run())
     assert captured["tools"] == EXPECTED_TOOLS
+
+
+def _fmt(value: float) -> str:
+    """Render a threshold the way the docstring writes it: integers shed the
+    trailing `.0` (`55.0` → `"55"`), fractions are kept (`0.5` → `"0.5"`).
+
+    Using `:g` rather than `int()` is deliberate — `int()` would truncate, so a
+    fractional threshold (say `52.5` dB) would silently assert `< 52 dB` and
+    *bless* a docstring that misstates the cutoff. `:g` yields `"52.5"`, which
+    won't match the stale `< 55 dB` prose, surfacing the drift instead.
+    """
+    return f"{value:g}"
 
 
 def _capture_search_param_docs() -> dict[str, str]:
@@ -120,9 +136,21 @@ def test_search_tool_docs_match_thresholds():
     for meters in BUCKET_TO_METERS.values():
         assert f"≤{meters}m" in params["transit"]
 
-    # The scalar cutoffs are present, each read from the constants.
-    assert f"< {int(NOISE_QUIET_MAX_LDEN)} dB" in params["max_noise"]
-    assert f"< {int(NOISE_LIVELY_MAX_LDEN)} dB" in params["max_noise"]
-    assert f"<{int(DENSITY_SPARSE_MAX)} persons/ha" in params["density"]
-    assert f"≥{int(DENSITY_MODERATE_MAX)}" in params["density"]
-    assert f"{int(GREENERY_BUFFER_M)}m = leafy" in params["min_greenery"]
+    # The scalar cutoffs are present, each read from the constants. `_fmt`
+    # (not `int()`) so a fractional threshold can't truncate into a stale match.
+    assert f"< {_fmt(NOISE_QUIET_MAX_LDEN)} dB" in params["max_noise"]
+    assert f"< {_fmt(NOISE_LIVELY_MAX_LDEN)} dB" in params["max_noise"]
+    assert f"<{_fmt(DENSITY_SPARSE_MAX)} persons/ha" in params["density"]
+    assert f"≥{_fmt(DENSITY_MODERATE_MAX)}" in params["density"]
+
+    # Greenery: both the 300m window AND the two area cutoffs (in hectares, as
+    # the WHO-rule prose phrases them) are guarded — the area thresholds were
+    # previously hardcoded as `≥0.5 ha`/`≥1 ha` with nothing tying them back.
+    leafy_ha = _fmt(GREENERY_LEAFY_MIN_M2 / _SQM_PER_HECTARE)
+    very_leafy_ha = _fmt(GREENERY_VERY_LEAFY_MIN_M2 / _SQM_PER_HECTARE)
+    assert f"{GREENERY_BUFFER_M}m = leafy" in params["min_greenery"]
+    assert f"≥{leafy_ha} ha" in params["min_greenery"]
+    assert (
+        f"≥{very_leafy_ha} ha within {GREENERY_BUFFER_M}m = very_leafy"
+        in params["min_greenery"]
+    )
