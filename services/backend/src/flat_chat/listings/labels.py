@@ -8,11 +8,6 @@ Pure presentation/interpretation layer:
   - `resolve_near_spec(spec) → int` — bucket label / int meters → meters
   - `encode_modes(modes)` / `decode_modes(codes)` — GTFS mode ↔ label
 
-It also renders the LLM-facing tool-doc prose for these numbers so the
-prompt can't drift from the constants:
-  - `describe_distance_ladder() → str` — the NearSpec ladder phrase
-  - `render_threshold_tokens(text) → str` — substitute `{{TOKEN}}` sentinels
-
 Threshold tables live in `thresholds.py`; this module is just the mapping
 functions on top. Threshold tweaks happen there and both filter parsing
 (`search.geo_filters`) and result-time label application read the same
@@ -28,7 +23,6 @@ from .thresholds import (
     BUCKET_TO_METERS,
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
-    GREENERY_BUFFER_M,
     GREENERY_LEAFY_MIN_M2,
     GREENERY_VERY_LEAFY_MIN_M2,
     GTFS_DISPLAY_NAME,
@@ -37,7 +31,6 @@ from .thresholds import (
     NOISE_LIVELY_MAX_LDEN,
     NOISE_QUIET_MAX_LDEN,
     PEDESTRIAN_M_PER_S,
-    VERY_NEAR_M,
 )
 from .types import DensityLabel, GreeneryLabel, GtfsMode, NearSpec, NoiseLabel
 
@@ -118,50 +111,3 @@ def decode_modes(codes: list[int]) -> list[GtfsMode]:
 def display_modes(codes: list[int]) -> list[str]:
     """Map GTFS integer codes to human-readable display names."""
     return [GTFS_DISPLAY_NAME[m] for m in decode_modes(codes)]
-
-
-# LLM tool-doc rendering. The `search_apartments` docstring + the phrase map
-# are the only places the LLM learns what "walking_distance", "quiet", "leafy"
-# etc. mean numerically. Generate those numbers from the same constants the
-# filters use so the prompt can't drift from the SQL thresholds.
-
-
-def _fmt_num(value: float) -> str:
-    """Render a threshold number without a trailing `.0` (`55.0`→`55`, keep `0.5`)."""
-    return str(int(value)) if value == int(value) else str(value)
-
-
-def describe_distance_ladder() -> str:
-    """Build the NearSpec ladder phrase for tool docs, from `BUCKET_TO_METERS`.
-
-    Single-line (griffe's `Args:` parsing needs the bullet to stay on one
-    line). `near` is annotated as the default.
-    """
-    parts = [
-        f'`"{bucket}"` (≤{meters}m{", default" if bucket == "near" else ""})'
-        for bucket, meters in BUCKET_TO_METERS.items()
-    ]
-    return "one of " + ", ".join(parts) + ", or an int (meters)"
-
-
-def render_threshold_tokens(text: str) -> str:
-    """Substitute `{{TOKEN}}` sentinels in LLM-facing prose with threshold values.
-
-    Used on the `search_apartments` docstring and the `_TOOL_PROTOCOL` phrase
-    map. Plain substring replacement (NOT `str.format`) so the literal `{ }`
-    braces in the JSON filter examples are left untouched.
-    """
-    substitutions = {
-        "DISTANCE_LADDER": describe_distance_ladder(),
-        "VERY_NEAR_M": _fmt_num(VERY_NEAR_M),
-        "NOISE_QUIET_MAX_LDEN": _fmt_num(NOISE_QUIET_MAX_LDEN),
-        "NOISE_LIVELY_MAX_LDEN": _fmt_num(NOISE_LIVELY_MAX_LDEN),
-        "DENSITY_SPARSE_MAX": _fmt_num(DENSITY_SPARSE_MAX),
-        "DENSITY_MODERATE_MAX": _fmt_num(DENSITY_MODERATE_MAX),
-        "GREENERY_BUFFER_M": _fmt_num(GREENERY_BUFFER_M),
-        "GREENERY_LEAFY_HA": _fmt_num(GREENERY_LEAFY_MIN_M2 / 10_000),
-        "GREENERY_VERY_LEAFY_HA": _fmt_num(GREENERY_VERY_LEAFY_MIN_M2 / 10_000),
-    }
-    for token, value in substitutions.items():
-        text = text.replace(f"{{{{{token}}}}}", value)
-    return text

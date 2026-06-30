@@ -17,10 +17,8 @@ from flat_chat.listings.labels import (
     bucket_greenery,
     bucket_noise,
     decode_modes,
-    describe_distance_ladder,
     display_modes,
     encode_modes,
-    render_threshold_tokens,
     resolve_near_spec,
     walk_minutes,
 )
@@ -28,13 +26,11 @@ from flat_chat.listings.thresholds import (
     BUCKET_TO_METERS,
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
-    GREENERY_BUFFER_M,
     GREENERY_LEAFY_MIN_M2,
     GREENERY_VERY_LEAFY_MIN_M2,
     GTFS_LABEL_TO_MODE,
     NOISE_LIVELY_MAX_LDEN,
     NOISE_QUIET_MAX_LDEN,
-    VERY_NEAR_M,
 )
 
 # ---------------------------------------------------------------------------
@@ -179,48 +175,3 @@ def test_encode_modes_uses_threshold_mapping():
 def test_display_modes_returns_human_readable_names():
     # 400 = u_bahn → "U-Bahn"; 109 = s_bahn → "S-Bahn".
     assert display_modes([400, 109]) == ["U-Bahn", "S-Bahn"]
-
-
-# ---------------------------------------------------------------------------
-# describe_distance_ladder / render_threshold_tokens — the prompt numbers are
-# generated from the constants so the LLM-facing docs can't drift from the SQL
-# ---------------------------------------------------------------------------
-
-
-def test_describe_distance_ladder_reflects_constants():
-    ladder = describe_distance_ladder()
-    for bucket, meters in BUCKET_TO_METERS.items():
-        assert bucket in ladder
-        assert f"{meters}m" in ladder
-    # `near` is annotated as the default; it appears exactly once that way.
-    assert "(≤650m, default)" in ladder
-    assert "or an int (meters)" in ladder
-
-
-def test_render_threshold_tokens_substitutes_every_sentinel():
-    template = (
-        "{{DISTANCE_LADDER}} / {{VERY_NEAR_M}} / {{NOISE_QUIET_MAX_LDEN}} / "
-        "{{NOISE_LIVELY_MAX_LDEN}} / {{DENSITY_SPARSE_MAX}} / "
-        "{{DENSITY_MODERATE_MAX}} / {{GREENERY_BUFFER_M}} / "
-        "{{GREENERY_LEAFY_HA}} / {{GREENERY_VERY_LEAFY_HA}}"
-    )
-    out = render_threshold_tokens(template)
-    assert "{{" not in out  # no sentinel left raw
-    assert describe_distance_ladder() in out
-    assert f"/ {int(VERY_NEAR_M)} /" in out
-    assert f"/ {int(NOISE_QUIET_MAX_LDEN)} /" in out
-    assert f"/ {int(NOISE_LIVELY_MAX_LDEN)} /" in out
-    assert f"/ {int(DENSITY_SPARSE_MAX)} /" in out
-    assert f"/ {int(DENSITY_MODERATE_MAX)} /" in out
-    assert f"/ {int(GREENERY_BUFFER_M)} /" in out
-    # 5000 m² → 0.5 ha, 10000 m² → 1 ha (no trailing `.0`).
-    assert f"/ {GREENERY_LEAFY_MIN_M2 / 10_000:g} /" in out
-    assert f"/ {int(GREENERY_VERY_LEAFY_MIN_M2 / 10_000)}" in out
-
-
-def test_render_threshold_tokens_leaves_json_braces_untouched():
-    # The phrase map / docstring are full of literal `{ }` (JSON examples).
-    # Substitution is plain `.replace`, so single braces must survive intact.
-    text = 'transit: {modes: ["u_bahn"], distance: {{VERY_NEAR_M}}}'
-    out = render_threshold_tokens(text)
-    assert out == f'transit: {{modes: ["u_bahn"], distance: {int(VERY_NEAR_M)}}}'

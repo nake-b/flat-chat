@@ -26,8 +26,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from flat_chat.chat.agent import agent
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.state import ChatDeps, ChatSession
-from flat_chat.listings.labels import describe_distance_ladder
 from flat_chat.listings.thresholds import (
+    BUCKET_TO_METERS,
     DENSITY_MODERATE_MAX,
     DENSITY_SPARSE_MAX,
     GREENERY_BUFFER_M,
@@ -76,8 +76,7 @@ def _capture_search_param_docs() -> dict[str, str]:
 
     The threshold prose lives in the parameter descriptions inside
     `parameters_json_schema` (griffe lifts the `Args:` bullets there), not the
-    top-level tool `description`. Reading the dict gives the text un-escaped, so
-    the single-line ladder matches verbatim.
+    top-level tool `description`. Reading the dict gives the text un-escaped.
     """
     captured: dict[str, str] = {}
 
@@ -105,24 +104,21 @@ def _capture_search_param_docs() -> dict[str, str]:
     return captured
 
 
-def test_search_tool_docs_generated_from_thresholds():
-    """The LLM-facing distance/noise/greenery/density numbers come from constants.
+def test_search_tool_docs_match_thresholds():
+    """The LLM-facing distance/noise/greenery/density numbers match the constants.
 
-    Guards the `{{TOKEN}}` → `render_threshold_tokens` injection that runs
-    before griffe parses the docstring. If the injection breaks (sentinel left
-    raw, decorator restored so the render is skipped, or a number re-hardcoded
-    out of sync), this fails. The drift can't happen the other way: the
-    asserted values are read from `thresholds.py`, the same source the prompt
-    renders from.
+    These numbers are written out literally in the `search_apartments` docstring
+    (see the note in `chat/tools.py`). `thresholds.py` is the single source of
+    truth the SQL filters read, so this guards that the prose can't silently
+    drift from it: tuning a constant without updating the docstring fails here.
+    Expected values are read from `thresholds.py`, so the assertions track the
+    source automatically.
     """
     params = _capture_search_param_docs()
-    everything = "\n".join(params.values())
 
-    # No un-substituted sentinel leaked into the prompt the model receives.
-    assert "{{" not in everything
-
-    # The generated ladder is present verbatim in `transit` (proves render ran).
-    assert describe_distance_ladder() in params["transit"]
+    # Every distance bucket's metres appears in the `transit` ladder.
+    for meters in BUCKET_TO_METERS.values():
+        assert f"≤{meters}m" in params["transit"]
 
     # The scalar cutoffs are present, each read from the constants.
     assert f"< {int(NOISE_QUIET_MAX_LDEN)} dB" in params["max_noise"]

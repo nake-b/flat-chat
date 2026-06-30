@@ -8,7 +8,6 @@ from pydantic_ai.toolsets import AgentToolset
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.state_emission import StateEmittingToolset
-from flat_chat.listings.labels import render_threshold_tokens
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
@@ -32,15 +31,15 @@ toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 # `Annotated[..., Field(description=...)]`; that would double up the source of
 # truth. Keep arg descriptions in the docstring `Args:` section.
 #
-# Numeric thresholds in this prose (distance ladder, noise/greenery/density
-# cutoffs) are NOT hardcoded — they're written as `{{TOKEN}}` sentinels and
-# rendered from `listings/thresholds.py` via `render_threshold_tokens`, so the
-# prompt can't drift from the SQL the filters run. griffe parses the docstring
-# EAGERLY at registration, so for `search_apartments` we render `__doc__`
-# first, then register manually with `toolset.tool(...)` (see below).
+# The numeric thresholds in this prose (distance ladder, noise/greenery/density
+# cutoffs) are written out literally. They MUST match `listings/thresholds.py`,
+# which is the single source of truth the SQL filters read. The match is guarded
+# by `test_search_tool_docs_match_thresholds` — it reads the constants and
+# asserts each appears in the right param description, so tuning a constant
+# without updating this prose fails CI loudly.
 
 
-_TOOL_PROTOCOL = render_threshold_tokens("""\
+_TOOL_PROTOCOL = """\
 <tool_protocol>
 There is ONE active result set per conversation. Listings are referenced by
 1-based indices into it — the same numbers shown on the card strip.
@@ -108,7 +107,7 @@ filters for `search_apartments`:
   - "S+U Wittenau" / "near
     Wittenau station"           → transit: {stop_name: "Wittenau"}
   - "within 5 min walk of an
-    S-Bahn"                 → transit: {modes: ["s_bahn"], distance: {{VERY_NEAR_M}}}
+    S-Bahn"                     → transit: {modes: ["s_bahn"], distance: 400}
   - "quiet" / "quiet street"    → max_noise: "quiet"
   - "leafy" / "lots of
     greenery"                   → min_greenery: "leafy"
@@ -149,7 +148,7 @@ filters for `search_apartments`:
     "remove all the lines" /
     "hide everything"           → clear_map_overlays()
 </phrase_map>
-""")
+"""
 
 
 @toolset.instructions
@@ -163,6 +162,7 @@ def tool_protocol_instructions() -> str:
     return _TOOL_PROTOCOL
 
 
+@toolset.tool
 async def search_apartments(
     ctx: RunContext[ChatDeps],
     query: str | None = None,
@@ -280,7 +280,10 @@ async def search_apartments(
 
         transit: Filter by proximity to public transit. Pass as an object
             like `{"modes": ["u_bahn"], "distance": "near"}`. Fields:
-              - `distance`: how close — {{DISTANCE_LADDER}}.
+              - `distance`: how close — one of `"next_to"` (≤150m),
+                `"very_near"` (≤400m), `"near"` (≤650m, default),
+                `"walking_distance"` (≤1200m), `"bike_distance"` (≤2500m),
+                or an int (meters).
               - `modes`: which service types must be reachable, any of
                 `"u_bahn"`, `"s_bahn"`, `"tram"`, `"bus"`, `"ferry"`,
                 `"regional"`, `"mainline"`. OR semantics (any-of).
@@ -290,7 +293,7 @@ async def search_apartments(
                 `"Wittenau"` matches "S+U Wittenau").
             Examples: "near U-Bahn" → `{"modes": ["u_bahn"]}`. "On U8" →
             `{"lines": ["U8"], "distance": "very_near"}`. "5 min walk from
-            S-Bahn" → `{"modes": ["s_bahn"], "distance": {{VERY_NEAR_M}}}`.
+            S-Bahn" → `{"modes": ["s_bahn"], "distance": 400}`.
 
         school: Filter by proximity to a school. Pass as
             `{"distance": "near"}` for "near a school", or
@@ -324,22 +327,18 @@ async def search_apartments(
         near_water: Require a water body (lake / river / canal) within
             this distance. Same ladder.
 
-        max_noise: Maximum Lden noise level. `"quiet"`
-            (< {{NOISE_QUIET_MAX_LDEN}} dB, WHO health-threshold) or `"lively"`
-            (< {{NOISE_LIVELY_MAX_LDEN}} dB, normal urban band).
+        max_noise: Maximum Lden noise level. `"quiet"` (< 55 dB, WHO
+            health-threshold) or `"lively"` (< 65 dB, normal urban band).
             Example: "quiet street" → `"quiet"`.
 
-        min_greenery: Minimum greenery level (WHO Europe rule:
-            ≥{{GREENERY_LEAFY_HA}} ha green within {{GREENERY_BUFFER_M}}m = leafy;
-            ≥{{GREENERY_VERY_LEAFY_HA}} ha within {{GREENERY_BUFFER_M}}m = very_leafy).
-            `"leafy"` or `"very_leafy"`. Example:
-            "leafy neighbourhood" → `"leafy"`.
+        min_greenery: Minimum greenery level (WHO Europe rule: ≥0.5 ha
+            green within 300m = leafy; ≥1 ha within 300m = very_leafy).
+            `"leafy"` or `"very_leafy"`. Example: "leafy
+            neighbourhood" → `"leafy"`.
 
-        density: Population density bucket.
-            `"sparse"` (<{{DENSITY_SPARSE_MAX}} persons/ha, suburban feel),
-            `"moderate"` ({{DENSITY_SPARSE_MAX}}-{{DENSITY_MODERATE_MAX}}, typical urban
-            European), `"dense"` (≥{{DENSITY_MODERATE_MAX}}, inner-city
-            Kreuzberg/Neukölln norm).
+        density: Population density bucket. `"sparse"` (<50 persons/ha,
+            suburban feel), `"moderate"` (50-150, typical urban European),
+            `"dense"` (≥150, inner-city Kreuzberg/Neukölln norm).
 
         sort_by: "relevance" (requires query — otherwise falls back to
             recent), "price", "area", or "recent".
@@ -407,14 +406,6 @@ async def search_apartments(
     # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
     # the tool just returns prose for the LLM.
     return LlmResultSetView(ctx.deps.state).summary(preview)
-
-
-# Render the `{{TOKEN}}` threshold sentinels into the docstring BEFORE
-# registering, because Pydantic AI parses `__doc__` eagerly at registration.
-# Manual `toolset.tool(...)` here (vs the `@toolset.tool` decorator) keeps
-# `search_apartments` the first-registered tool, preserving prompt order.
-search_apartments.__doc__ = render_threshold_tokens(search_apartments.__doc__ or "")
-toolset.tool(search_apartments)
 
 
 @toolset.tool
