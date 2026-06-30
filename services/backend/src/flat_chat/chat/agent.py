@@ -16,6 +16,19 @@ from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools import ListingsCapability
 
+CAPABILITIES_AT_THE_MOMENT_REPLY = """\
+Right now, I can help you search Berlin apartments and refine results step by step using both listing details and the geo-context data.
+
+What I can do at the moment:
+- Search and filter listings by rent, rooms, size, district/Ortsteil, amenities, availability, and text preferences.
+- Find apartments near specific places (for example lakes, parks, campuses, hospitals, schools, kitas, landmarks) and show them on the map.
+- Filter by transit access using stops, modes, and lines (U-Bahn, S-Bahn, tram, bus, ferry, regional/mainline where available in current data).
+- Use neighbourhood context currently available in the database: parks, playgrounds, water, schools, kitas, hospitals, landmarks, disabled parking, noise, greenery, population density, and admin areas (Bezirk/Ortsteil), plus inside/outside S-Bahn ring context.
+- Open and compare listing details with contextual highlights (for example transit, family-friendliness, greenery, quietness).
+- Draw and clear map overlays (places and transit lines) without changing filters.
+
+Important: this reflects what is available at the moment in your current database snapshot. If data is missing or outdated, I will still try to answer and clearly tell you where coverage is limited."""
+
 
 def _role_block() -> str:
     return xml_block(
@@ -85,6 +98,19 @@ def _city_center_block() -> str:
     )
 
 
+def _capabilities_block() -> str:
+    return xml_block(
+        "capabilities_reply_policy",
+        "If the user asks a GENERAL/OPEN capabilities question (examples: \"what can\n"
+        "you do\", \"what skills do you have\", \"what do you know\", \"which data can\n"
+        "you access right now\") and does NOT ask for a specific concrete task,\n"
+        "reply with EXACTLY this text and nothing else:\n\n"
+        f"{CAPABILITIES_AT_THE_MOMENT_REPLY}\n\n"
+        "If the user asks about a SPECIFIC feature or concrete operation, answer the\n"
+        "specific question directly instead of using the canned capabilities text.",
+    )
+
+
 # Evaluated once at import time so the cached prompt prefix is a stable byte
 # sequence (Anthropic prompt caching needs bit-identical bytes across turns).
 # The `_*_block()` helpers MUST stay pure — no settings reads, no env vars, no
@@ -98,6 +124,7 @@ INSTRUCTIONS = "\n\n".join(
         _user_references_block(),
         _honesty_block(),
         _city_center_block(),
+        _capabilities_block(),
     ]
 )
 
