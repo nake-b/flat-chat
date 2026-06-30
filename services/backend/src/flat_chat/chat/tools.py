@@ -30,6 +30,13 @@ toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 # schema description — no need (and no benefit) to wrap params in
 # `Annotated[..., Field(description=...)]`; that would double up the source of
 # truth. Keep arg descriptions in the docstring `Args:` section.
+#
+# The numeric thresholds in this prose (distance ladder, noise/greenery/density
+# cutoffs) are written out literally. They MUST match `listings/thresholds.py`,
+# which is the single source of truth the SQL filters read. The match is guarded
+# by `test_search_tool_docs_match_thresholds` — it reads the constants and
+# asserts each appears in the right param description, so tuning a constant
+# without updating this prose fails CI loudly.
 
 
 _TOOL_PROTOCOL = """\
@@ -325,8 +332,8 @@ async def search_apartments(
             Example: "quiet street" → `"quiet"`.
 
         min_greenery: Minimum greenery level (WHO Europe rule: ≥0.5 ha
-            green within 300m = leafy; ≥1 ha or ≥0.5 ha within 150m =
-            very_leafy). `"leafy"` or `"very_leafy"`. Example: "leafy
+            green within 300m = leafy; ≥1 ha within 300m = very_leafy).
+            `"leafy"` or `"very_leafy"`. Example: "leafy
             neighbourhood" → `"leafy"`.
 
         density: Population density bucket. `"sparse"` (<50 persons/ha,

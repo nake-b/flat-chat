@@ -233,6 +233,13 @@ them for result-time label application (`noise_total_lden=58` → `"lively"`).
 Both directions share the same numbers. A threshold tweak is one place
 to edit; no gold rebuild needed.
 
+The same numbers also reach the **LLM**: the `search_apartments`
+docstring + phrase map (`chat/tools.py`) write the distance ladder /
+noise / greenery / density cutoffs out literally. They must match the
+constants — `test_search_tool_docs_match_thresholds` reads
+`thresholds.py` and asserts each value appears in the right parameter
+description, so tuning a constant without updating the prose fails CI.
+
 Each constant traces to a row in
 [`geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md).
 
