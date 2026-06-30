@@ -161,21 +161,32 @@ def test_summary_first_line_is_frontend_breadcrumb_parseable():
     """Cross-language contract: the summary's first line must stay parseable by
     the frontend's `parseSearchCount` (services/frontend/src/state/
     searchBreadcrumb.ts), which renders the per-turn "Found N apartments"
-    breadcrumb (issue #22). It matches `^Found (\\d+) listings?` for hits and
-    `^No apartments found` for the empty case. Reword the prose → update that
-    regex in the same change; this test is the tripwire."""
+    breadcrumb (issue #22). Reword the prose → update that parser in the same
+    change; this test is the tripwire.
+
+    The regex below is a VERBATIM port of the frontend's (commas/whitespace and
+    all) so the two stay honest — a backend that started emitting
+    `Found 1,234 listings` must still parse the same on both sides, not just in
+    the no-separator happy path."""
     import re
+
+    # Mirror of `parseSearchCount`: `^Found\s+([\d,]+)\s+listings?` (case-insensitive),
+    # then strip thousands separators before int().
+    hit = re.compile(r"^Found\s+([\d,]+)\s+listings?", re.IGNORECASE)
 
     found = LlmResultSetView(_state(n_markers=48, total=48)).summary(
         _state(n_markers=48).preview_cards
     )
-    m = re.match(r"^Found (\d+) listings?", found.splitlines()[0])
-    assert m is not None and int(m.group(1)) == 48
+    m = hit.match(found.splitlines()[0])
+    assert m is not None and int(m.group(1).replace(",", "")) == 48
 
     empty_state = SessionState()
     empty_state.search_params = SearchParams(rooms_min=2.0)
     empty = LlmResultSetView(empty_state).summary(empty_state.preview_cards)
-    assert re.match(r"^No apartments found", empty.splitlines()[0]) is not None
+    assert (
+        re.match(r"^no apartments found", empty.splitlines()[0], re.IGNORECASE)
+        is not None
+    )
 
 
 # ---------------------------------------------------------------------------

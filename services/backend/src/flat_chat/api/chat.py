@@ -9,12 +9,11 @@ from flat_chat.chat.schemas import (
 )
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatSession
+from flat_chat.chat.tools import SEARCH_TOOL_NAME
 from flat_chat.core.dependencies import get_session_store, get_user_id
 
 router = APIRouter()
 
-# Tool whose result we collapse to one "finish" per turn (see issue #22).
-_SEARCH_TOOL = "search_apartments"
 # AG-UI message roles that are ephemeral UI affordances, not transcript: the
 # "Thinking…" indicator (reasoning) and transient activity messages. Dropped on
 # reload so they don't become persisted bubbles.
@@ -152,6 +151,6 @@ def _collapse_search_finishes(messages: list[dict[str, Any]]) -> None:
             flush_turn()
         elif msg.get("role") == "tool":
             call_id = msg.get("toolCallId")
-            if call_id and name_by_call_id.get(call_id) == _SEARCH_TOOL:
+            if call_id and name_by_call_id.get(call_id) == SEARCH_TOOL_NAME:
                 turn_search_idxs.append(idx)
     flush_turn()

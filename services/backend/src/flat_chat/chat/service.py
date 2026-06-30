@@ -23,6 +23,7 @@ from flat_chat.chat.providers import build_chat_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.tools import SEARCH_TOOL_NAME
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
@@ -42,11 +43,6 @@ class InvalidAgentRequestError(Exception):
 
 class LlmProviderUnavailableError(Exception):
     """No LLM provider is configured / could be built for this run."""
-
-
-# Tool whose finishes we collapse to one per turn (issue #22). Kept in lock-step
-# with the reload-path constant in `api/chat.py`.
-_SEARCH_TOOL = "search_apartments"
 
 
 class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
@@ -92,9 +88,13 @@ class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
         async for event in super()._handle_tool_result(result):
             yield event
 
-    async def transform_stream(self, stream, on_complete=None) -> AsyncIterator[BaseEvent]:  # type: ignore[override]
+    async def transform_stream(
+        self, stream, on_complete=None
+    ) -> AsyncIterator[BaseEvent]:  # type: ignore[override]
         search_call_ids: set[str] = set()
-        pending: ToolCallResultEvent | None = None  # held search result, not yet emitted
+        pending: ToolCallResultEvent | None = (
+            None  # held search result, not yet emitted
+        )
 
         def _blank(ev: ToolCallResultEvent) -> ToolCallResultEvent:
             return ToolCallResultEvent(
@@ -107,7 +107,7 @@ class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
 
         async for event in super().transform_stream(stream, on_complete):
             if isinstance(event, ToolCallStartEvent):
-                if event.tool_call_name == _SEARCH_TOOL:
+                if event.tool_call_name == SEARCH_TOOL_NAME:
                     search_call_ids.add(event.tool_call_id)
                     # New search supersedes the held one → resolve its pill to
                     # empty BEFORE this search's "Searching…" shows, so they never

@@ -24,6 +24,12 @@ from flat_chat.search.schemas import SearchParams, SortBy
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 
+# Name of the search tool (Pydantic AI derives it from the `search_apartments`
+# function name below). Both the live and reload "finish-collapse" paths key on
+# it (issue #22) — `chat/service.py` and `api/chat.py` import this so a rename of
+# the tool is one edit here, not three literals drifting apart.
+SEARCH_TOOL_NAME = "search_apartments"
+
 
 # Pydantic AI parses each tool's docstring with `griffe` and lifts the `Args:`
 # bullets directly into the JSON schema sent to the LLM. The docstring IS the
