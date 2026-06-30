@@ -9,19 +9,30 @@ Engine notes (verified against the running images, June 2026):
     returns `durations[0]` = seconds from the anchor (index 0) to every
     coordinate. Coordinates are **lon,lat**. `null` = unroutable. The default
     `--max-table-size` is 100, so we chunk destinations.
-  - MOTIS `GET /api/v1/one-to-many?one=lat;lon&many=lat;lon,…&mode=…&max=…&
-    arriveBy=false` returns a positional array aligned to `many`; each entry is
-    `{"duration": seconds}` or `{}` when unreachable. Coordinates are **lat;lon**
-    (the opposite order from OSRM). Transit also takes a departure `time`.
+  - MOTIS (transit) has NO point-to-point matrix for TRANSIT — `one-to-many`
+    is street-modes only (`mode=TRANSIT` → "not supported for one-to-many").
+    Transit reachability is `GET /api/v1/one-to-all?one=lat,lon&transitModes=
+    TRANSIT&maxTravelTime=<minutes>&time=…&arriveBy=false`, which returns
+    `{"all": [{place:{lat,lon,stopId,…}, duration:<minutes>}, …]}` — the
+    transit time from the anchor (incl. its first-mile walk) to EVERY reachable
+    stop. `one` is **lat,lon** (comma; the opposite order from OSRM). NB
+    `maxTravelTime` is in MINUTES and the server caps it (default 90 via
+    `onetoall_max_travel_minutes`).
 
-Returned values are **minutes** (rounded); callers compare against
+A listing isn't a stop, so we add the LAST mile ourselves: a listing's transit
+time = min over nearby stops of `(anchor→stop minutes) + walk(stop→listing)`.
+Only stops within `_WALK_CAP_M` of the listing count; listings with no
+reachable stop in range are absent (rendered "no data" / dropped under a
+cutoff). Returned values are **minutes** (rounded); callers compare against
 `max_minutes` and write them onto `Marker.channel_value`.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import math
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -29,14 +40,44 @@ from flat_chat.listings.context import Marker, TravelTimeFilter
 
 logger = logging.getLogger(__name__)
 
-# Destinations per engine request. Keeps the GET URL bounded (each coord is
+_BERLIN_TZ = ZoneInfo("Europe/Berlin")
+
+
+def _commute_departure() -> str:
+    """Departure time for a transit commute query: the NEXT weekday 08:00 in
+    Berlin local time, as ISO 8601.
+
+    A "commute" lens means a typical workday trip, not literally now — querying
+    at 02:00 on a Sunday would return night/weekend service and make most
+    listings look unreachable. Pinning to the next weekday morning gives
+    comparable, representative times whenever the user runs the search.
+    """
+    now = datetime.now(_BERLIN_TZ)
+    dep = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    if dep <= now:
+        dep += timedelta(days=1)
+    while dep.weekday() >= 5:  # Sat=5, Sun=6 → roll to Monday
+        dep += timedelta(days=1)
+    return dep.isoformat()
+
+# Destinations per OSRM request. Keeps the GET URL bounded (each coord is
 # ~20 chars) and stays under OSRM's table-size limit even if it's left at the
 # default 100 — we run 90 to leave headroom for the anchor + query string.
 _CHUNK = 90
 
-# Per-request network timeout (seconds). One matrix/one-to-many call over a
+# Per-request network timeout (seconds). One matrix / one-to-all call over a
 # city-sized graph is tens of milliseconds; this is a generous ceiling.
 _TIMEOUT = 20.0
+
+# Transit last-mile model. one-to-all gives anchor→stop minutes; we add the
+# walk from the stop to the listing at a steady pace, ignoring stops beyond a
+# reasonable walk so a far-flung stop can't "rescue" an otherwise unreachable
+# listing.
+_WALK_SPEED_M_PER_MIN = 80.0  # ~4.8 km/h
+_WALK_CAP_M = 1000.0  # only stops within ~12 min walk of a listing count
+# one-to-all server cap on `maxTravelTime` (config `onetoall_max_travel_minutes`,
+# default 90). Requesting more is a 400, so clamp to it.
+_MOTIS_MAX_MINUTES = 90
 
 
 class RoutingError(RuntimeError):
@@ -49,6 +90,17 @@ class RoutingError(RuntimeError):
 def _chunked(seq: list, size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in metres. Good enough for last-mile walk ranking
+    at city scale (sub-metre error vs the geodesic over ~1 km)."""
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
 
 class RoutingService:
@@ -111,39 +163,70 @@ class RoutingService:
     async def _motis(
         self, markers: list[Marker], filt: TravelTimeFilter
     ) -> dict[str, float]:
-        out: dict[str, float] = {}
-        one = f"{filt.anchor_lat};{filt.anchor_lng}"  # MOTIS is lat;lon
-        # Departure now; MOTIS imports a full year so any near-future time has
-        # service. A generous max keeps far-but-reachable listings in.
-        depart = datetime.now(UTC).replace(microsecond=0).isoformat()
-        max_secs = (filt.max_minutes or 120) * 60
+        # one-to-all: transit minutes from the anchor to EVERY reachable stop.
+        one = f"{filt.anchor_lat},{filt.anchor_lng}"  # one-to-all is lat,lon
+        # A representative weekday-morning departure (not "now") so commute
+        # times don't collapse to night/weekend service. The budget bounds the
+        # isochrone — clamp to the server's hard cap.
+        depart = _commute_departure()
+        budget = int(filt.max_minutes or _MOTIS_MAX_MINUTES)
+        max_minutes = max(1, min(budget, _MOTIS_MAX_MINUTES))
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                for batch in _chunked(markers, _CHUNK):
-                    many = ",".join(f"{m.lat};{m.lng}" for m in batch)
-                    resp = await client.get(
-                        f"{self.motis_url}/api/v1/one-to-many",
-                        params={
-                            "one": one,
-                            "many": many,
-                            "mode": "TRANSIT",
-                            "max": max_secs,
-                            "maxMatchingDistance": 500,
-                            "arriveBy": "false",
-                            "time": depart,
-                        },
-                    )
-                    resp.raise_for_status()
-                    rows = resp.json()
-                    if not isinstance(rows, list):
-                        raise RoutingError("MOTIS: unexpected response shape")
-                    # Positional, aligned to `many`; {} = unreachable.
-                    for m, entry in zip(batch, rows, strict=False):
-                        if not isinstance(entry, dict):
-                            continue
-                        secs = entry.get("duration")
-                        if isinstance(secs, int | float):
-                            out[m.id] = round(secs / 60)
+                resp = await client.get(
+                    f"{self.motis_url}/api/v1/one-to-all",
+                    params={
+                        "one": one,
+                        "transitModes": "TRANSIT",
+                        "maxTravelTime": max_minutes,
+                        "arriveBy": "false",
+                        "time": depart,
+                        "maxMatchingDistance": 500,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
         except httpx.HTTPError as exc:
             raise RoutingError(f"MOTIS unreachable: {exc}") from exc
+
+        reachable = data.get("all") if isinstance(data, dict) else None
+        if not isinstance(reachable, list):
+            raise RoutingError("MOTIS: unexpected response shape")
+
+        # Flatten to (lat, lon, anchor→stop minutes).
+        stops: list[tuple[float, float, float]] = []
+        for entry in reachable:
+            if not isinstance(entry, dict):
+                continue
+            place = entry.get("place")
+            dur = entry.get("duration")
+            if not isinstance(place, dict) or not isinstance(dur, int | float):
+                continue
+            lat, lon = place.get("lat"), place.get("lon")
+            if isinstance(lat, int | float) and isinstance(lon, int | float):
+                stops.append((float(lat), float(lon), float(dur)))
+        if not stops:
+            return {}
+
+        # Last mile: each listing's time = min over stops within walking range
+        # of (anchor→stop minutes + walk minutes). A cheap lat/lon bounding-box
+        # pre-filter keeps this fast (a few k stops × tens of listings) before
+        # the haversine. The box is generous (the walk cap converts to ~0.009°
+        # lat / ~0.015° lon at Berlin's latitude).
+        out: dict[str, float] = {}
+        lat_cap = _WALK_CAP_M / 111_000.0
+        lon_cap = _WALK_CAP_M / 67_000.0
+        for m in markers:
+            best: float | None = None
+            for slat, slon, sdur in stops:
+                if abs(slat - m.lat) > lat_cap or abs(slon - m.lng) > lon_cap:
+                    continue
+                dist = _haversine_m(m.lat, m.lng, slat, slon)
+                if dist > _WALK_CAP_M:
+                    continue
+                total = sdur + dist / _WALK_SPEED_M_PER_MIN
+                if best is None or total < best:
+                    best = total
+            if best is not None:
+                out[m.id] = round(best)
         return out

@@ -112,6 +112,7 @@ class BerlinGdiWfsClient:
         layer: str,
         *,
         src_crs: int = 25833,
+        cql_filter: str | None = None,
     ) -> Iterator[gpd.GeoDataFrame]:
         """Paginated GetFeature, yielding one page as a GeoDataFrame at a time.
 
@@ -134,7 +135,16 @@ class BerlinGdiWfsClient:
             "typeNames": layer,
             "outputFormat": "application/json",
         }
-        logger.info("wfs %s/%s: fetching", dataset, layer)
+        # Server-side row filter (e.g. named-only ALKIS buildings) so we don't
+        # page the whole layer just to drop most of it client-side.
+        if cql_filter:
+            base_params["CQL_FILTER"] = cql_filter
+        logger.info(
+            "wfs %s/%s: fetching%s",
+            dataset,
+            layer,
+            f" (CQL_FILTER={cql_filter})" if cql_filter else "",
+        )
 
         seen_total = 0
         start_index = 0
@@ -182,6 +192,7 @@ class BerlinGdiWfsClient:
         layer: str,
         *,
         src_crs: int = 25833,
+        cql_filter: str | None = None,
     ) -> gpd.GeoDataFrame:
         """Whole-layer convenience wrapper around ``iter_layer_pages``.
 
@@ -190,7 +201,11 @@ class BerlinGdiWfsClient:
         tests; the bulk loader uses ``iter_layer_pages`` directly to avoid
         the memory blow-up.
         """
-        pages = list(self.iter_layer_pages(dataset, layer, src_crs=src_crs))
+        pages = list(
+            self.iter_layer_pages(
+                dataset, layer, src_crs=src_crs, cql_filter=cql_filter
+            )
+        )
         if not pages:
             logger.warning("wfs %s/%s: zero features returned", dataset, layer)
             return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{src_crs}")

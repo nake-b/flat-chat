@@ -24,17 +24,17 @@ export function OverlayLegend() {
             className="flex items-center gap-1.5 rounded-full bg-white/95 py-1 pl-2 pr-1 text-xs font-medium text-neutral-800 shadow-sm ring-1 ring-black/10"
           >
             <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
               style={{ backgroundColor: color }}
               aria-hidden
             />
-            <span className="max-w-[12rem] truncate">{o.label}</span>
+            <span className="min-w-0 max-w-[12rem] truncate">{o.label}</span>
             <button
               type="button"
               onClick={() => dismissOverlay(o.id)}
               aria-label={`Hide ${o.label}`}
               title={`Hide ${o.label}`}
-              className="flex h-4 w-4 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-200 hover:text-neutral-700"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-200 hover:text-neutral-700"
             >
               ×
             </button>

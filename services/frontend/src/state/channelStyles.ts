@@ -34,15 +34,21 @@ export interface ChannelStyle {
   format: (v: number) => string;
 }
 
-// Travel time: green (near) → red (far), 0–60 min.
+// Travel time: a Berlin-red SEQUENTIAL ramp, 0–60 min, near = VIBRANT brand red
+// → far = WEAK/pale pink. Deliberately single-hue rather than green→red — it
+// sits in a UI whose whole marker/cluster language is already red, so a green
+// "good" end would clash with the brand and read as a different control.
+// Vibrant-near / faded-far reads intuitively: the listings you can reach
+// quickly are saturated and grab attention; far ones recede toward the
+// background. Stays legible on the light basemap and on-palette throughout.
 const COMMUTE: ChannelStyle = {
   domain: [0, 60],
   ramp: [
-    [0, "#1A9850"],
-    [15, "#A6D96A"],
-    [30, "#FEE08B"],
-    [45, "#F46D43"],
-    [60, "#D73027"],
+    [0, "#E4003C"],
+    [15, "#EE4D6E"],
+    [30, "#F47A95"],
+    [45, "#F7A8BC"],
+    [60, "#FCE7EC"],
   ],
   legendTitle: "Travel time",
   format: (v) => `${Math.round(v)} min`,
@@ -98,26 +104,41 @@ export function isHeatmapChannel(
   return channelStyle(channel) !== undefined;
 }
 
+// Shared ramp→colour builder: interpolate the active channel's ramp over an
+// arbitrary numeric VALUE expression, falling back to NO_DATA_COLOR when the
+// `noData` predicate holds. Returns `undefined` for the default/unknown channel
+// (no heatmap). Both the pin paint (value = each marker's `channel_value`) and
+// the cluster paint (value = the cluster's MEAN of `channel_value`) compose on
+// this one builder so a single ramp drives both — change the ramp once, both
+// follow. Caller layers hover/selection highlight on top.
+export function rampColorExpression(
+  channel: MarkerChannel | null | undefined,
+  value: ExpressionSpecification,
+  noData: ExpressionSpecification,
+): ExpressionSpecification | undefined {
+  const style = channelStyle(channel);
+  if (!style) return undefined;
+  const stops = style.ramp.flatMap(([v, c]) => [v, c]);
+  return [
+    "case",
+    noData,
+    NO_DATA_COLOR,
+    ["interpolate", ["linear"], value, ...stops],
+  ] as ExpressionSpecification;
+}
+
 // MapLibre expression for the BASE pin colour under the active channel.
 // Returns `plain` (the default grey) for `price_warm`/unknown keys; otherwise
-// an interpolation over `channel_value` with null → NO_DATA_COLOR. The caller
-// composes hover highlight on top.
+// an interpolation over each marker's `channel_value` with null → NO_DATA_COLOR.
 export function channelColorExpression(
   channel: MarkerChannel | null | undefined,
   plain: string,
 ): string | ExpressionSpecification {
-  const style = channelStyle(channel);
-  if (!style) return plain;
-  const stops = style.ramp.flatMap(([v, c]) => [v, c]);
-  return [
-    "case",
-    ["==", ["get", "channel_value"], null],
-    NO_DATA_COLOR,
-    [
-      "interpolate",
-      ["linear"],
-      ["to-number", ["get", "channel_value"]],
-      ...stops,
-    ],
-  ] as ExpressionSpecification;
+  return (
+    rampColorExpression(
+      channel,
+      ["to-number", ["get", "channel_value"]] as ExpressionSpecification,
+      ["==", ["get", "channel_value"], null] as ExpressionSpecification,
+    ) ?? plain
+  );
 }

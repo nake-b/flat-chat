@@ -452,8 +452,8 @@ async def apply_travel_time(
 
     Run `search_apartments` first — this annotates / filters the listings that
     search already found; it does not search. Recolours the map pins by travel
-    time to `near_place_ref` (green = near, red = far) and shows the minutes on
-    each card.
+    time to `near_place_ref` (bold red = near, faded = far) and shows the
+    minutes on each card.
 
     Args:
         near_place_ref: A `place_ref` from `locate_place` for the destination
@@ -516,11 +516,11 @@ async def apply_travel_time(
         return (
             f"Filtered to {state.total_results} listings within {max_minutes} "
             f"min {how} of {label}. The map is now coloured by travel time "
-            "(green = closer)."
+            "(bold red = closer, faded = farther)."
         )
     return (
-        f"Coloured the map by {how} time to {label} (green = closer). "
-        f"All {state.total_results} listings are still shown."
+        f"Coloured the map by {how} time to {label} (bold red = closer, faded "
+        f"= farther). All {state.total_results} listings are still shown."
     )
 
 

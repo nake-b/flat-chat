@@ -104,5 +104,33 @@ def test_fetch_layer_terminates_when_exact_multiple_of_page_size() -> None:
     assert mock_get.call_count == 3
 
 
+def test_cql_filter_is_pushed_as_server_side_param() -> None:
+    # A per-dataset CQL filter (e.g. named-only ALKIS buildings) must ride every
+    # GetFeature page as `CQL_FILTER` so the server returns only matching rows —
+    # the difference between fetching ~5.8k named footprints and the whole ~784k
+    # cadastre (which silently failed the landmarks load).
+    client = BerlinGdiWfsClient()
+    client.PAGE_SIZE = 3
+    mock_get = MagicMock(return_value=_fake_response(_page(0)))
+    client._session.get = mock_get
+    flt = "nam IS NOT NULL AND nam<>''"
+    client.fetch_layer("alkis_gebaeude", "alkis_gebaeude:gebaeude", cql_filter=flt)
+
+    params = mock_get.call_args_list[0].kwargs["params"]
+    assert params["CQL_FILTER"] == flt
+
+
+def test_no_cql_filter_param_when_unset() -> None:
+    # Layers without a filter must not send an empty/None CQL_FILTER (some WFS
+    # servers reject a blank filter).
+    client = BerlinGdiWfsClient()
+    client.PAGE_SIZE = 3
+    mock_get = MagicMock(return_value=_fake_response(_page(0)))
+    client._session.get = mock_get
+    client.fetch_layer("dataset_x", "layer_y")
+
+    assert "CQL_FILTER" not in mock_get.call_args_list[0].kwargs["params"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

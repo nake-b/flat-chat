@@ -552,7 +552,11 @@ named_places = Table(
     "named_places",
     view_metadata,
     Column("kind", Text),
-    Column("src_id", Integer),
+    # TEXT, not Integer: the view UNIONs integer-id source tables with GTFS
+    # transit stops whose `stop_id` is a colon-laden string
+    # (`de:11000:900100003`), so every arm casts `src_id` to text. See the
+    # 0008 migration + `_parse_place_ref`.
+    Column("src_id", Text),
     Column("place_ref", Text),
     Column("name", Text),
     Column("description", Text),

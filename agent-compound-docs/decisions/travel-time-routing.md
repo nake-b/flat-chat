@@ -92,3 +92,21 @@ tool and the slice model.
   or switch OSRM to CH for large matrices. We chunk destinations (90/req).
 - **VBB freshness**: republished ~twice weekly; a stale `gtfs.zip` yields zero
   future-dated trips — re-run `prep-routing.sh` to refresh.
+
+## Shipped follow-ups (same PR)
+
+- **B′ — transit stops in the gazetteer (migration 0008).** `locate_place` now
+  resolves arbitrary S/U-Bahn/tram/bus stations as a deduped `transit_stop` arm
+  of `world.named_places` (`GROUP BY name` + centroid; trgm index on
+  `transit_stops.name`). `src_id` became TEXT view-wide (GTFS `stop_id`s are
+  colon-laden), with the matching ripple in `listings/models.py`,
+  `_parse_place_ref` (split on first `:`), and an `overlay_geometry` `kind`-guard
+  that draws the station point rather than snapping to a nearby footprint. So an
+  anchor no longer has to be a curated landmark (the earlier "only Alexanderplatz
+  resolves because it's also a seed landmark" gap is closed).
+- **Lens-aware clusters.** Cluster bubbles colour by the mean lens value under an
+  active lens (MapLibre `clusterProperties` `sum_value`/`n_valued` over the shared
+  `channelStyles` ramp), so the heatmap no longer drowns in red-by-count at city
+  zoom. The commute ramp is a Berlin-red sequential (light = near → deep red =
+  far) to match the rest of the marker design. Hexbin/H3 is the deferred
+  next-level view (see root `CLAUDE.md` Deferred section).

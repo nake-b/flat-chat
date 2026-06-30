@@ -105,22 +105,52 @@ def test_osrm_raises_routing_error_on_bad_code(monkeypatch):
         asyncio.run(_svc().resolve(_markers(2), filt))
 
 
-def test_motis_parses_positional_array_and_skips_unreachable(monkeypatch):
-    _install(
-        monkeypatch,
-        lambda url, params: _FakeResp([{"duration": 900}, {}, {"duration": 61}]),
-    )
-    out = asyncio.run(_svc().resolve(_markers(3), ANCHOR))
-    assert out == {"m0": 15, "m2": 1}  # 900s→15, {}→absent, 61s→1
+# MOTIS one-to-all returns transit minutes from the anchor to every reachable
+# STOP; RoutingService adds the last-mile walk from the nearest in-range stop to
+# each listing. These markers are spread so each sits ON one stop and >1 km from
+# the others (no cross-walk), making the expected total deterministic.
+_M_ONSTOP = [
+    Marker(id="m0", lat=52.50, lng=13.40),
+    Marker(id="m1", lat=52.52, lng=13.45),
+    Marker(id="m2", lat=52.40, lng=13.30),  # far from every stop → no data
+]
+_ONE_TO_ALL = {
+    "all": [
+        {"place": {"lat": 52.50, "lon": 13.40}, "duration": 12},  # on m0
+        {"place": {"lat": 52.52, "lon": 13.45}, "duration": 24},  # on m1
+    ]
+}
 
 
-def test_motis_uses_latlon_and_transit_mode(monkeypatch):
-    client = _install(monkeypatch, lambda url, params: _FakeResp([{"duration": 600}]))
-    asyncio.run(_svc().resolve(_markers(1), ANCHOR))
-    params = client.calls[0][1]
-    assert params["one"] == "52.512;13.327"  # lat;lon (opposite of OSRM)
-    assert params["mode"] == "TRANSIT"
+def test_motis_maps_stops_to_listings_via_last_mile_walk(monkeypatch):
+    _install(monkeypatch, lambda url, params: _FakeResp(_ONE_TO_ALL))
+    out = asyncio.run(_svc().resolve(_M_ONSTOP, ANCHOR))
+    # m0/m1 sit on a stop → walk ≈ 0 → the stop's minutes; m2 has no stop within
+    # the walk cap → absent.
+    assert out == {"m0": 12, "m1": 24}
+
+
+def test_motis_uses_one_to_all_latlon_and_transit(monkeypatch):
+    client = _install(monkeypatch, lambda url, params: _FakeResp(_ONE_TO_ALL))
+    asyncio.run(_svc().resolve(_M_ONSTOP, ANCHOR))
+    url, params = client.calls[0]
+    assert url.endswith("/api/v1/one-to-all")
+    assert params["one"] == "52.512,13.327"  # lat,lon comma (opposite of OSRM)
+    assert params["transitModes"] == "TRANSIT"
     assert params["arriveBy"] == "false"
+    # No cutoff → request the server's max-minutes cap.
+    assert params["maxTravelTime"] == 90
+
+
+def test_motis_clamps_max_travel_time_to_server_cap(monkeypatch):
+    client = _install(monkeypatch, lambda url, params: _FakeResp(_ONE_TO_ALL))
+    over_cap = ANCHOR.model_copy(update={"max_minutes": 200})
+    asyncio.run(_svc().resolve(_M_ONSTOP, over_cap))
+    assert client.calls[0][1]["maxTravelTime"] == 90  # clamped from 200
+    client.calls.clear()
+    under_cap = ANCHOR.model_copy(update={"max_minutes": 25})
+    asyncio.run(_svc().resolve(_M_ONSTOP, under_cap))
+    assert client.calls[0][1]["maxTravelTime"] == 25  # passed through
 
 
 def test_raises_routing_error_when_engine_unreachable(monkeypatch):

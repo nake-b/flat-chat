@@ -7,6 +7,7 @@ import {
 } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
+  ExpressionSpecification,
   GeoJSONSource,
   Map as MaplibreGl,
   MapLayerMouseEvent,
@@ -18,7 +19,7 @@ import { useSessionState } from "../hooks/useSessionState";
 import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
 import type { MarkerChannel } from "../state/SessionState";
-import { channelColorExpression } from "../state/channelStyles";
+import { channelColorExpression, rampColorExpression } from "../state/channelStyles";
 import {
   BADGE_TEXT_COLOR,
   FLOW_DASH_SEQUENCE,
@@ -245,37 +246,76 @@ function lineEndpoints(geom: GeoJSON.Geometry): [number, number][] {
   return [];
 }
 
+// Cluster size always encodes COUNT (more listings → bigger bubble), in both
+// the default and lens modes — only the COLOUR changes between them.
+const CLUSTER_RADIUS_STEP: ExpressionSpecification = [
+  "step",
+  ["get", "point_count"],
+  16,
+  10,
+  20,
+  30,
+  26,
+  100,
+  34,
+];
+
+// Default channel: colour clusters red-by-count (tint → deep), doubling as a
+// casual density legend at zoom-out.
+const CLUSTER_COUNT_COLOR_STEP: ExpressionSpecification = [
+  "step",
+  ["get", "point_count"],
+  RED_TINT,
+  5,
+  RED,
+  25,
+  RED_DEEP,
+];
+
 const CLUSTER_LAYER: CircleLayerSpecification = {
   id: "clusters",
   type: "circle",
   source: "apartments",
   filter: ["has", "point_count"],
   paint: {
-    "circle-color": [
-      "step",
-      ["get", "point_count"],
-      RED_TINT,
-      5,
-      RED,
-      25,
-      RED_DEEP,
-    ],
+    "circle-color": CLUSTER_COUNT_COLOR_STEP,
     "circle-opacity": 0.92,
-    "circle-radius": [
-      "step",
-      ["get", "point_count"],
-      16,
-      10,
-      20,
-      30,
-      26,
-      100,
-      34,
-    ],
+    "circle-radius": CLUSTER_RADIUS_STEP,
     "circle-stroke-color": "#ffffff",
     "circle-stroke-width": 2,
   },
 };
+
+// Cluster paint under the active visualization channel ("lens"). A lens
+// repaints individual pins but, without this, the cluster bubbles stay
+// red-by-count and drown the heatmap at city zoom. So when a lens is active we
+// colour each cluster by the MEAN lens value of its members
+// (`sum_value / n_valued`, both accumulated via `clusterProperties` on the
+// Source), reusing the SAME ramp as the pins. Clusters with no valued member
+// (e.g. all-unreachable under a commute lens) fall back to the no-data grey —
+// the `n_valued == 0` guard also avoids a divide-by-zero. Size stays count-based.
+// Default channel (`price_warm`) → the red-by-count look (unchanged).
+function buildClusterPaint(
+  channel: MarkerChannel | null | undefined,
+): CircleLayerSpecification["paint"] {
+  const meanValue: ExpressionSpecification = [
+    "/",
+    ["get", "sum_value"],
+    ["max", ["get", "n_valued"], 1],
+  ];
+  const heatmap = rampColorExpression(
+    channel,
+    meanValue,
+    ["==", ["get", "n_valued"], 0] as ExpressionSpecification,
+  );
+  return {
+    "circle-color": heatmap ?? CLUSTER_COUNT_COLOR_STEP,
+    "circle-opacity": 0.92,
+    "circle-radius": CLUSTER_RADIUS_STEP,
+    "circle-stroke-color": "#ffffff",
+    "circle-stroke-width": 2,
+  };
+}
 
 const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
   id: "cluster-count",
@@ -882,6 +922,14 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     [state?.marker_channel],
   );
 
+  // Cluster paint follows the SAME channel — red-by-count by default, mean-lens
+  // heatmap when a lens is active (so the bubbles don't drown the pin heatmap at
+  // city zoom).
+  const clusterPaint = useMemo(
+    () => buildClusterPaint(state?.marker_channel),
+    [state?.marker_channel],
+  );
+
   // id → [lng, lat] for the active result set, so a card/pin click can pan
   // the map to the selected listing.
   const coordsById = useMemo(() => {
@@ -1049,8 +1097,27 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
         clusterRadius={50}
         clusterMaxZoom={14}
         promoteId="id"
+        // Accumulate the active lens scalar per cluster so the bubble can be
+        // coloured by its members' MEAN value (sum/n). `channel_value` is null
+        // for markers with no value in the active lens → counted as neither sum
+        // nor n, so the mean reflects only reachable/valued members.
+        clusterProperties={{
+          sum_value: [
+            "+",
+            [
+              "case",
+              ["==", ["get", "channel_value"], null],
+              0,
+              ["get", "channel_value"],
+            ],
+          ],
+          n_valued: [
+            "+",
+            ["case", ["==", ["get", "channel_value"], null], 0, 1],
+          ],
+        }}
       >
-        <Layer {...CLUSTER_LAYER} />
+        <Layer {...CLUSTER_LAYER} paint={clusterPaint} />
         <Layer {...CLUSTER_COUNT_LAYER} />
         <Layer {...PIN_LAYER} paint={pinPaint} />
       </Source>

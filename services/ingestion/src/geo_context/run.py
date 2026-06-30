@@ -74,7 +74,9 @@ def _run_wfs(
                 for ds in entries:
                     extra = dict(ds.extra) if ds.extra else None
                     layer_rows = 0
-                    for page_gdf in wfs_client.iter_layer_pages(ds.dataset, ds.layer):
+                    for page_gdf in wfs_client.iter_layer_pages(
+                        ds.dataset, ds.layer, cql_filter=ds.cql_filter
+                    ):
                         if page_gdf.empty:
                             continue
                         transformed = transform_wfs_layer(

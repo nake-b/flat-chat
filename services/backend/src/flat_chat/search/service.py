@@ -102,28 +102,30 @@ def _numeric_facet(
     )
 
 
-def _parse_place_ref(token: str) -> tuple[str, int] | None:
+def _parse_place_ref(token: str) -> tuple[str, str] | None:
     """Parse a `locate_place` `place_ref` token into `(kind, src_id)`.
 
     The token is the opaque `'<kind>:<src_id>'` string the
-    `world.named_places` view composes (e.g. `"park:42"`). We parse the
-    FORMAT only — split on the first `:`, require a non-empty kind and an
-    integer src_id — with zero knowledge of which tables back the view.
+    `world.named_places` view composes (e.g. `"park:42"`,
+    `"transit_stop:de:11000:900100003"`). We parse the FORMAT only — split on
+    the FIRST `:`, require a non-empty kind and a non-empty src_id — with zero
+    knowledge of which tables back the view. The `src_id` is kept as TEXT: the
+    view emits `src_id` as text (the gazetteer mixes integer-id source tables
+    with GTFS string stop_ids, and `UNION` forces one type), and transit
+    stop_ids are themselves colon-laden (`de:11000:900100003`), so splitting on
+    the first colon keeps the whole remainder as the id.
 
-    Defensive by contract: any malformed token (no colon, empty kind,
-    non-integer id, garbage) returns None so the caller drops the filter
-    rather than emitting a query that 500s. The LLM passes these opaquely,
-    so a hallucinated token must fail closed.
+    Defensive by contract: any malformed token (no colon, empty kind, empty
+    id, non-string) returns None so the caller drops the filter rather than
+    emitting a query that 500s. The LLM passes these opaquely, so a
+    hallucinated token must fail closed.
     """
     if not isinstance(token, str):
         return None
-    kind, sep, raw_id = token.partition(":")
-    if not sep or not kind or not raw_id:
+    kind, sep, src_id = token.partition(":")
+    if not sep or not kind or not src_id:
         return None
-    try:
-        return kind, int(raw_id)
-    except ValueError:
-        return None
+    return kind, src_id
 
 
 class SearchService:

@@ -181,6 +181,35 @@ class PlaceService:
         kind, src_id = parsed
 
         np = named_places.c
+
+        # Transit stops are anchor POINTs (a station centroid), not footprints.
+        # The snap+cluster-union steps below exist to turn a seed-alias point
+        # into the BUILDING/PARK it sits on — exactly the wrong move for a stop
+        # (it would draw a nearby building instead of the station). So short-
+        # circuit: return the station point itself as the overlay.
+        if kind == "transit_stop":
+            row = (
+                await self.db.execute(
+                    select(
+                        np.name,
+                        geo_func.ST_AsGeoJSON(np.geom, OVERLAY_COORD_DIGITS).label(
+                            "geojson"
+                        ),
+                    )
+                    .where(np.kind == kind, np.src_id == src_id)
+                    .limit(1)
+                )
+            ).first()
+            if row is None or row.geojson is None:
+                return None
+            return MapOverlay(
+                id=f"place:{place_ref}",
+                kind="place",
+                label=row.name or place_ref,
+                geojson=json.loads(row.geojson),
+                origin=origin,
+            )
+
         base = (
             await self.db.execute(
                 select(np.name, geo_func.ST_Dimension(np.geom).label("dim"))
