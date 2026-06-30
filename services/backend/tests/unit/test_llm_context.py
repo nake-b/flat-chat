@@ -157,6 +157,27 @@ def test_summary_caps_at_top_n_and_shows_remaining_in_footer():
     assert "get_result_page(page=N)" in out
 
 
+def test_summary_first_line_is_frontend_breadcrumb_parseable():
+    """Cross-language contract: the summary's first line must stay parseable by
+    the frontend's `parseSearchCount` (services/frontend/src/state/
+    searchBreadcrumb.ts), which renders the per-turn "Found N apartments"
+    breadcrumb (issue #22). It matches `^Found (\\d+) listings?` for hits and
+    `^No apartments found` for the empty case. Reword the prose → update that
+    regex in the same change; this test is the tripwire."""
+    import re
+
+    found = LlmResultSetView(_state(n_markers=48, total=48)).summary(
+        _state(n_markers=48).preview_cards
+    )
+    m = re.match(r"^Found (\d+) listings?", found.splitlines()[0])
+    assert m is not None and int(m.group(1)) == 48
+
+    empty_state = SessionState()
+    empty_state.search_params = SearchParams(rooms_min=2.0)
+    empty = LlmResultSetView(empty_state).summary(empty_state.preview_cards)
+    assert re.match(r"^No apartments found", empty.splitlines()[0]) is not None
+
+
 # ---------------------------------------------------------------------------
 # page (CSV format) — now takes an explicit hydrated slice + offsets
 # ---------------------------------------------------------------------------

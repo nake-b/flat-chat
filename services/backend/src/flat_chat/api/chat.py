@@ -1,11 +1,10 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic_ai.messages import TextPart, UserPromptPart
+from pydantic_ai.ui.ag_ui import DEFAULT_AG_UI_VERSION, AGUIAdapter
 
 from flat_chat.chat.schemas import (
     ConversationResponse,
-    MessageResponse,
     SessionStateResponse,
 )
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
@@ -13,6 +12,13 @@ from flat_chat.chat.state import ChatSession
 from flat_chat.core.dependencies import get_session_store, get_user_id
 
 router = APIRouter()
+
+# Tool whose result we collapse to one "finish" per turn (see issue #22).
+_SEARCH_TOOL = "search_apartments"
+# AG-UI message roles that are ephemeral UI affordances, not transcript: the
+# "Thinking…" indicator (reasoning) and transient activity messages. Dropped on
+# reload so they don't become persisted bubbles.
+_EPHEMERAL_ROLES = frozenset({"reasoning", "activity"})
 
 
 @router.post("", response_model=ConversationResponse)
@@ -41,16 +47,19 @@ async def _load_owned(
     return session
 
 
-@router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
+@router.get("/{conversation_id}/messages", response_model=list[dict[str, Any]])
 async def get_messages(
     conversation_id: str,
     user_id: str = Depends(get_user_id),
     store: SessionStore = Depends(get_session_store),
-):
+) -> list[dict[str, Any]]:
     """History reload — used by the frontend after a page refresh.
 
-    Sending new messages goes through the AG-UI streaming route at /api/agent;
-    this endpoint is read-only and only surfaces user + assistant turns.
+    Returns the full AG-UI message stream (text + tool calls + tool results) so
+    the frontend restores the same transcript it rendered live — tool "finishes"
+    (e.g. "Found 12 apartments") are messages and persist. Sending new messages
+    goes through the AG-UI streaming route at /api/agent; this endpoint is
+    read-only.
     """
     session = await _load_owned(conversation_id, user_id, store)
     return _serialize_history(session)
@@ -77,34 +86,72 @@ async def get_state(
     return session.state.model_dump(mode="json")
 
 
-def _serialize_history(session: ChatSession) -> list[MessageResponse]:
-    """Project the agent's ModelMessage history into user-visible messages.
+def _serialize_history(session: ChatSession) -> list[dict[str, Any]]:
+    """Project the agent's ModelMessage history into the AG-UI message stream
+    the frontend restores on reload — text PLUS tool calls/results, so tool
+    "finishes" persist exactly as they render live (issue #22).
 
-    Only UserPromptPart (→ "user") and TextPart (→ "assistant") are surfaced;
-    tool calls, tool returns, system prompts, retries, and thinking parts
-    stay internal. IDs are derived from (session, message_idx, part_idx) so
-    they're stable across GETs and the frontend can dedupe. Timestamps come
-    from the ModelMessage itself when available.
+    `AGUIAdapter.dump_messages` is the canonical ModelMessage → AG-UI converter
+    (the same message shapes the live SSE stream emits). `by_alias=True` is
+    load-bearing: the frontend (CopilotKit) keys tool rendering off camelCase
+    `toolCalls` / `toolCallId`.
+
+    We then apply the same "let-through" policy the live UI uses, so the restored
+    transcript matches what was on screen:
+      - Thinking is ephemeral → drop `reasoning` / `activity` messages.
+      - Tool retries show nothing → blank tool messages carrying an `error`
+        (mirrors `_QuietRetryEventStream` on the live path).
+      - One search finish per turn → keep only the LAST `search_apartments`
+        result in each turn (turns split at user messages); a turn that broadens
+        several times must not stack identical lines.
+    Blanked tool messages keep their `toolCallId` but render nothing through the
+    frontend's wildcard tool-pill path.
     """
-    out: list[MessageResponse] = []
-    for msg_idx, msg in enumerate(session.message_history):
-        ts = getattr(msg, "timestamp", None) or session.created_at
-        for part_idx, part in enumerate(msg.parts):
-            if isinstance(part, UserPromptPart):
-                role = "user"
-            elif isinstance(part, TextPart):
-                role = "assistant"
-            else:
-                continue
-            content = getattr(part, "content", None)
-            if not isinstance(content, str):
-                continue
-            out.append(
-                MessageResponse(
-                    id=f"{session.id}:{msg_idx}:{part_idx}",
-                    role=role,
-                    content=content,
-                    created_at=ts,
-                )
-            )
-    return out
+    dumped = AGUIAdapter.dump_messages(
+        list(session.message_history), ag_ui_version=DEFAULT_AG_UI_VERSION
+    )
+
+    kept: list[dict[str, Any]] = []
+    for message in dumped:
+        msg = message.model_dump(by_alias=True)
+        if msg.get("role") in _EPHEMERAL_ROLES:
+            continue
+        if msg.get("role") == "tool" and msg.get("error"):
+            msg["content"] = ""
+        kept.append(msg)
+
+    _collapse_search_finishes(kept)
+    return kept
+
+
+def _collapse_search_finishes(messages: list[dict[str, Any]]) -> None:
+    """In place: keep only the LAST `search_apartments` tool result per turn.
+
+    A turn is the span between user messages. Within it, tool results whose
+    originating tool call (joined by `toolCallId`) is `search_apartments` get
+    their content blanked except the final one — so an auto-broadening turn
+    (0 → 0 → 48) shows a single "Found 48 apartments", not a stack.
+    """
+    name_by_call_id: dict[str, str] = {}
+    for msg in messages:
+        for call in msg.get("toolCalls") or []:
+            call_id = call.get("id")
+            name = (call.get("function") or {}).get("name")
+            if call_id and name:
+                name_by_call_id[call_id] = name
+
+    turn_search_idxs: list[int] = []
+
+    def flush_turn() -> None:
+        for idx in turn_search_idxs[:-1]:
+            messages[idx]["content"] = ""
+        turn_search_idxs.clear()
+
+    for idx, msg in enumerate(messages):
+        if msg.get("role") == "user":
+            flush_turn()
+        elif msg.get("role") == "tool":
+            call_id = msg.get("toolCallId")
+            if call_id and name_by_call_id.get(call_id) == _SEARCH_TOOL:
+                turn_search_idxs.append(idx)
+    flush_turn()
