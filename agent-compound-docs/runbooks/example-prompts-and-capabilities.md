@@ -61,9 +61,21 @@ They reroll only when they reappear after being closed.
 ### Agent policy for capabilities response
 In `agent.py`:
 - `CAPABILITIES_AT_THE_MOMENT_REPLY` contains the canonical canned response.
+- `CAPABILITIES_PROMPT_TRIGGER` is the exact frontend prompt text used by the
+  initial-bubble link and starter-card helper.
 - `_capabilities_block()` instructs the model:
   - use the canned text exactly for general/open capability questions,
   - answer directly for specific feature questions.
+
+### Backend credit-saving shortcut
+In `chat/service.py`, dispatch now checks the latest user message. If it
+exactly matches `CAPABILITIES_PROMPT_TRIGGER`:
+- no provider model is built,
+- no external LLM call is made,
+- a local `FunctionModel` yields `CAPABILITIES_AT_THE_MOMENT_REPLY` directly.
+
+The request still goes through normal AG-UI streaming + `on_complete`, so user
+and assistant turns are persisted in conversation history and remain reload-safe.
 
 ## Prompt Set
 - Total starter prompt pool: 20 prompts.

@@ -16,6 +16,11 @@ from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools import ListingsCapability
 
+CAPABILITIES_PROMPT_TRIGGER = (
+    "What can you do right now? Please summarize your current capabilities and the "
+    "world context data you can access at the moment."
+)
+
 CAPABILITIES_AT_THE_MOMENT_REPLY = """\
 Right now, I can help you search Berlin apartments and refine results step by step using both listing details and the geo-context data.
 
