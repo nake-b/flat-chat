@@ -69,6 +69,24 @@ def test_anthropic_builder_requires_model_id():
         build_anthropic_model(_settings(anthropic_api_key="sk-test"), "")
 
 
+def test_anthropic_client_carries_stall_timeout_and_retries():
+    """The custom AsyncAnthropic client keeps its read-stall timeout + retry
+    budget — resilience against a flaky/corrupting egress that would otherwise
+    freeze the SSE stream. Guards against a silent revert to the SDK defaults
+    (very long timeout, only 2 retries). See the module comment in anthropic.py.
+    """
+    from flat_chat.chat.providers.anthropic import _MAX_RETRIES, _TIMEOUT
+
+    assert _MAX_RETRIES == 5
+    assert _TIMEOUT.read == 45.0
+    model = build_anthropic_model(
+        _settings(anthropic_api_key="sk-test"), "claude-sonnet-4-6", cache=True
+    )
+    client = model._provider.client  # the AsyncAnthropic we constructed
+    assert client.max_retries == _MAX_RETRIES
+    assert client.timeout.read == _TIMEOUT.read
+
+
 # --- Azure builder -----------------------------------------------------------
 
 
