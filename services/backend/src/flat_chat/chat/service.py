@@ -6,17 +6,12 @@ from typing import Any
 from ag_ui.core import BaseEvent, EventType, ToolCallResultEvent
 from pydantic import ValidationError
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
 from starlette.responses import Response
 
-from flat_chat.chat.agent import (
-    CAPABILITIES_AT_THE_MOMENT_REPLY,
-    CAPABILITIES_PROMPT_TRIGGER,
-    agent,
-)
+from flat_chat.chat.agent import agent
 from flat_chat.chat.providers import build_chat_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
@@ -110,25 +105,6 @@ def _summarise_prompt(run_input: Any) -> str:
             return "prompt=[multimodal]"
         break
     return "prompt=<none>"
-
-
-def _last_user_text(run_input: Any) -> str | None:
-    """Latest user text in the incoming AG-UI envelope."""
-    for msg in reversed(run_input.messages):
-        if getattr(msg, "role", None) != "user":
-            continue
-        content = getattr(msg, "content", None)
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        break
-    return None
-
-
-def _is_capabilities_shortcut(run_input: Any) -> bool:
-    text = _last_user_text(run_input)
-    if not text:
-        return False
-    return text.casefold() == CAPABILITIES_PROMPT_TRIGGER.casefold()
 
 
 class ChatService:
@@ -235,24 +211,10 @@ class ChatService:
             await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
 
-        if _is_capabilities_shortcut(adapter.run_input):
-            # Backend shortcut: no external LLM/provider call, but we still run
-            # through AG-UI + on_complete so the conversation history remains
-            # authoritative and reload-safe.
-            logger.info("Capabilities shortcut: serving canned reply without LLM")
-
-            async def _shortcut_stream(
-                _messages: list[Any],
-                _info: AgentInfo,
-            ) -> AsyncIterator[str]:
-                yield CAPABILITIES_AT_THE_MOMENT_REPLY
-
-            model = FunctionModel(stream_function=_shortcut_stream)
-        else:
-            try:
-                model = build_chat_model()
-            except RuntimeError as exc:
-                raise LlmProviderUnavailableError("No LLM provider configured") from exc
+        try:
+            model = build_chat_model()
+        except RuntimeError as exc:
+            raise LlmProviderUnavailableError("No LLM provider configured") from exc
 
         # History-authoritative recovery. `run_stream` prepends any supplied
         # `message_history` to the envelope's messages. In normal live turns the

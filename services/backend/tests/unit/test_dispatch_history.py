@@ -28,10 +28,6 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.requests import Request
 
-from flat_chat.chat.agent import (
-    CAPABILITIES_AT_THE_MOMENT_REPLY,
-    CAPABILITIES_PROMPT_TRIGGER,
-)
 import flat_chat.chat.service as service_mod
 from flat_chat.chat.service import ChatService
 from flat_chat.chat.sessions import InMemorySessionStore, SessionNotFoundError
@@ -191,65 +187,5 @@ def test_foreign_session_is_rejected_before_run():
                 ),
                 OTHER_USER,
             )
-
-    asyncio.run(body())
-
-
-def test_capabilities_trigger_uses_backend_shortcut_without_provider():
-    """Exact capabilities trigger bypasses provider model selection.
-
-    We still persist both turns via the normal `on_complete` path.
-    """
-
-    async def body() -> None:
-        store = InMemorySessionStore()
-        session = await store.create(USER)
-        chat = ChatService(
-            search_service=None,
-            listing_service=None,
-            place_service=None,
-            transit_overlay_service=None,
-            store=store,
-        )
-        original = service_mod.build_chat_model
-        service_mod.build_chat_model = lambda: (_ for _ in ()).throw(
-            AssertionError("provider model should not be called for shortcut")
-        )
-        try:
-            resp = await chat.dispatch_agent_request(
-                _make_request(
-                    _envelope(
-                        session.id,
-                        [
-                            {
-                                "id": "m1",
-                                "role": "user",
-                                "content": CAPABILITIES_PROMPT_TRIGGER,
-                            }
-                        ],
-                    )
-                ),
-                USER,
-            )
-            chunks = [chunk async for chunk in resp.body_iterator]
-        finally:
-            service_mod.build_chat_model = original
-
-        body_text = "".join(
-            c.decode() if isinstance(c, bytes) else c for c in chunks
-        )
-        assert CAPABILITIES_AT_THE_MOMENT_REPLY in body_text
-
-        saved = await store.get(session.id)
-        visible_parts = [
-            p.content
-            for msg in saved.message_history
-            for p in msg.parts
-            if isinstance(p, (UserPromptPart, TextPart))
-        ]
-        assert visible_parts == [
-            CAPABILITIES_PROMPT_TRIGGER,
-            CAPABILITIES_AT_THE_MOMENT_REPLY,
-        ]
 
     asyncio.run(body())

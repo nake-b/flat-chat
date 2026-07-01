@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
@@ -83,60 +83,6 @@ function submitPromptToComposer(prompt: string) {
   });
 }
 
-function isGeneralCapabilitiesPrompt(text: string): boolean {
-  const t = text.toLowerCase();
-  return (
-    t.includes("what can you do") ||
-    t.includes("what can i do") ||
-    t.includes("what skills do you have") ||
-    t.includes("what do you know") ||
-    t.includes("what are your capabilities") ||
-    t.includes("what can i ask") ||
-    t.includes("which data can you access right now") ||
-    t === CAPABILITIES_PROMPT.toLowerCase()
-  );
-}
-
-function isApartmentFilterPrompt(text: string): boolean {
-  const t = text.toLowerCase();
-  const filterSignals = [
-    "apartment",
-    "apartments",
-    "flat",
-    "flats",
-    "wohnung",
-    "room",
-    "rooms",
-    "bedroom",
-    "budget",
-    "rent",
-    "price",
-    "district",
-    "balcony",
-    "furnished",
-    "wbs",
-    "quiet",
-    "green",
-    "park",
-    "lake",
-    "ring",
-    "u7",
-    "s-bahn",
-    "tram",
-    "bus",
-    "kita",
-    "school",
-    "hospital",
-    "near ",
-    "around ",
-    " km",
-    " m",
-    "€",
-    "eur",
-  ];
-  return filterSignals.some((signal) => t.includes(signal));
-}
-
 export function ChatPane({
   onNewConversation,
 }: {
@@ -145,63 +91,25 @@ export function ChatPane({
   const userEmail = useAuth((s) => s.user?.email);
   const logout = useAuth((s) => s.logout);
   const { messages } = useCopilotChatInternal();
-  const [starterOpen, setStarterOpen] = useState(true);
-  const [starterMessageCount, setStarterMessageCount] = useState(0);
-  const [starterHeadline, setStarterHeadline] = useState(
-    () => pickRandomItems(STARTER_HEADLINES, 1)[0],
-  );
-  const [starterPrompts, setStarterPrompts] = useState(() =>
-    pickRandomItems(STARTER_PROMPTS, 3),
-  );
-  const processedUserMessages = useRef(0);
+  // Headline + the three example prompts are picked once on mount and stay
+  // stable for the life of the (empty) thread — no reroll. They stop rendering
+  // as soon as the first user message lands (see `starterOpen`).
+  const [starterHeadline] = useState(() => pickRandomItems(STARTER_HEADLINES, 1)[0]);
+  const [starterPrompts] = useState(() => pickRandomItems(STARTER_PROMPTS, 3));
 
-  const userMessages = useMemo(
+  // Show starters only while the thread is empty. Once the user has sent
+  // anything they're dismissed and don't come back — simpler and less
+  // surprising than counting turns or heuristically classifying prompts.
+  const starterOpen = useMemo(
     () =>
-      messages.filter(
+      !messages.some(
         (m) =>
           m.role === "user" &&
           typeof m.content === "string" &&
           m.content.trim().length > 0,
-      ) as Array<{ content: string }>,
+      ),
     [messages],
   );
-
-  useEffect(() => {
-    if (userMessages.length <= processedUserMessages.current) return;
-
-    let nextOpen = starterOpen;
-    let nextCount = starterMessageCount;
-    let shouldReroll = false;
-
-    for (let i = processedUserMessages.current; i < userMessages.length; i += 1) {
-      const text = userMessages[i].content.trim();
-
-      if (isGeneralCapabilitiesPrompt(text)) {
-        if (!nextOpen) {
-          nextOpen = true;
-          shouldReroll = true;
-        }
-        nextCount = 0;
-        continue;
-      }
-
-      if (isApartmentFilterPrompt(text)) {
-        nextOpen = false;
-        continue;
-      }
-
-      nextCount += 1;
-      if (nextCount >= 2) nextOpen = false;
-    }
-
-    processedUserMessages.current = userMessages.length;
-    if (shouldReroll) {
-      setStarterHeadline(pickRandomItems(STARTER_HEADLINES, 1)[0]);
-      setStarterPrompts(pickRandomItems(STARTER_PROMPTS, 3));
-    }
-    if (nextOpen !== starterOpen) setStarterOpen(nextOpen);
-    if (nextCount !== starterMessageCount) setStarterMessageCount(nextCount);
-  }, [userMessages, starterOpen, starterMessageCount]);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {

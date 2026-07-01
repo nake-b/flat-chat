@@ -16,11 +16,6 @@ from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools import ListingsCapability
 
-CAPABILITIES_PROMPT_TRIGGER = (
-    "What can you do right now? Please summarize your current capabilities and the "
-    "world context data you can access at the moment."
-)
-
 CAPABILITIES_AT_THE_MOMENT_REPLY = """\
 Right now, I can help you search Berlin apartments and refine results step by step using both listing details and the geo-context data.
 
@@ -106,13 +101,20 @@ def _city_center_block() -> str:
 def _capabilities_block() -> str:
     return xml_block(
         "capabilities_reply_policy",
-        "If the user asks a GENERAL/OPEN capabilities question (examples: \"what can\n"
-        "you do\", \"what skills do you have\", \"what do you know\", \"which data can\n"
-        "you access right now\") and does NOT ask for a specific concrete task,\n"
-        "reply with EXACTLY this text and nothing else:\n\n"
+        "When the user asks what you can do — either a GENERAL/OPEN question\n"
+        '("what can you do", "what skills do you have", "what do you know") or a\n'
+        'SCOPED one ("which data can you access", "can you filter by transit") —\n'
+        "use the reference summary below as your source of truth for what is\n"
+        "actually available right now. Do NOT invent capabilities beyond it.\n\n"
+        "Adapt the summary to the question: for an open question, cover the whole\n"
+        "picture; for a scoped question, lead with and focus on the relevant part\n"
+        "(e.g. just the geo-context data for a data-access question) and drop the\n"
+        "rest. Keep the honest caveat about the current database snapshot. You may\n"
+        "reword for concision and a natural tone — do not pad it out.\n\n"
+        "Reference summary of current capabilities:\n\n"
         f"{CAPABILITIES_AT_THE_MOMENT_REPLY}\n\n"
         "If the user asks about a SPECIFIC feature or concrete operation, answer the\n"
-        "specific question directly instead of using the canned capabilities text.",
+        "specific question directly instead of reciting the summary.",
     )
 
 

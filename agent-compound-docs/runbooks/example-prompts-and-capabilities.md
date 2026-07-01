@@ -29,53 +29,51 @@ Primary files:
 
 Result: selecting an example prompt sends directly to the agent (not just filling input).
 
-## Appear / Disappear / Reappear Logic
-State variables in `ChatPane.tsx`:
-- `starterOpen`: whether example prompts are visible.
-- `starterMessageCount`: counter for initial non-filter user messages.
-- `processedUserMessages`: ref to process only newly arrived user turns.
+## Visibility Logic
+Starter prompts show **only while the thread is empty**. As soon as the user
+sends any message they're dismissed and do not come back for that thread.
 
-### Rules
-For each new user message:
-- If message is a **general capabilities prompt**:
-  - if prompts are closed, reopen them,
-  - reset `starterMessageCount` to `0`,
-  - reroll headline + three prompts **only on reopen**.
-- Else if message looks like an **apartment filter/search request**:
-  - close prompts immediately.
-- Else (general non-filter message):
-  - increment `starterMessageCount`,
-  - close prompts when count reaches `2`.
+- `starterOpen` is DERIVED (a `useMemo`), not stored: it's `true` when no
+  `role === "user"` message with non-empty string content exists yet.
+- `starterHeadline` and the three `starterPrompts` are picked once on mount and
+  stay stable — no reroll, no reappear.
 
-### Stability requirement
-While prompts are already visible, they stay the same selection.
-They reroll only when they reappear after being closed.
+This intentionally replaced an earlier scheme (a `starterMessageCount` counter,
+a `processedUserMessages` ref, keyword-based filter/capabilities classification,
+and reroll-on-reopen). Empty-thread-only is simpler and less surprising, and it
+drops the hardcoded English keyword lists that were a maintenance liability.
 
 ## Capabilities Trigger UX
 
 ### Initial bubble link
 - The initial assistant bubble contains markdown link text: `what I can do`.
-- A click handler intercepts `#capabilities` links inside assistant messages and auto-sends a capabilities prompt.
+- A click handler intercepts `#capabilities` links inside assistant messages and auto-sends a capabilities prompt (`CAPABILITIES_PROMPT` in `ChatPane.tsx`).
+- The click sends a normal user turn through `POST /api/agent` — it is persisted in history and visible to the agent on later turns, same as any typed message.
 - Link styling lives in `index.css` (`.copilotKitAssistantMessage a`): underlined + darker grey.
 
 ### Agent policy for capabilities response
 In `agent.py`:
-- `CAPABILITIES_AT_THE_MOMENT_REPLY` contains the canonical canned response.
-- `CAPABILITIES_PROMPT_TRIGGER` is the exact frontend prompt text used by the
-  initial-bubble link and starter-card helper.
-- `_capabilities_block()` instructs the model:
-  - use the canned text exactly for general/open capability questions,
-  - answer directly for specific feature questions.
+- `CAPABILITIES_AT_THE_MOMENT_REPLY` is a **reference summary** of what's
+  actually available right now (source of truth — the model must not invent
+  capabilities beyond it).
+- `_capabilities_block()` instructs the model to use that summary as guidance
+  and **adapt** it to the question:
+  - open question ("what can you do") → cover the whole picture,
+  - scoped question ("which data can you access") → lead with and focus on the
+    relevant part (e.g. just geo-context data), drop the rest,
+  - specific feature / concrete operation → answer directly instead of reciting
+    the summary.
+- The reply is NOT verbatim — the model may reword for concision and a natural
+  tone, keeping the honest caveat about the current database snapshot.
 
-### Backend credit-saving shortcut
-In `chat/service.py`, dispatch now checks the latest user message. If it
-exactly matches `CAPABILITIES_PROMPT_TRIGGER`:
-- no provider model is built,
-- no external LLM call is made,
-- a local `FunctionModel` yields `CAPABILITIES_AT_THE_MOMENT_REPLY` directly.
-
-The request still goes through normal AG-UI streaming + `on_complete`, so user
-and assistant turns are persisted in conversation history and remain reload-safe.
+There is **no backend text-match shortcut**. An earlier version short-circuited
+an exact-text match to a canned `FunctionModel` reply to save a credit; it was
+removed because (a) exact string matching across a frontend + backend constant
+is brittle, and (b) a fixed string can't adapt to scoped questions the way the
+guidance policy above does. Every capabilities question now runs a normal
+(cheap) agent turn. Note `build_chat_model()` is `@lru_cache`d, so the model is
+constructed once per process, not per message — the shortcut never saved model
+construction, only one LLM call.
 
 ## Prompt Set
 - Total starter prompt pool: 20 prompts.
