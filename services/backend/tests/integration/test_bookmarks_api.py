@@ -164,6 +164,25 @@ def test_add_bookmark_invalid_listing_id_is_422(async_db_url):
     assert resp.status_code == 422
 
 
+def test_add_bookmark_unknown_listing_is_404_not_500(async_db_url):
+    """A well-formed UUID with no matching listing → 404 (FK can't resolve),
+    not a 500 from the raw IntegrityError. No bookmark row is created."""
+    unknown = uuid.uuid4()
+
+    async def body(client, session):
+        resp = await client.post(f"/api/bookmarks/{unknown}")
+        count = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(Bookmark)
+            .where(Bookmark.listing_id == unknown)
+        )
+        return resp, count
+
+    resp, count = _drive(async_db_url, [], body)
+    assert resp.status_code == 404
+    assert count == 0
+
+
 # ---------------------------------------------------------------------------
 # DELETE /api/bookmarks/{listing_id}
 # ---------------------------------------------------------------------------

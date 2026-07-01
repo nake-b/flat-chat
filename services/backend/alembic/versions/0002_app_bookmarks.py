@@ -15,7 +15,7 @@ Index on `(user_id, created_at DESC)` lets the sidebar's newest-first
 ORDER BY be index-only.
 
 Revision ID: 0002_app_bookmarks
-Revises: 0001_app_users_sessions
+Revises: 0002_user_auth_columns
 Create Date: 2026-06-27
 """
 
@@ -26,7 +26,11 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0002_app_bookmarks"
-down_revision: str | Sequence[str] | None = "0001_app_users_sessions"
+# Chained AFTER 0002_user_auth_columns (not before) so a DB that already
+# applied auth — every checkout of `main` — picks bookmarks up on the next
+# `upgrade head`. Chaining before auth would leave such a DB already at the head
+# and never create app.bookmarks. Single linear head: 0001 → auth → bookmarks.
+down_revision: str | Sequence[str] | None = "0002_user_auth_columns"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

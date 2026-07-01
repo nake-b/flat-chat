@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from flat_chat.core.dependencies import (
     get_bookmark_service,
     get_user_id,
     valid_listing_id,
 )
-from flat_chat.listings.bookmarks import BookmarkService
+from flat_chat.listings.bookmarks import BookmarkService, UnknownListingError
 from flat_chat.listings.context import ListingCard
 
 router = APIRouter()
@@ -60,8 +60,15 @@ async def add_bookmark(
     user_id: str = Depends(get_user_id),
     service: BookmarkService = Depends(get_bookmark_service),
 ) -> dict[str, str]:
-    """Bookmark a listing. Idempotent — re-adding is 200, not 409."""
-    await service.add(user_id, listing_id)
+    """Bookmark a listing. Idempotent — re-adding is 200, not 409.
+
+    A well-formed but non-existent listing id → 404 (the listing FK can't be
+    satisfied) rather than a 500 from the raw IntegrityError.
+    """
+    try:
+        await service.add(user_id, listing_id)
+    except UnknownListingError as exc:
+        raise HTTPException(status_code=404, detail="listing not found") from exc
     return {"status": "ok"}
 
 

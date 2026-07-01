@@ -8,6 +8,6 @@ metadata autogenerate / drift detection).
 """
 
 from flat_chat.listings.bookmarks.models import Bookmark
-from flat_chat.listings.bookmarks.service import BookmarkService
+from flat_chat.listings.bookmarks.service import BookmarkService, UnknownListingError
 
-__all__ = ["Bookmark", "BookmarkService"]
+__all__ = ["Bookmark", "BookmarkService", "UnknownListingError"]
