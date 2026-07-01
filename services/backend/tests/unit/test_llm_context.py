@@ -343,7 +343,7 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "  - Görlitzer Park — 400m" in out
     assert "Nearest playground: Mariannenplatz — 250m" in out
     assert "  - Urban-Krankenhaus (plan_hospital) — 900m" in out
-    assert "Nearest water: Landwehrkanal (river) — 500m" in out
+    assert "Nearest river: Landwehrkanal — 500m" in out
     assert "  - Kita Sonnenschein — 180m" in out
     assert "  - Oberbaumbrücke (bridge) — 650m" in out
     assert (

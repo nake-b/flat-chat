@@ -273,11 +273,14 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
     if detail.nearest_water is not None:
         w = detail.nearest_water
         kind = water_kind_label(w.water_kind)
-        label = w.name or kind or "water"
-        # Show the kind alongside a named body ("Landwehrkanal (river)").
-        if w.name and kind:
-            label = f"{w.name} ({kind})"
-        parts.append(f"Nearest water: {label} — {w.distance_m}m")
+        # Lead with the kind as the noun ("Nearest river: Landwehrkanal") so a
+        # type mismatch is explicit — this is the overall-nearest body, kind-
+        # agnostic, so someone who filtered for a lake sees "Nearest river: …"
+        # rather than a bare "Nearest water" that hides the mismatch. Fall back
+        # to "Nearest water" when the kind is unknown.
+        noun = kind or "water"
+        label = f": {w.name}" if w.name else ""
+        parts.append(f"Nearest {noun}{label} — {w.distance_m}m")
 
     parts.extend(
         _format_list_section(
