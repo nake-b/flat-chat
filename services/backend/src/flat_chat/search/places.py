@@ -19,14 +19,24 @@ search uses the full geometry, not the centroid.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 
+from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.models import named_places
+from flat_chat.listings.overlays import (
+    OVERLAY_CLUSTER_RADIUS_M,
+    OVERLAY_COORD_DIGITS,
+    OVERLAY_SIMPLIFY_TOLERANCE,
+    OVERLAY_SNAP_RADIUS_M,
+    MapOverlay,
+    OverlayOrigin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +93,16 @@ class PlaceService:
                 geo_func.ST_X(centroid).label("lon"),
             )
             .where(np.name.op("%")(q))
-            .order_by(func.similarity(np.name, q).desc())
+            # Tiebreak on geometry richness so a polygon/line beats a coincident
+            # point at equal name-match (ST_Dimension: polygon=2, line=1,
+            # point=0). Without it, a seed-alias POINT sitting on top of real
+            # building footprints can win an exact-name tie and the agent draws
+            # a dot instead of a shape. Helps near_place_ref search too (a
+            # footprint is a better ST_DWithin target than a point).
+            .order_by(
+                func.similarity(np.name, q).desc(),
+                geo_func.ST_Dimension(np.geom).desc(),
+            )
             .limit(LOCATE_LIMIT)
         )
         rows = (await self.db.execute(stmt)).all()
@@ -98,3 +117,125 @@ class PlaceService:
             )
             for r in rows
         ]
+
+    async def overlay_geometry(
+        self, place_ref: str, *, origin: OverlayOrigin = "search"
+    ) -> MapOverlay | None:
+        """Resolve a `place_ref` to a drawable `MapOverlay`, or None if unknown.
+
+        Two-step:
+
+        1. **Snap.** If the hit is a representative POINT (a seed alias like
+           "TU Berlin" / "Görli"), snap to the nearest footprint (polygon/line,
+           ANY kind) within `OVERLAY_SNAP_RADIUS_M` and use it as the anchor —
+           the curated pin sits ON its target, so the nearest footprint IS the
+           place (the Hauptgebäude building, the Görlitzer Park polygon). The
+           building/park name never matches the alias, so proximity (not name)
+           is what finds it. No footprint near → fall back to the point.
+        2. **Cluster-union.** Union the anchor's same-kind, same-name footprints
+           within `OVERLAY_CLUSTER_RADIUS_M` (a campus fragmented into many
+           identically-named rows → its local cluster; a unique place → itself),
+           keeping the richest dimension.
+
+        The chip label stays the name the user referenced. `_parse_place_ref`
+        is the shared, fail-closed token parser — a garbage ref yields None.
+        """
+        from .service import _parse_place_ref  # same package; no import cycle
+
+        parsed = _parse_place_ref(place_ref)
+        if parsed is None:
+            return None
+        kind, src_id = parsed
+
+        np = named_places.c
+        base = (
+            await self.db.execute(
+                select(np.name, geo_func.ST_Dimension(np.geom).label("dim"))
+                .where(np.kind == kind, np.src_id == src_id)
+                .limit(1)
+            )
+        ).first()
+        if base is None:
+            return None
+        label = base.name or place_ref
+
+        # Step 1 — snap a marker point to the footprint it sits on.
+        anchor_kind, anchor_src_id = kind, src_id
+        if base.dim == 0:
+            base_geom = (
+                select(np.geom).where(np.kind == kind, np.src_id == src_id).limit(1)
+            ).scalar_subquery()
+            snap = (
+                await self.db.execute(
+                    select(np.kind.label("kind"), np.src_id.label("src_id"))
+                    .where(
+                        geo_func.ST_Dimension(np.geom) >= 1,
+                        geo_func.ST_DWithin(
+                            cast(np.geom, Geography),
+                            cast(base_geom, Geography),
+                            OVERLAY_SNAP_RADIUS_M,
+                        ),
+                    )
+                    .order_by(
+                        geo_func.ST_Distance(
+                            cast(np.geom, Geography), cast(base_geom, Geography)
+                        )
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if snap is not None:
+                anchor_kind, anchor_src_id = snap.kind, snap.src_id
+
+        # Step 2 — cluster-union the (possibly snapped) anchor's same-name,
+        # same-kind footprints within the cluster radius.
+        anchor_name = (
+            select(np.name)
+            .where(np.kind == anchor_kind, np.src_id == anchor_src_id)
+            .limit(1)
+        ).scalar_subquery()
+        anchor_geom = (
+            select(np.geom)
+            .where(np.kind == anchor_kind, np.src_id == anchor_src_id)
+            .limit(1)
+        ).scalar_subquery()
+        cluster = (
+            select(
+                np.geom.label("geom"),
+                geo_func.ST_Dimension(np.geom).label("dim"),
+            )
+            .where(
+                np.kind == anchor_kind,
+                np.name.is_not_distinct_from(anchor_name),
+                geo_func.ST_DWithin(
+                    cast(np.geom, Geography),
+                    cast(anchor_geom, Geography),
+                    OVERLAY_CLUSTER_RADIUS_M,
+                ),
+            )
+            .cte("cluster")
+        )
+        # Keep only the richest-dimension members (polygons over a coincident
+        # alias point, etc.). ST_Union (not ST_Collect) dissolves them into a
+        # homogeneous Polygon/MultiPolygon (or Line) — ST_Collect would emit a
+        # GeometryCollection when mixing POLYGON + MULTIPOLYGON rows (ALKIS
+        # footprints are a mix), which the frontend can't classify.
+        max_dim = select(func.max(cluster.c.dim)).scalar_subquery()
+        geojson_expr = geo_func.ST_AsGeoJSON(
+            geo_func.ST_SimplifyPreserveTopology(
+                geo_func.ST_Union(cluster.c.geom), OVERLAY_SIMPLIFY_TOLERANCE
+            ),
+            OVERLAY_COORD_DIGITS,
+        )
+        stmt = select(geojson_expr.label("geojson")).where(cluster.c.dim == max_dim)
+        row = (await self.db.execute(stmt)).first()
+        if row is None or row.geojson is None:
+            return None
+
+        return MapOverlay(
+            id=f"place:{place_ref}",
+            kind="place",
+            label=label,
+            geojson=json.loads(row.geojson),
+            origin=origin,
+        )

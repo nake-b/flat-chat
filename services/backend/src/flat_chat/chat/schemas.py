@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import ResultFacets, SearchParams
 
 
@@ -48,3 +49,4 @@ class SessionStateResponse(BaseModel):
     facets: ResultFacets | None = None
     active_id: str | None = None
     active_listing_detail: ListingDetail | None = None
+    map_overlays: list[MapOverlay] = Field(default_factory=list)

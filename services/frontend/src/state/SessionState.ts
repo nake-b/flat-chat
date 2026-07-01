@@ -320,6 +320,44 @@ export function decodeMarkers(
 }
 
 // ---------------------------------------------------------------------------
+// Map overlays — geometries the agent draws on the map (the Spree, a U-Bahn
+// line, a Bezirk, the inside-the-ring zone). Mirror of
+// listings/context.py:MapOverlay. The backend sets SEMANTICS only
+// (kind/label/geojson/origin); APPEARANCE is decided here in
+// `state/overlayStyles.ts`, keyed off `kind` + the geojson geometry type.
+// `geojson` is a raw GeoJSON geometry (from PostGIS ST_AsGeoJSON).
+// ---------------------------------------------------------------------------
+
+export type OverlayKind =
+  | "place"
+  | "transit_line"
+  | "bezirk"
+  | "ring"
+  | "parks";
+export type OverlayOrigin = "search" | "pinned";
+
+// A labelled point decorating an overlay — currently a transit line's served
+// stations (rendered as dots + line badges). Mirror of context.py:OverlayPoint.
+export interface OverlayPoint {
+  label: string;
+  lon: number;
+  lat: number;
+}
+
+export interface MapOverlay {
+  id: string;
+  kind: OverlayKind;
+  label: string;
+  // GeoJSON geometry object ({type, coordinates}); typed loosely so a Feature
+  // would also pass. The map layer reads `.type` to pick line vs fill.
+  geojson: GeoJSON.Geometry;
+  origin: OverlayOrigin;
+  // Optional decorations on the geometry — a transit line's stations; empty/
+  // absent for everything else. Optional so older state snapshots still parse.
+  points?: OverlayPoint[];
+}
+
+// ---------------------------------------------------------------------------
 // SessionState — the canonical in-memory representation mirrored from
 // backend over the AG-UI stream. The frontend renders markers + cards from
 // this; the LLM reads the same fields via build_dynamic_state_prompt.
@@ -338,6 +376,7 @@ export interface SessionState {
   facets: ResultFacets | null;
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
+  map_overlays: MapOverlay[];
 }
 
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
@@ -348,6 +387,7 @@ export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   facets: null,
   active_id: null,
   active_listing_detail: null,
+  map_overlays: [],
 }) as SessionState;
 
 export const AGENT_NAME = "berlin-agent";

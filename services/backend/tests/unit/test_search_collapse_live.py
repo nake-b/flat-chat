@@ -112,7 +112,11 @@ def _drive(plan: list[str]) -> list[dict]:
         store = InMemorySessionStore()
         session = await store.create(USER)
         chat = ChatService(
-            search_service=None, listing_service=None, place_service=None, store=store
+            search_service=None,
+            listing_service=None,
+            place_service=None,
+            transit_overlay_service=None,
+            store=store,
         )
         original_build = service_mod.build_chat_model
         service_mod.build_chat_model = lambda: FunctionModel(
