@@ -180,7 +180,11 @@ def test_get_messages_collapses_multi_search_to_last(async_db_url):
         session.message_history = [
             ModelRequest(parts=[UserPromptPart(content="broaden it")]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name="search_apartments", args={}, tool_call_id="c1")]
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c1"
+                    )
+                ]
             ),
             ModelRequest(
                 parts=[
@@ -192,7 +196,11 @@ def test_get_messages_collapses_multi_search_to_last(async_db_url):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name="search_apartments", args={}, tool_call_id="c2")]
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c2"
+                    )
+                ]
             ),
             ModelRequest(
                 parts=[
@@ -223,7 +231,11 @@ def test_get_messages_blanks_retry_results(async_db_url):
         session.message_history = [
             ModelRequest(parts=[UserPromptPart(content="hi")]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name="search_apartments", args={}, tool_call_id="c1")]
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c1"
+                    )
+                ]
             ),
             ModelRequest(
                 parts=[
@@ -262,9 +274,7 @@ def test_get_messages_drops_thinking(async_db_url):
     resp = drive(async_db_url, body)
     msgs = resp.json()
     assert all(m["role"] != "reasoning" for m in msgs)
-    assert any(
-        m["role"] == "assistant" and m.get("content") == "answer" for m in msgs
-    )
+    assert any(m["role"] == "assistant" and m.get("content") == "answer" for m in msgs)
 
 
 def test_unknown_conversation_404(async_db_url):
