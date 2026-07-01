@@ -119,18 +119,24 @@ def _serialize_history(session: ChatSession) -> list[dict[str, Any]]:
             msg["content"] = ""
         kept.append(msg)
 
-    _collapse_search_finishes(kept)
-    return kept
+    return _collapse_search_finishes(kept)
 
 
-def _collapse_search_finishes(messages: list[dict[str, Any]]) -> None:
-    """In place: keep only the LAST `search_apartments` tool result per turn.
+def _collapse_search_finishes(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return `messages` with every `search_apartments` result blanked except
+    the LAST one in its turn — so an auto-broadening turn (0 → 0 → 48) restores
+    a single "Found 48 apartments", not a stack. A turn is the span between user
+    messages; results are matched to their originating tool call via `toolCallId`.
 
-    A turn is the span between user messages. Within it, tool results whose
-    originating tool call (joined by `toolCallId`) is `search_apartments` get
-    their content blanked except the final one — so an auto-broadening turn
-    (0 → 0 → 48) shows a single "Found 48 apartments", not a stack.
+    Pure: the input list is not mutated. Only the blanked messages are rebuilt
+    (shallow copies with `content` cleared); every other message is passed
+    through by reference.
     """
+    # `dump_messages` emits `toolCalls: null` for non-tool messages, so `or []`
+    # (not `.get("toolCalls", [])`) is load-bearing: the default only fills a
+    # MISSING key, whereas an explicit `null` would slip through and break `for`.
     name_by_call_id: dict[str, str] = {}
     for msg in messages:
         for call in msg.get("toolCalls") or []:
@@ -139,18 +145,26 @@ def _collapse_search_finishes(messages: list[dict[str, Any]]) -> None:
             if call_id and name:
                 name_by_call_id[call_id] = name
 
-    turn_search_idxs: list[int] = []
+    # Collect the indices to blank: within each turn, every search result but
+    # the last. `turn` accumulates the search-result indices since the last user
+    # message; closing a turn marks all-but-the-final for blanking.
+    blank_idxs: set[int] = set()
+    turn: list[int] = []
 
-    def flush_turn() -> None:
-        for idx in turn_search_idxs[:-1]:
-            messages[idx]["content"] = ""
-        turn_search_idxs.clear()
+    def close_turn() -> None:
+        blank_idxs.update(turn[:-1])
+        turn.clear()
 
     for idx, msg in enumerate(messages):
         if msg.get("role") == "user":
-            flush_turn()
+            close_turn()
         elif msg.get("role") == "tool":
             call_id = msg.get("toolCallId")
             if call_id and name_by_call_id.get(call_id) == SEARCH_TOOL_NAME:
-                turn_search_idxs.append(idx)
-    flush_turn()
+                turn.append(idx)
+    close_turn()
+
+    return [
+        {**msg, "content": ""} if idx in blank_idxs else msg
+        for idx, msg in enumerate(messages)
+    ]
