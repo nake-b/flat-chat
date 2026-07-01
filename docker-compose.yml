@@ -38,13 +38,21 @@ services:
       phoenix:
         condition: service_started
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      # Hardcode the `postgres` service hostname (like every other service)
+      # rather than ${DATABASE_URL}: the host's .env points DATABASE_URL at
+      # localhost:5432 for host-side tooling (scrapers, alembic, refresh-db),
+      # but inside this container `localhost` is the container itself. The
+      # compose service name `postgres` resolves correctly in both the
+      # teammate (bridge) and host-overlay setups.
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      - ANTHROPIC_TITLE_MODEL=${ANTHROPIC_TITLE_MODEL:-claude-haiku-4-5-20251001}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
       - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-}
       - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
+      - AZURE_OPENAI_TITLE_DEPLOYMENT=${AZURE_OPENAI_TITLE_DEPLOYMENT:-}
       - JINA_API_KEY=${JINA_API_KEY:-}
       - JINA_BASE_URL=${JINA_BASE_URL:-https://api.jina.ai/v1}
       - PHOENIX_ENABLED=${PHOENIX_ENABLED:-true}
@@ -122,6 +130,10 @@ services:
       - NOMINATIM_BASE_URL=${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
       - GEOCODER_USER_AGENT=${GEOCODER_USER_AGENT:-flat-chat-geocoder/1.0 (+https://github.com/nake-b/flat-chat)}
       - GEOCODER_RATE_LIMIT_S=${GEOCODER_RATE_LIMIT_S:-1.0}
+      # Silver freshness cutoff: listings scraped before this ISO date are
+      # treated as stale and excluded from `listings` on every silver run
+      # (skipped in transform + pruned). Advance it to drop an older batch.
+      - SILVER_MIN_SCRAPED_AT=${SILVER_MIN_SCRAPED_AT:-2026-06-01}
 
   # Geo-context ETL (Berlin GDI WFS + VBB GTFS).
   # Opt-in via `--profile geo-context`; does not run on `docker compose up`.

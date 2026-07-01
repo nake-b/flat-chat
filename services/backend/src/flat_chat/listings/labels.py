@@ -17,7 +17,7 @@ Gold stores facts; this module (consumed at chat-presentation time) tells
 the user what they mean.
 """
 
-from typing import cast
+from typing import Literal, cast
 
 from .thresholds import (
     BUCKET_TO_METERS,
@@ -112,6 +112,59 @@ def walk_minutes(meters: int | None) -> int | None:
         return 0
     minutes = round(meters / PEDESTRIAN_M_PER_S / 60)
     return max(minutes, 1)
+
+
+TransitMode = Literal["u_bahn", "s_bahn", "tram", "bus", "night"]
+
+# Preference for picking the single "primary" line at a stop: rail first, then
+# tram, then day bus, night bus last. Lower = preferred.
+_TRANSIT_MODE_RANK: dict[TransitMode, int] = {
+    "u_bahn": 0,
+    "s_bahn": 1,
+    "tram": 2,
+    "bus": 3,
+    "night": 4,
+}
+
+
+def transit_mode(line: str) -> TransitMode:
+    """Classify a Berlin transit line label by its prefix.
+
+    Gold stores only line labels (not GTFS route types), so this is a
+    prefix heuristic: ``U…`` = U-Bahn, ``S…`` = S-Bahn, ``M<digit>`` = tram
+    (MetroTram; MetroBus like ``M41`` also matches and is treated as tram —
+    harmless), ``N…`` = night bus, everything else (plain numbers, ``X…``) =
+    bus. Numeric trams (12/16/…) read as "bus". Precision here only affects the
+    display icon and rail-vs-surface ranking, and the label itself is always
+    shown, so the approximation is acceptable.
+    """
+    if not line:
+        return "bus"
+    head = line[0].upper()
+    if head == "U":
+        return "u_bahn"
+    if head == "S":
+        return "s_bahn"
+    if head == "N":
+        return "night"
+    if head == "M" and len(line) > 1 and line[1].isdigit():
+        return "tram"
+    return "bus"
+
+
+def primary_transit_line(lines: list[str] | None) -> str | None:
+    """Pick the single most useful line served by the nearest stop.
+
+    Prefers rail (U/S) over tram over day bus over night bus, so a stop serving
+    both a bus and a U-Bahn surfaces the U-Bahn — not whichever line happened to
+    sort first in the array. Stable on ties (keeps input order).
+    """
+    if not lines:
+        return None
+    usable = [ln for ln in lines if ln]
+    if not usable:
+        return None
+    return min(usable, key=lambda ln: _TRANSIT_MODE_RANK[transit_mode(ln)])
 
 
 def resolve_near_spec(spec: NearSpec) -> int:

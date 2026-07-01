@@ -1,10 +1,11 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic_ai.ui.ag_ui import DEFAULT_AG_UI_VERSION, AGUIAdapter
 
 from flat_chat.chat.schemas import (
     ConversationResponse,
+    ConversationSummary,
     SessionStateResponse,
 )
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
@@ -30,6 +31,21 @@ async def create_conversation(
     return ConversationResponse(id=session.id, created_at=session.created_at)
 
 
+@router.get("", response_model=list[ConversationSummary])
+async def list_conversations(
+    user_id: str = Depends(get_user_id),
+    store: SessionStore = Depends(get_session_store),
+) -> list[ConversationSummary]:
+    """Powers the conversation-list sidebar.
+
+    Returns the calling user's conversations that have at least one message
+    (empty threads from a "+ New chat" click that never sent a prompt are
+    filtered out). Newest-first by `updated_at`. Empty list when the user has
+    no rows — never 404.
+    """
+    return await store.list_conversation_summaries(user_id)
+
+
 async def _load_owned(
     conversation_id: str, user_id: str, store: SessionStore
 ) -> ChatSession:
@@ -44,6 +60,24 @@ async def _load_owned(
     if session.user_id != user_id:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return session
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_user_id),
+    store: SessionStore = Depends(get_session_store),
+) -> Response:
+    """Hard-delete a conversation owned by the caller.
+
+    Cascades to `app.messages` and `app.session_state` via FK
+    `ON DELETE CASCADE`. Returns 204 on success; 404 (NOT 403) for missing
+    OR foreign rows so existence doesn't leak across users.
+    """
+    deleted = await store.delete_if_owned(conversation_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return Response(status_code=204)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[dict[str, Any]])

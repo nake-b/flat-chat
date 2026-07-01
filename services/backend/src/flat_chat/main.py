@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.api import agent, auth, chat, listings
+from flat_chat.api import agent, auth, bookmarks, chat, listings
 from flat_chat.core.database import get_async_db
 from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import (
@@ -57,6 +57,12 @@ app.include_router(
     listings.router,
     prefix="/api/listings",
     tags=["listings"],
+)
+
+app.include_router(
+    bookmarks.router,
+    prefix="/api/bookmarks",
+    tags=["bookmarks"],
 )
 
 

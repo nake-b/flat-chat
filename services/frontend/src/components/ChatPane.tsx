@@ -3,8 +3,10 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
+import { AccountMenu } from "./AccountMenu";
+import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
+import { useSidebarOpen } from "../hooks/useSidebarOpen";
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
-import { useAuth } from "../hooks/useAuth";
 import { useRecovery } from "../state/recovery";
 import {
   CAPABILITIES_HREF,
@@ -58,13 +60,7 @@ function AssistantLink({
 
 const markdownTagRenderers = { a: AssistantLink };
 
-export function ChatPane({
-  onNewConversation,
-}: {
-  onNewConversation: () => void;
-}) {
-  const userEmail = useAuth((s) => s.user?.email);
-  const logout = useAuth((s) => s.logout);
+export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
   const { messages, sendMessage } = useCopilotChatInternal();
   // Headline + the three example prompts are picked once on mount and stay
   // stable for the life of the (empty) thread — no reroll. They stop rendering
@@ -114,45 +110,102 @@ export function ChatPane({
   // `useCoAgentStateRender` anchors via a stale message-id claim bridge.
   const thinkingPill = useThinkingPillInStream();
 
+  const open = useSidebarOpen((s) => s.open);
+  const toggleSidebar = useSidebarOpen((s) => s.toggleSidebar);
+  const bookmarkOpen = useBookmarkSidebarOpen((s) => s.open);
+  const toggleBookmarks = useBookmarkSidebarOpen((s) => s.toggleSidebar);
+
   return (
     <div className="flex h-full flex-col bg-paper">
-      <header className="border-b-2 border-red px-7 pb-4 pt-6 text-center">
+      {/* Row 1 — centered wordmark + tagline. */}
+      <div className="flex flex-col items-center border-b border-paper-rule px-7 pb-3 pt-6 text-center">
         <h1 className="font-sans text-[2rem] font-extrabold leading-none tracking-[-0.035em] text-ink">
           Flat<span className="px-1 text-red">·</span>Chat
         </h1>
         <span className="mt-2.5 inline-block font-mono text-[10px] uppercase tracking-[0.18em] text-ink-soft">
           the Berlin Real Estate (AI) Agent
         </span>
-      </header>
+      </div>
 
-      {/* Slim action strip — signed-in identity on the left, actions on the
-          right, separated from the centred title so it doesn't compete with
-          the brand. */}
-      <div className="flex items-center justify-between border-b border-paper-rule px-5 py-2">
-        <span
-          title={userEmail ?? undefined}
-          className="truncate font-mono text-[10px] tracking-[0.08em] text-ink-ghost"
+      {/* Row 2 — utility bar: nav icons on the left (conversations, bookmarks),
+          account dropdown on the right. Inline SVGs — no icon library in
+          package.json. */}
+      <div className="flex items-center gap-1 border-b-2 border-red px-3 py-1.5">
+        <button
+          type="button"
+          onClick={onNewChat}
+          aria-label="New chat"
+          title="New chat"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
         >
-          {userEmail ?? ""}
-        </span>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={onNewConversation}
-            title="Start a new conversation"
-            className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+          <svg
+            viewBox="0 0 20 20"
+            width="26"
+            height="26"
+            aria-hidden
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
           >
-            + New chat
-          </button>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            title="Sign out"
-            className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:text-red"
+            <line x1="10" y1="4" x2="10" y2="16" />
+            <line x1="4" y1="10" x2="16" y2="10" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          aria-label="Open conversation list"
+          aria-expanded={open}
+          aria-controls="conversation-sidebar"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
+        >
+          <svg
+            viewBox="0 0 20 20"
+            width="26"
+            height="26"
+            aria-hidden
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
           >
-            Sign out
-          </button>
-        </div>
+            <line x1="3" y1="6" x2="17" y2="6" />
+            <line x1="3" y1="10" x2="17" y2="10" />
+            <line x1="3" y1="14" x2="17" y2="14" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={toggleBookmarks}
+          aria-label="Open bookmarks"
+          aria-expanded={bookmarkOpen}
+          aria-controls="bookmark-sidebar"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
+        >
+          {/* Home with a heart inside — the bookmarks affordance, echoing the
+              red save-heart on cards. House strokes follow currentColor so
+              hover recolours them; the heart fill is fixed Berliner Rot. */}
+          <svg
+            viewBox="0 0 28 28"
+            width="26"
+            height="26"
+            aria-hidden
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinejoin="round"
+          >
+            <path d="M5 13.5 L14 5 L23 13.5 V24 H5 Z" />
+            <path
+              d="M14 21.2c-2.6-1.7-4.3-3.2-4.3-5.1a2.2 2.2 0 0 1 4.3-.8 2.2 2.2 0 0 1 4.3.8c0 1.9-1.7 3.4-4.3 5.1z"
+              fill="#E4003C"
+              stroke="none"
+            />
+          </svg>
+        </button>
+        <div className="flex-1" />
+        <AccountMenu />
       </div>
 
       {starterOpen ? (

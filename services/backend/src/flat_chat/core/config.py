@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     # Anthropic-direct: preferred when its key is set (native prompt caching).
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    # Cheap/fast model used ONCE per conversation to summarise the first turn
+    # into a sidebar title. Separate from `anthropic_model` so chat keeps its
+    # cache-friendly Sonnet while titling uses Haiku without paying for the
+    # cache breakpoints. See `chat/providers/__init__.py:build_title_model`.
+    anthropic_title_model: str = "claude-haiku-4-5-20251001"
 
     # Azure OpenAI — classic Azure OpenAI Service. `deployment` is the name
     # you typed when creating the deployment in Foundry (not the underlying
@@ -23,6 +28,9 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""
     azure_openai_deployment: str = ""
     azure_openai_api_version: str = "2024-12-01-preview"
+    # Optional separate deployment for title generation. Empty = reuse the
+    # chat deployment.
+    azure_openai_title_deployment: str = ""
 
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"

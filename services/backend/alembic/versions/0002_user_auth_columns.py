@@ -26,6 +26,12 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0002_user_auth_columns"
+# Chains directly off 0001, as originally authored. Bookmarks
+# (0002_app_bookmarks) chains AFTER this migration, NOT before — so any DB that
+# already applied auth (the state of every checkout of `main`) picks up
+# bookmarks on the next `upgrade head`. Ordering the two is immaterial (auth
+# adds columns to app.users; bookmarks adds a table), but bookmarks-after-auth
+# is the only order that doesn't strand an already-migrated DB at the head.
 down_revision: str | Sequence[str] | None = "0001_app_users_sessions"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

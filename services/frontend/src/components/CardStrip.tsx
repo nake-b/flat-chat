@@ -3,7 +3,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
 import { useCardCache } from "../state/cardCache";
+import { useBookmarks } from "../state/useBookmarks";
 import { decodeMarkers, type ListingCard, type MarkerPoint } from "../state/SessionState";
+import { formatTransitCompact } from "../lib/transit";
+import { BookmarkHeart } from "./BookmarkHeart";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -320,7 +323,10 @@ function ApartmentCard({
 }) {
   const isBlank =
     apt.title == null && apt.address == null && apt.price_warm_eur == null;
+  const isBookmarked = useBookmarks((s) => s.ids.has(apt.id));
+  const toggleBookmark = useBookmarks((s) => s.toggle);
   return (
+    <div className="relative h-full w-full">
     <button
       type="button"
       data-hovered={hovered ? "true" : "false"}
@@ -390,6 +396,17 @@ function ApartmentCard({
         </div>
       )}
     </button>
+      {/* Star is a SIBLING of the card-button (nested <button>s are invalid HTML).
+          The propagation guard inside BookmarkHeart keeps a heart-tap from also
+          activating the card. */}
+      <div className="absolute right-2 top-2 z-10">
+        <BookmarkHeart
+          filled={isBookmarked}
+          onToggle={() => void toggleBookmark(apt.id)}
+          label={apt.title ?? "this listing"}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -410,7 +427,10 @@ function SkeletonCard({
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
+  const isBookmarked = useBookmarks((s) => s.ids.has(marker.id));
+  const toggleBookmark = useBookmarks((s) => s.toggle);
   return (
+    <div className="relative h-full w-full">
     <button
       type="button"
       data-hovered={hovered ? "true" : "false"}
@@ -447,6 +467,14 @@ function SkeletonCard({
         </div>
       </div>
     </button>
+      {/* Star renders against the marker id — pre-hydration tap still works. */}
+      <div className="absolute right-2 top-2 z-10">
+        <BookmarkHeart
+          filled={isBookmarked}
+          onToggle={() => void toggleBookmark(marker.id)}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -464,11 +492,15 @@ function CardChips({ apt }: { apt: ListingCard }) {
     chips.push({ key: "wbs", label: "WBS", wbs: true });
   }
 
-  // Geo-context chips — highest signal for apartment hunters.
+  // Geo-context chips — highest signal for apartment hunters. Icon reflects the
+  // actual mode (🚇/🚆/🚊/🚌) — the line is rail-preferred by the backend.
   if (apt.nearest_transit_line && apt.walk_min_to_transit != null) {
     chips.push({
       key: "transit",
-      label: `🚇 ${apt.nearest_transit_line} · ${apt.walk_min_to_transit}min`,
+      label: formatTransitCompact(
+        apt.nearest_transit_line,
+        apt.walk_min_to_transit,
+      ),
     });
   }
   if (apt.nearest_park_m != null) {

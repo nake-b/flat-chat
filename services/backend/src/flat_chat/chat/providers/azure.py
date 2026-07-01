@@ -17,12 +17,13 @@ from flat_chat.core.config import Settings
 logger = logging.getLogger(__name__)
 
 
-def build_azure_model(settings: Settings) -> Model:
-    """Build an Azure OpenAI chat model.
+def build_azure_model(settings: Settings, deployment: str) -> Model:
+    """Build an Azure OpenAI model routed through `deployment`.
 
-    Owns its own validation — the orchestrator only checks for key presence,
-    so this builder raises with a clear message when the rest of the Azure
-    config is incomplete.
+    The caller passes the deployment to use — the chat deployment for chat, or
+    the title deployment (with its own fallback) for titling. Owns its own
+    validation: the orchestrator only checks for key presence, so this builder
+    raises with a clear message when the rest of the Azure config is incomplete.
     """
     missing = [
         name
@@ -40,7 +41,7 @@ def build_azure_model(settings: Settings) -> Model:
             + ". Set them in .env."
         )
     return OpenAIChatModel(
-        settings.azure_openai_deployment,
+        deployment,
         provider=AzureProvider(
             azure_endpoint=settings.azure_openai_endpoint,
             api_key=settings.azure_openai_api_key,

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
@@ -12,17 +13,18 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from pydantic import ValidationError
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
 from starlette.responses import Response
 
 from flat_chat.chat.agent import agent
-from flat_chat.chat.providers import build_chat_model
+from flat_chat.chat.providers import build_chat_model, build_title_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.title_gen import TitleGenerationService, is_first_completed_turn
 from flat_chat.chat.tools import SEARCH_TOOL_NAME
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
@@ -36,6 +38,12 @@ except ImportError:  # pragma: no cover — observability is optional
     from contextlib import nullcontext as using_session  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# Strong references to fire-and-forget background tasks (title generation).
+# `asyncio.create_task` returns a task the event loop only weakly references, so
+# without holding it here the task can be garbage-collected mid-execution. Each
+# task removes itself via `add_done_callback(_background_tasks.discard)`.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 class InvalidAgentRequestError(Exception):
@@ -273,6 +281,25 @@ class ChatService:
             await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
 
+            # Fire-and-forget title generation on the FIRST completed turn,
+            # after persistence has returned. Background-task isolation keeps
+            # a cosmetic LLM call off the user-visible critical path; a title
+            # failure leaves the row with `title=NULL`, the list endpoint
+            # returns null, and the frontend renders "Untitled".
+            if session.title is None and is_first_completed_turn(
+                session.message_history
+            ):
+                task = asyncio.create_task(
+                    _generate_and_persist_title(
+                        self.store, session.id, session.message_history
+                    )
+                )
+                # Hold a strong reference until the task finishes — the loop
+                # only weakly references it, so without this it could be GC'd
+                # mid-run and the conversation would stay "Untitled".
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+
         try:
             model = build_chat_model()
         except RuntimeError as exc:
@@ -328,6 +355,39 @@ def _extract_incoming_state(adapter) -> SessionState | None:
     except Exception as exc:  # pragma: no cover — defensive logging
         logger.warning("Could not parse incoming state from envelope: %s", exc)
     return None
+
+
+async def _generate_and_persist_title(
+    store: SessionStore,
+    session_id: str,
+    history: list[ModelMessage],
+) -> None:
+    """Background task: generate a title from the first turn, persist if NULL.
+
+    Catches all exceptions — the title is cosmetic and a failure here must
+    never propagate into the user's request loop. `asyncio.create_task` runs
+    the coroutine in a COPY of the current context, so the `session_id`
+    ContextVar bound in `dispatch_agent_request` DOES propagate (a snapshot
+    taken at task-creation time) and the SQL hook in `core/database.py` tags
+    this task's statements with the same session. Either way it reads via
+    `.get("")`, so a missing value would just omit the SQL comment — no error.
+    """
+    try:
+        try:
+            model = build_title_model()
+        except RuntimeError as exc:
+            logger.warning("Title model unavailable: %s", exc)
+            return
+        title = await TitleGenerationService(model).generate(history)
+        if title is None:
+            return
+        updated = await store.set_title_if_unset(session_id, title)
+        if updated:
+            logger.info(
+                "Conversation title set: session=%s title=%r", session_id, title
+            )
+    except Exception:
+        logger.exception("Background title generation failed for %s", session_id)
 
 
 # Fields the FRONTEND owns — the only ones an incoming envelope may change.

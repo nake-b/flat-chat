@@ -14,15 +14,16 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from flat_chat.chat.models import Conversation, Message, SessionStateRow
+from flat_chat.chat.schemas import ConversationSummary
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.state import ChatSession
 
@@ -47,6 +48,39 @@ class SessionStore(Protocol):
     async def get(self, session_id: str) -> ChatSession: ...
 
     async def save(self, session: ChatSession) -> None: ...
+
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
+        """Return the user's conversations that have at least one message.
+
+        Powers the sidebar list endpoint (`GET /api/conversations`). Empty
+        conversations are filtered out so a "+ New chat" click that never
+        sends a message doesn't pollute the sidebar.
+        """
+        ...
+
+    async def set_title_if_unset(self, session_id: str, title: str) -> bool:
+        """Atomically set the title only if it's currently NULL.
+
+        Returns True if the row was updated; False if the title was already
+        set (idempotent — protects against a double-fire of the background
+        title-gen task). Persistence-only operation; does NOT touch any
+        in-memory `ChatSession` instances.
+        """
+        ...
+
+    async def delete_if_owned(self, session_id: str, user_id: str) -> bool:
+        """Hard-delete the conversation iff it belongs to `user_id`.
+
+        Returns True when a row was removed; False when it was missing or
+        owned by someone else. The `user_id` guard is structural — even a
+        guessable conversation UUID can't wipe another user's row.
+
+        Children in `app.messages` and `app.session_state` go with the
+        parent via `ON DELETE CASCADE` (declared in the 0001 migration).
+        """
+        ...
 
     def lock(self, session_id: str) -> AbstractAsyncContextManager[object]: ...
 
@@ -86,6 +120,44 @@ class InMemorySessionStore:
         # mutations made through `get()` are visible without an explicit save.
         # The call is kept on the Protocol so DB-backed impls have a hook.
         self._sessions[session.id] = session
+
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
+        # No `updated_at` on in-memory `ChatSession` — `created_at` is fine
+        # for tests, which don't exercise re-ordering precisely.
+        rows = [
+            s
+            for s in self._sessions.values()
+            if s.user_id == user_id and s.message_history
+        ]
+        rows.sort(key=lambda s: s.created_at, reverse=True)
+        return [
+            ConversationSummary(
+                id=s.id,
+                title=s.title,
+                created_at=s.created_at,
+                updated_at=s.created_at,
+            )
+            for s in rows
+        ]
+
+    async def set_title_if_unset(self, session_id: str, title: str) -> bool:
+        session = self._sessions.get(session_id)
+        if session is None or session.title is not None:
+            return False
+        session.title = title
+        return True
+
+    async def delete_if_owned(self, session_id: str, user_id: str) -> bool:
+        session = self._sessions.get(session_id)
+        if session is None or session.user_id != user_id:
+            return False
+        del self._sessions[session_id]
+        # Lock entry follows the session out, mirroring the LRU-eviction path
+        # in `create()` — otherwise `_locks` would grow unbounded.
+        self._locks.pop(session_id, None)
+        return True
 
     def lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._sessions:
@@ -172,6 +244,7 @@ class DbSessionStore:
             message_history=history,
             state=state,
             created_at=conv.created_at,
+            title=conv.title,
         )
 
     async def save(self, session: ChatSession) -> None:
@@ -188,7 +261,11 @@ class DbSessionStore:
             await db.execute(
                 update(Conversation)
                 .where(Conversation.id == conv_uuid)
-                .values(updated_at=func.now())
+                # clock_timestamp() (real wall-clock), not now()
+                # (transaction_timestamp, constant within a txn) — so two saves
+                # in one transaction still get distinct, correctly-ordered
+                # updated_at values.
+                .values(updated_at=func.clock_timestamp())
             )
 
             existing = await db.scalar(
@@ -243,9 +320,78 @@ class DbSessionStore:
                 .values(conversation_id=conv_uuid, snapshot=snapshot)
                 .on_conflict_do_update(
                     index_elements=[SessionStateRow.conversation_id],
-                    set_={"snapshot": snapshot, "updated_at": func.now()},
+                    set_={"snapshot": snapshot, "updated_at": func.clock_timestamp()},
                 )
             )
+
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
+        user_uuid = UUID(user_id)
+        # EXISTS correlated subquery for the "has at least one message" filter:
+        # short-circuits on the first matching message, composes with
+        # `ix_messages_conversation_seq`, and reads cleaner than INNER JOIN +
+        # DISTINCT. Conversations with no messages (a "+ New chat" click that
+        # never sent a prompt) stay invisible to the sidebar.
+        # `Conversation.id` tie-breaks the sort for deterministic ordering on
+        # equal `updated_at`s (matches the project's marker/preview-prefix idiom).
+        stmt = (
+            select(
+                Conversation.id,
+                Conversation.title,
+                Conversation.created_at,
+                Conversation.updated_at,
+            )
+            .where(Conversation.user_id == user_uuid)
+            .where(select(1).where(Message.conversation_id == Conversation.id).exists())
+            .order_by(Conversation.updated_at.desc(), Conversation.id)
+        )
+        async with self._session_factory() as db:
+            rows = (await db.execute(stmt)).all()
+        return [
+            ConversationSummary(
+                id=str(row.id),
+                title=row.title,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in rows
+        ]
+
+    async def set_title_if_unset(self, session_id: str, title: str) -> bool:
+        conv_uuid = self._parse_id(session_id)
+        # `WHERE title IS NULL` makes this idempotent at the SQL layer — even
+        # if two background title-gen tasks race (shouldn't happen given the
+        # in-memory `session.title is None` precheck in `chat/service.py`,
+        # but a cheap belt-and-braces), only one UPDATE matches a row.
+        async with self._session_factory() as db, db.begin():
+            result = await db.execute(
+                update(Conversation)
+                .where(Conversation.id == conv_uuid)
+                .where(Conversation.title.is_(None))
+                .values(title=title)
+            )
+        # execute() is typed as Result; an UPDATE actually returns a
+        # CursorResult, which is where rowcount lives.
+        return (cast("CursorResult[Any]", result).rowcount or 0) == 1
+
+    async def delete_if_owned(self, session_id: str, user_id: str) -> bool:
+        try:
+            conv_uuid = self._parse_id(session_id)
+        except SessionNotFoundError:
+            return False
+        user_uuid = UUID(user_id)
+        # Structural ownership guard: `WHERE id=? AND user_id=?` makes it
+        # impossible for a foreign caller to wipe another user's row even
+        # with a guessable UUID. ON DELETE CASCADE on app.messages and
+        # app.session_state sweeps the children.
+        async with self._session_factory() as db, db.begin():
+            result = await db.execute(
+                delete(Conversation)
+                .where(Conversation.id == conv_uuid)
+                .where(Conversation.user_id == user_uuid)
+            )
+        return (cast("CursorResult[Any]", result).rowcount or 0) == 1
 
     def lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:

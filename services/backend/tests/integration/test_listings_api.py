@@ -135,18 +135,20 @@ def test_get_listing_404_for_unknown_uuid(async_db_url):
     assert response.json() == {"detail": "listing not found"}
 
 
-def test_get_listing_404_for_invalid_uuid(async_db_url):
-    """Non-UUID id → ListingService returns None → route raises 404.
+def test_get_listing_422_for_invalid_uuid(async_db_url):
+    """Non-UUID id → 422 (malformed ≠ not-found).
 
-    The route declares `listing_id: str`, so FastAPI doesn't reject at
-    the parsing layer. The not-a-uuid path lives inside the service.
+    The route resolves `listing_id` through the shared `valid_listing_id`
+    dependency, which rejects a malformed id at the parsing layer — the same
+    422 the bookmark routes return.
     """
 
     async def body(client):
         return await client.get("/api/listings/not-a-uuid")
 
     response = _drive(async_db_url, [], body)
-    assert response.status_code == 404
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid listing id"}
 
 
 # ---------------------------------------------------------------------------

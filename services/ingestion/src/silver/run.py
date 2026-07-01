@@ -13,7 +13,7 @@ import sys
 
 from db import get_session
 
-from .transformer import deduplicate, transform
+from .transformer import deduplicate, prune_stale, transform
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,15 @@ def main() -> int:
         logger.info("Silver: transforming bronze rows into listings ...")
         n = transform(session)
         logger.info("Silver: upserted %d rows into listings", n)
+
+        # Drop stale listings (scraped before the freshness cutoff) before gold
+        # enriches them. Runs before dedup so a still-listed repost isn't lost
+        # when its stale original would have been the survivor. Like dedup, this
+        # runs every time: a one-off delete wouldn't stick because transform
+        # reprocesses all of bronze. (transform itself already skips stale bronze
+        # rows; this clears any that predate the filter.)
+        pruned = prune_stale(session)
+        logger.info("Silver: pruned %d stale listings (scraped before cutoff)", pruned)
 
         # Collapse reposted duplicates (same title + address, any source) down to
         # one survivor before gold enriches them. Runs every time: bronze rows
