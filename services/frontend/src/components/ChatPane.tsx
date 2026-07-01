@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
 
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 import { useAuth } from "../hooks/useAuth";
+import { useRecovery } from "../state/recovery";
 import {
+  CAPABILITIES_HREF,
   STARTER_HEADLINES,
   STARTER_INTROS,
   STARTER_PROMPTS,
@@ -15,6 +17,46 @@ import {
 
 const CAPABILITIES_PROMPT =
   "What can you do right now? Please summarize your current capabilities and the world context data you can access at the moment.";
+
+// Custom renderer for links inside assistant messages, wired via CopilotChat's
+// `markdownTagRenderers`. The `#capabilities` link (in the initial bubble) sends
+// the capabilities prompt as a real user turn instead of navigating; every other
+// link renders normally. This replaces a global document click listener that was
+// coupled to CopilotKit's internal `.copilotKitAssistantMessage` DOM class.
+// Module-scope so react-markdown keeps a stable component identity across
+// renders; it lives inside the CopilotKit provider, so it can call the hook.
+function AssistantLink({
+  href,
+  children,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) {
+  const { sendMessage } = useCopilotChatInternal();
+  if (href === CAPABILITIES_HREF) {
+    return (
+      <a
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          void sendMessage(
+            { id: crypto.randomUUID(), role: "user", content: CAPABILITIES_PROMPT },
+            { followUp: true },
+          );
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noreferrer noopener">
+      {children}
+    </a>
+  );
+}
+
+const markdownTagRenderers = { a: AssistantLink };
 
 export function ChatPane({
   onNewConversation,
@@ -33,25 +75,22 @@ export function ChatPane({
   const [starterIntro] = useState(() => pickRandom(STARTER_INTROS));
   const [starterPrompts] = useState(() => pickStratified(STARTER_PROMPTS, 3));
 
-  // Send a starter/capabilities prompt as a real user turn via CopilotKit's
-  // programmatic send API (`followUp: true` runs the agent). No DOM scraping —
-  // the message flows through `POST /api/agent` like any typed prompt, so it's
-  // persisted + reload-safe and the derived `starterOpen` dismisses the cards.
+  // Send a starter prompt as a real user turn via CopilotKit's programmatic
+  // send API (`followUp: true` runs the agent). No DOM scraping — the message
+  // flows through `POST /api/agent` like any typed prompt, so it's persisted +
+  // reload-safe and the derived `starterOpen` dismisses the cards.
   const sendPrompt = (prompt: string) =>
     void sendMessage(
       { id: crypto.randomUUID(), role: "user", content: prompt },
       { followUp: true },
     );
-  // Keep the latest `sendMessage` in a ref so the document-level click listener
-  // below can stay on `[]` deps (never re-subscribes) yet always call the
-  // current send fn.
-  const sendPromptRef = useRef(sendPrompt);
-  sendPromptRef.current = sendPrompt;
 
-  // Show starters only while the thread is empty. Once the user has sent
-  // anything they're dismissed and don't come back — simpler and less
-  // surprising than counting turns or heuristically classifying prompts.
-  const starterOpen = useMemo(
+  // Show starters only while the thread is empty AND we already know the
+  // history (`historyLoaded`). On a resumed thread CopilotKit mounts with
+  // `messages: []` before ConversationRecovery hydrates the transcript, so
+  // gating on `historyLoaded` stops the cards flashing then vanishing.
+  const historyLoaded = useRecovery((s) => s.historyLoaded);
+  const noUserMessage = useMemo(
     () =>
       !messages.some(
         (m) =>
@@ -61,20 +100,8 @@ export function ChatPane({
       ),
     [messages],
   );
+  const starterOpen = historyLoaded && noUserMessage;
 
-  useEffect(() => {
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const trigger = target?.closest(
-        ".copilotKitAssistantMessage a[href='#capabilities']",
-      );
-      if (!trigger) return;
-      event.preventDefault();
-      sendPromptRef.current(CAPABILITIES_PROMPT);
-    };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, []);
   // One wildcard registration drives inline pills for every backend tool
   // call. The label per lifecycle phase lives in `state/toolStatus.ts`
   // (single source of UI copy). Adding a new tool = one entry there;
@@ -132,15 +159,16 @@ export function ChatPane({
         <div className="px-5 pt-2 pb-1">
           <p className="mb-1.5 font-sans text-sm text-ink-ghost">{starterHeadline}</p>
           {/* Chat-bubble cards — an inline emoji + a short descriptive label; the
-              full prompt is sent on click. Three-across grid so they span the row,
-              one per distinct capability (see pickStratified). */}
+              emoji + full prompt is sent on click (emoji prepended from the same
+              field so the sent message consistently leads with it). Three-across
+              grid so they span the row, one per distinct capability (pickStratified). */}
           <div className="grid grid-cols-3 gap-2">
             {starterPrompts.map((p) => (
               <button
                 key={p.label}
                 type="button"
                 title={p.prompt}
-                onClick={() => sendPrompt(p.prompt)}
+                onClick={() => sendPrompt(`${p.emoji} ${p.prompt}`)}
                 className="rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
               >
                 <span className="mr-1" aria-hidden>
@@ -156,6 +184,7 @@ export function ChatPane({
       <div className="min-h-0 flex-1 overflow-hidden">
         <CopilotChat
           className="h-full"
+          markdownTagRenderers={markdownTagRenderers}
           labels={{
             title: "",
             initial: starterIntro,

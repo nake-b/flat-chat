@@ -16,6 +16,7 @@ import {
   rememberConversationId,
 } from "./state/conversationId";
 import { useHover } from "./hooks/useHover";
+import { useRecovery } from "./state/recovery";
 import "./index.css";
 
 // Bootstrap: resolve the conversation thread, then mount CopilotKit pointing at
@@ -51,6 +52,9 @@ function Bootstrap() {
           if (state !== null) {
             rememberConversationId(existing);
             setResumed(true);
+            // Resumed thread: suppress starters until ConversationRecovery
+            // hydrates history, so they don't flash then vanish.
+            useRecovery.getState().setHistoryLoaded(false);
             setConversationId(existing);
             return;
           }
@@ -59,6 +63,8 @@ function Bootstrap() {
         if (cancelled) return;
         rememberConversationId(conv.id);
         setResumed(false);
+        // Brand-new thread: nothing to hydrate → starters can show at once.
+        useRecovery.getState().setHistoryLoaded(true);
         setConversationId(conv.id);
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -75,6 +81,8 @@ function Bootstrap() {
     const conv = await createConversation();
     rememberConversationId(conv.id);
     setResumed(false);
+    // Fresh thread → starters visible immediately (no history to wait on).
+    useRecovery.getState().setHistoryLoaded(true);
     // Changing the key (below) remounts CopilotKit → fresh state + empty chat.
     setConversationId(conv.id);
   }, []);

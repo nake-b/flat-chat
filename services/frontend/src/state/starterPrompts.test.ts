@@ -48,3 +48,16 @@ describe("pickStratified", () => {
     expect(pickStratified(pool, 5)).toHaveLength(2);
   });
 });
+
+describe("STARTER_PROMPTS payloads", () => {
+  // The card renders its own `emoji` field; the sent `prompt` must not repeat
+  // it (that duplicated the glyph into the user message + LLM input, and was
+  // applied inconsistently across prompts). Keep the payloads emoji-free.
+  const EMOJI = /\p{Extended_Pictographic}/u;
+
+  it("send emoji-free prompt text", () => {
+    for (const p of STARTER_PROMPTS) {
+      expect(EMOJI.test(p.prompt), `"${p.prompt}"`).toBe(false);
+    }
+  });
+});

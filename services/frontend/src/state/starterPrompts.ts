@@ -4,9 +4,11 @@
 // (not three near-duplicates).
 //
 // Each prompt is a concrete object:
-//   - `emoji`   → shown inline before the label on the card
+//   - `emoji`   → shown inline before the label on the card, and prepended to
+//                 the prompt on send so the sent message leads with it too
 //   - `label`   → short chip text shown on the card (keeps it compact)
-//   - `prompt`  → the full sentence actually sent to the agent (sendMessage)
+//   - `prompt`  → the sentence sent to the agent (emoji-free here; ChatPane
+//                 prepends `emoji` at send time — kept DRY, no duplicated glyph)
 //   - `category`→ capability bucket, drives the stratified sampler below
 //
 // Curation rule: every prompt maps to a REAL, STRUCTURED capability. We do NOT
@@ -39,14 +41,21 @@ export const STARTER_HEADLINES = [
   "A few examples to try:",
 ] as const;
 
+// The href of the "what I can do" link in the initial assistant bubble. Single
+// source of truth: the intros below embed it, and ChatPane's markdown link
+// renderer (`AssistantLink`) matches on it to send the capabilities prompt.
+// (The `index.css` selector for link styling repeats the literal — CSS can't
+// read a JS const — which is expected.)
+export const CAPABILITIES_HREF = "#capabilities";
+
 // First assistant bubble (CopilotChat `labels.initial`) — rotated per empty
-// thread like the headline. Each MUST keep the `[what I can do](#capabilities)`
-// link (the click handler in ChatPane intercepts it) and reference only real
-// capabilities. Niche examples live in the prompt cards, not here.
+// thread like the headline. Each MUST keep the `[what I can do]` link (ChatPane's
+// `markdownTagRenderers` intercepts it) and reference only real capabilities.
+// Niche examples live in the prompt cards, not here.
 export const STARTER_INTROS = [
-  "Hi. Tell me what you want — 2 rooms in Kreuzberg under €1200 with a balcony, or just describe the vibe. I'll find it. If you're still unsure, just ask me [what I can do](#capabilities).",
-  "Hi. Tell me what you're after — 3 rooms in Neukölln under €1,400, say — and I'll put the matches on the map. Not sure where to start? Here's [what I can do](#capabilities).",
-  "Hey. Tell me whatever matters — a quiet 2-room near the U8, or anything inside the S-Bahn ring — and I'll pull it up. Curious first? [what I can do](#capabilities).",
+  `Hi. Tell me what you want — 2 rooms in Kreuzberg under €1200 with a balcony, or just describe the vibe. I'll find it. If you're still unsure, just ask me [what I can do](${CAPABILITIES_HREF}).`,
+  `Hi. Tell me what you're after — 3 rooms in Neukölln under €1,400, say — and I'll put the matches on the map. Not sure where to start? Here's [what I can do](${CAPABILITIES_HREF}).`,
+  `Hey. Tell me whatever matters — a quiet 2-room near the U8, or anything inside the S-Bahn ring — and I'll pull it up. Curious first? [what I can do](${CAPABILITIES_HREF}).`,
 ] as const;
 
 export const STARTER_PROMPTS: StarterPrompt[] = [
@@ -56,14 +65,14 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     emoji: "🏡",
     label: "A 2-room with a balcony, somewhere quiet and green",
     prompt:
-      "🏡 I am looking for a 2 rooms apartment for up to 1200€ with a balcony. It would ideally be located in a quiet and green area.",
+      "I am looking for a 2 rooms apartment for up to 1200€ with a balcony. It would ideally be located in a quiet and green area.",
   },
   {
     category: "budget",
     emoji: "💶",
     label: "The cheapest places inside the S-Bahn ring",
     prompt:
-      "💶 What's the cheapest place you can find inside the S-Bahn ring? Show them on the map.",
+      "What's the cheapest place you can find inside the S-Bahn ring? Show them on the map.",
   },
   // place — proximity to a specific named place (locate_place)
   {
@@ -71,27 +80,27 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     emoji: "📍",
     label: "Everything within 500 m of Alexanderplatz",
     prompt:
-      "📍 Show me all flats within 500 m of Alexanderplatz. Price and size don't matter.",
+      "Show me all flats within 500 m of Alexanderplatz. Price and size don't matter.",
   },
   {
     category: "place",
     emoji: "🎶",
     label: "Apartments near the Uber Arena",
-    prompt: "🎶 Show me apartments within 2 km of the Uber Arena.",
+    prompt: "Show me apartments within 2 km of the Uber Arena.",
   },
   {
     category: "place",
     emoji: "🚴",
     label: "Within biking distance of FU Berlin",
     prompt:
-      "🚴 Find me a potential new home within biking distance of Freie Universität Berlin.",
+      "Find me a potential new home within biking distance of Freie Universität Berlin.",
   },
   // transit
   {
     category: "transit",
     emoji: "🚇",
     label: "Flats right along the U7 line",
-    prompt: "🚇 What flats do you have along the U7?",
+    prompt: "What flats do you have along the U7?",
   },
   {
     category: "transit",
@@ -106,7 +115,7 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     emoji: "👨‍👩‍👧‍👦",
     label: "Child-friendly, with a playground nearby",
     prompt:
-      "👨‍👩‍👧‍👦 Find a 2-3 room apartment in Pankow or Reinickendorf under 1500€. It should be child friendly, with a playground nearby.",
+      "Find a 2-3 room apartment in Pankow or Reinickendorf under 1500€. It should be child friendly, with a playground nearby.",
   },
   {
     category: "family",
@@ -120,13 +129,13 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     category: "nature",
     emoji: "🌊",
     label: "Close to a lake",
-    prompt: "🌊 Find me a place close to a lake.",
+    prompt: "Find me a place close to a lake.",
   },
   {
     category: "nature",
     emoji: "🌳",
     label: "Right next to a park",
-    prompt: "🌳 Find apartments right next to a park.",
+    prompt: "Find apartments right next to a park.",
   },
   // calm — quiet / low-density
   {
@@ -134,27 +143,27 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     emoji: "👶",
     label: "A family home in a calm, leafy area",
     prompt:
-      "Find a 2-3 bedroom home for a future family 👶 in a low-populated area with lots of greenery.",
+      "Find a 2-3 bedroom home for a future family in a low-populated area with lots of greenery.",
   },
   {
     category: "calm",
     emoji: "🤫",
     label: "Quiet streets, still close to parks",
-    prompt: "Which flats are in quieter areas 🤫 and still close to parks?",
+    prompt: "Which flats are in quieter areas and still close to parks?",
   },
   {
     category: "calm",
     emoji: "🌾",
     label: "A calm, low-populated neighbourhood",
     prompt:
-      "🌾 I'm looking for a new place in a low-populated area. 1-2 rooms would be ideal; price doesn't matter.",
+      "I'm looking for a new place in a low-populated area. 1-2 rooms would be ideal; price doesn't matter.",
   },
   // map / ring — inside-vs-outside the S-Bahn ring
   {
     category: "map",
     emoji: "🗺️",
     label: "Inside the ring, under €1,500",
-    prompt: "🗺️ Show me flats inside the S-Bahn ring, under €1500 a month.",
+    prompt: "Show me flats inside the S-Bahn ring, under €1500 a month.",
   },
   {
     category: "map",
@@ -169,7 +178,7 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     emoji: "🏥",
     label: "A hospital within walking distance",
     prompt:
-      "🏥 Show me apartments with a hospital within walking distance.",
+      "Show me apartments with a hospital within walking distance.",
   },
 ];
 

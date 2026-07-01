@@ -38,15 +38,27 @@ sendMessage({ id: crypto.randomUUID(), role: "user", content: prompt }, { follow
 `followUp: true` runs the agent after appending the message. The prompt flows
 through `POST /api/agent` exactly like a typed message — persisted, reload-safe,
 and it dismisses the starter cards (the derived `starterOpen` sees the new user
-turn). Both the starter cards and the `#capabilities` link go through this one
-helper. No textarea scraping, no `requestAnimationFrame` submit retries.
+turn). The starter cards call this `sendPrompt` helper; the `#capabilities` link
+uses the same `sendMessage` API from inside its markdown renderer (see
+Capabilities Trigger UX). No textarea scraping, no `requestAnimationFrame`
+submit retries.
 
 ## Visibility Logic
 Starter prompts show **only while the thread is empty**. As soon as the user
 sends any message they're dismissed and do not come back for that thread.
 
-- `starterOpen` is DERIVED (a `useMemo`), not stored: it's `true` when no
-  `role === "user"` message with non-empty string content exists yet.
+- `starterOpen = historyLoaded && noUserMessage`.
+  - `noUserMessage` is DERIVED (a `useMemo`), not stored: `true` when no
+    `role === "user"` message with non-empty string content exists yet.
+  - `historyLoaded` (zustand `state/recovery.ts`) gates against a reload FLASH.
+    On a resumed thread CopilotKit mounts with `messages: []` before
+    `ConversationRecovery` hydrates the transcript over HTTP, so `noUserMessage`
+    is momentarily `true` and the cards would render then vanish. Bootstrap
+    (`main.tsx`) sets `historyLoaded = !resumed` the moment it resolves the
+    thread (new thread → show at once; resumed → suppress), and
+    `ConversationRecovery` flips it `true` once the fetch settles (even on
+    error/empty, so a failed restore can't suppress the starters forever). A
+    resumed-but-empty thread correctly re-shows the cards after hydration.
 - `starterHeadline` and the three `starterPrompts` are picked once on mount and
   stay stable — no reroll, no reappear.
 
@@ -62,10 +74,20 @@ drops the hardcoded English keyword lists that were a maintenance liability.
   thread among `STARTER_INTROS` (`state/starterPrompts.ts`, picked via `pickRandom`
   on mount — same lifecycle as the headline/cards). Every variant contains the
   `#capabilities` link and references only real capabilities.
-- The initial assistant bubble contains markdown link text: `what I can do`.
-- A click handler intercepts `#capabilities` links inside assistant messages and auto-sends a capabilities prompt (`CAPABILITIES_PROMPT` in `ChatPane.tsx`).
+- The initial assistant bubble contains markdown link text: `what I can do`
+  pointing at `CAPABILITIES_HREF` (`= "#capabilities"`, defined once in
+  `state/starterPrompts.ts` and embedded in the intros).
+- The link is intercepted by a custom markdown renderer, NOT a DOM listener:
+  `ChatPane` passes `markdownTagRenderers={{ a: AssistantLink }}` to `CopilotChat`
+  (a public CopilotKit prop → react-markdown `components`). `AssistantLink`
+  matches `href === CAPABILITIES_HREF` and sends `CAPABILITIES_PROMPT` via
+  `useCopilotChatInternal().sendMessage`; any other href renders as a normal
+  link (`target="_blank" rel="noreferrer noopener"`). This replaced a global
+  `document` click listener coupled to CopilotKit's internal
+  `.copilotKitAssistantMessage` DOM class — the same fragility the composer fix
+  removed.
 - The click sends a normal user turn through `POST /api/agent` — it is persisted in history and visible to the agent on later turns, same as any typed message.
-- Link styling lives in `index.css` (`.copilotKitAssistantMessage a`): underlined + darker grey.
+- Link styling lives in `index.css` (`.copilotKitAssistantMessage a`): underlined + darker grey (the custom renderer still emits an `<a>`, so the selector applies unchanged).
 
 ### Agent policy for capabilities response
 In `agent.py`:
