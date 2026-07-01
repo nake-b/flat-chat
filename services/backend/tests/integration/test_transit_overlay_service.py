@@ -340,11 +340,21 @@ def test_stations_restricted_to_shape(async_db_url):
         )
         # ~55 m off the line → kept.
         await _seed_stop(
-            session, stop_id="near", name="On Route", lon=13.35, lat=52.5005, lines=["142"]
+            session,
+            stop_id="near",
+            name="On Route",
+            lon=13.35,
+            lat=52.5005,
+            lines=["142"],
         )
         # ~670 m off the line on a parallel street → dropped despite claiming 142.
         await _seed_stop(
-            session, stop_id="far", name="Parallel St", lon=13.35, lat=52.5060, lines=["142"]
+            session,
+            stop_id="far",
+            name="Parallel St",
+            lon=13.35,
+            lat=52.5060,
+            lines=["142"],
         )
         return await TransitOverlayService(session).route_geometry("142")
 
@@ -366,7 +376,12 @@ def test_stations_snapped_onto_line(async_db_url):
         )
         # ~55 m north of the line; claims M10.
         await _seed_stop(
-            session, stop_id="off", name="Off Line", lon=13.35, lat=52.5005, lines=["M10"]
+            session,
+            stop_id="off",
+            name="Off Line",
+            lon=13.35,
+            lat=52.5005,
+            lines=["M10"],
         )
         return await TransitOverlayService(session).route_geometry("M10")
 
