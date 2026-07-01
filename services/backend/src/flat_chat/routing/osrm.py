@@ -56,8 +56,7 @@ class OsrmClient:
                 for batch in _chunked(markers, _CHUNK):
                     coords = ";".join(f"{m.lng},{m.lat}" for m in batch)
                     url = (
-                        f"{self.osrm_url}{_TABLE_PATH}/{origin};{coords}"
-                        f"{_TABLE_QUERY}"
+                        f"{self.osrm_url}{_TABLE_PATH}/{origin};{coords}{_TABLE_QUERY}"
                     )
                     resp = await client.get(url)
                     resp.raise_for_status()
