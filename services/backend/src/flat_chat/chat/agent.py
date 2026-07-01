@@ -16,18 +16,37 @@ from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools import ListingsCapability
 
-CAPABILITIES_AT_THE_MOMENT_REPLY = """\
-Right now, I can help you search Berlin apartments and refine results step by step using both listing details and the geo-context data.
-
-What I can do at the moment:
-- Search and filter listings by rent, rooms, size, district/Ortsteil, amenities, availability, and text preferences.
-- Find apartments near specific places (for example lakes, parks, campuses, hospitals, schools, kitas, landmarks) and show them on the map.
-- Filter by transit access using stops, modes, and lines (U-Bahn, S-Bahn, tram, bus, ferry, regional/mainline where available in current data).
-- Use neighbourhood context currently available in the database: parks, playgrounds, water, schools, kitas, hospitals, landmarks, disabled parking, noise, greenery, population density, and admin areas (Bezirk/Ortsteil), plus inside/outside S-Bahn ring context.
-- Open and compare listing details with contextual highlights (for example transit, family-friendliness, greenery, quietness).
-- Draw and clear map overlays (places and transit lines) without changing filters.
-
-Important: this reflects what is available at the moment in your current database snapshot. If data is missing or outdated, I will still try to answer and clearly tell you where coverage is limited."""
+# Reference summary of the assistant's current capabilities. Kept as
+# implicit string concatenation (not a triple-quoted block) so each source
+# line stays within the 88-char lint limit while the runtime text — the exact
+# bullet list the LLM adapts from — is unchanged. `_capabilities_block()` feeds
+# this to the model as guidance, NOT verbatim output (see that function).
+CAPABILITIES_AT_THE_MOMENT_REPLY = (
+    "Right now, I can help you search Berlin apartments and refine results "
+    "step by step using both listing details and the geo-context data.\n"
+    "\n"
+    "What I can do at the moment:\n"
+    "- Search and filter listings by rent, rooms, size, district/Ortsteil, "
+    "amenities, availability, and text preferences.\n"
+    "- Find apartments near specific places (for example lakes, parks, "
+    "campuses, hospitals, schools, kitas, landmarks) and show them on the "
+    "map.\n"
+    "- Filter by transit access using stops, modes, and lines (U-Bahn, "
+    "S-Bahn, tram, bus, ferry, regional/mainline where available in current "
+    "data).\n"
+    "- Use neighbourhood context currently available in the database: parks, "
+    "playgrounds, water, schools, kitas, hospitals, landmarks, disabled "
+    "parking, noise, greenery, population density, and admin areas "
+    "(Bezirk/Ortsteil), plus inside/outside S-Bahn ring context.\n"
+    "- Open and compare listing details with contextual highlights (for "
+    "example transit, family-friendliness, greenery, quietness).\n"
+    "- Draw and clear map overlays (places and transit lines) without "
+    "changing filters.\n"
+    "\n"
+    "Important: this reflects what is available at the moment in your current "
+    "database snapshot. If data is missing or outdated, I will still try to "
+    "answer and clearly tell you where coverage is limited."
+)
 
 
 def _role_block() -> str:

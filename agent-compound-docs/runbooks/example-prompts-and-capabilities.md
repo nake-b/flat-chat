@@ -83,3 +83,68 @@ construction, only one LLM call.
 ## Notes
 - The logic intentionally tracks only `role === "user"` messages with non-empty string content.
 - Prompt visibility behavior is frontend-side and independent from backend session state.
+
+## Design rationale & standard-practice references
+_Revised July 2026 after PR #36 review — this section records WHY the feature
+is shaped the way it is, and which parts follow (or deliberately diverge from)
+established chatbot UX practice._
+
+### Starter prompts ARE the standard pattern ✅
+Clickable example/suggestion prompts are the well-established way to surface a
+chatbot's capabilities. Nielsen Norman Group documents these as **"prompt
+controls"** — task examples rendered as buttons/cards that teach users what the
+bot can do, increase feature discoverability, and lower interaction cost so
+people don't have to ask "can you…". The canonical implementations are Claude's
+"New in Claude" conversation starters and ChatGPT's suggestion chips. Our
+left-pane cards match this pattern directly, so we kept them.
+- NN/g — *Prompt Controls in GenAI Chatbots*: https://www.nngroup.com/articles/prompt-controls-genai/
+- NN/g — *CARE: A Structure for Crafting AI Prompts*: https://www.nngroup.com/articles/careful-prompts/
+
+### Visibility: empty-thread-only (rejected: counter + keyword classifier)
+The prompts show only while the thread is empty, then dismiss for good. This
+replaced an earlier scheme that counted "non-filter" turns, classified each
+message with hardcoded English keyword lists (`isApartmentFilterPrompt` /
+`isGeneralCapabilitiesPrompt`), and rerolled/reopened the cards. That scheme was
+rejected because the keyword lists were a maintenance liability (English-only,
+easy to misclassify) and reappearing cards mid-conversation is more surprising
+than helpful. NN/g's guidance treats prompt controls primarily as an *onboarding
+/ empty-state* affordance — which is exactly "show when there's nothing yet".
+
+### Capabilities reply: system-prompt guidance, NOT a verbatim canned string
+There are three common ways to answer "what can you do":
+1. **Model answers from a system-prompt capabilities section** — flexible, adapts
+   to the exact question. ← **we use this** (`_capabilities_block()`).
+2. **Static client-side panel** — zero tokens, most robust, but not part of the
+   conversation and invisible to the agent on later turns.
+3. **Hardcoded canned reply matched by string** — the most fragile and least
+   common; a fixed string can't adapt to a scoped question.
+
+The PR originally shipped (3): the agent was told to reply with EXACTLY the
+canned text, and `chat/service.py` additionally short-circuited an exact
+frontend/backend text match to a local `FunctionModel` so no LLM call was made.
+Review feedback pushed us to (1):
+- **"Don't force EXACTLY the same text."** A user asking "which data can you
+  access" should get a focused answer about geo-context data, not the whole
+  recital. So `CAPABILITIES_AT_THE_MOMENT_REPLY` is now a **reference summary**
+  the model adapts (source of truth for *what's* available; the model owns
+  phrasing and scope).
+- **"Is there a more robust signal than comparing text?"** Yes — but we removed
+  the shortcut instead of hardening it. Exact string equality across a
+  frontend + backend constant is brittle (any punctuation drift silently
+  disables it), and it *conflicts* with an adaptive reply (a fixed
+  `FunctionModel` string can't focus on a sub-topic). If a credit-saving
+  shortcut is ever wanted again, the robust form is a **structured signal**
+  (a message id / metadata flag set by the frontend link), never a text match.
+- **The shortcut wasn't even saving much.** `build_chat_model()` is
+  `@lru_cache(maxsize=1)` — the model is built once per process, not per
+  message — so the shortcut only skipped one (cheap) LLM call, not any model
+  construction. Not worth a dual-maintained constant and a whole code path.
+
+### Known divergence from standard practice (follow-up, not fixed here) ⚠️
+`submitPromptToComposer()` **DOM-scrapes** CopilotKit's composer (`querySelector`
+the textarea, dispatch a synthetic `input` event, then `requestAnimationFrame`
+-retry the submit button). The standard approach is the framework's programmatic
+send API — CopilotKit exposes it via `useCopilotChat` / `useCopilotChatInternal`
+(we already import the latter for `messages`). Swapping to that removes the
+brittle selector + retry loop. Left as a follow-up because it's orthogonal to the
+review items above and works today.
