@@ -114,11 +114,138 @@ def _stop_times() -> pd.DataFrame:
     )
 
 
+def _dhid_scenario() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """A VBB-shaped DHID feed: a `::N`-quay complex with NO base/parent row
+    (the real "U Leopoldplatz appeared 7×" bug) and a complex WITH a base
+    station row. Returns (stops, stop_times, trips, routes)."""
+    stops = pd.DataFrame(
+        [
+            # Complex A — quays only, no base row, no parent_station (VBB's case).
+            {
+                "stop_id": "de:11000:900009102::5",
+                "stop_name": "U Leopoldplatz (Berlin)",
+                "stop_lat": 52.5450,
+                "stop_lon": 13.3590,
+                "location_type": 0,
+                "parent_station": None,
+            },
+            {
+                "stop_id": "de:11000:900009102::6",
+                "stop_name": "U Leopoldplatz (Berlin)",
+                "stop_lat": 52.5451,
+                "stop_lon": 13.3591,
+                "location_type": 0,
+                "parent_station": None,
+            },
+            {
+                "stop_id": "de:11000:900009102::7",
+                "stop_name": "U Leopoldplatz (Berlin)",
+                "stop_lat": 52.5452,
+                "stop_lon": 13.3592,
+                "location_type": 0,
+                "parent_station": None,
+            },
+            # Complex B — a real station node (location_type 1) plus quays.
+            {
+                "stop_id": "de:11000:900000100",
+                "stop_name": "S+U Hauptbahnhof",
+                "stop_lat": 52.5250,
+                "stop_lon": 13.3690,
+                "location_type": 1,
+                "parent_station": None,
+            },
+            {
+                "stop_id": "de:11000:900000100::1",
+                "stop_name": "S+U Hauptbahnhof",
+                "stop_lat": 52.5249,
+                "stop_lon": 13.3691,
+                "location_type": 0,
+                "parent_station": None,
+            },
+            {
+                "stop_id": "de:11000:900000100::2",
+                "stop_name": "S+U Hauptbahnhof",
+                "stop_lat": 52.5251,
+                "stop_lon": 13.3692,
+                "location_type": 0,
+                "parent_station": None,
+            },
+        ]
+    )
+    routes = pd.DataFrame(
+        [
+            {
+                "route_id": f"r{n}",
+                "route_short_name": n,
+                "route_long_name": None,
+                "route_type": rt,
+                "route_color": None,
+                "route_text_color": None,
+            }
+            for n, rt in [("120", 700), ("142", 700), ("N9", 700), ("M5", 900)]
+        ]
+    )
+    trips = pd.DataFrame(
+        [
+            {"trip_id": "t1", "route_id": "r120", "direction_id": 0, "shape_id": None},
+            {"trip_id": "t2", "route_id": "r142", "direction_id": 0, "shape_id": None},
+            {"trip_id": "t3", "route_id": "rN9", "direction_id": 0, "shape_id": None},
+            {"trip_id": "t4", "route_id": "rM5", "direction_id": 0, "shape_id": None},
+        ]
+    )
+    stop_times = pd.DataFrame(
+        [
+            # Complex A's three quays each serve a different line — must union.
+            {"trip_id": "t1", "stop_id": "de:11000:900009102::5"},  # 120
+            {"trip_id": "t2", "stop_id": "de:11000:900009102::6"},  # 142
+            {"trip_id": "t3", "stop_id": "de:11000:900009102::7"},  # N9
+            # Complex B's quay serves M5.
+            {"trip_id": "t4", "stop_id": "de:11000:900000100::1"},  # M5
+        ]
+    )
+    return stops, stop_times, trips, routes
+
+
 def test_stops_collapse_to_parent_station() -> None:
     out = build_stops(_stops(), _stop_times(), _trips(), _routes())
     ids = set(out["stop_id"])
     # parent station + standalone bus stop only; the two platforms are folded.
     assert ids == {"alex_station", "bus_42"}
+
+
+def test_collapse_quays_without_base_row() -> None:
+    # The three `::N` quays carry no parent_station and there is no bare base
+    # row — they must still collapse to the base DHID (issue #30).
+    stops, st, trips, routes = _dhid_scenario()
+    out = build_stops(stops, st, trips, routes)
+    leo = out[out["stop_id"] == "de:11000:900009102"]
+    assert len(leo) == 1
+
+
+def test_collapse_unions_lines_across_quays() -> None:
+    stops, st, trips, routes = _dhid_scenario()
+    out = build_stops(stops, st, trips, routes)
+    leo = out[out["stop_id"] == "de:11000:900009102"].iloc[0]
+    # Each quay served one line; the collapsed row unions all three.
+    assert set(leo["lines_served"]) == {"120", "142", "N9"}
+
+
+def test_collapse_quays_with_base_station_row() -> None:
+    stops, st, trips, routes = _dhid_scenario()
+    out = build_stops(stops, st, trips, routes)
+    hbf = out[out["stop_id"] == "de:11000:900000100"]
+    assert len(hbf) == 1
+    # The station node (location_type 1) wins as the canonical coordinate.
+    point = hbf.iloc[0]["geom"]
+    assert point.y == pytest.approx(52.5250)
+    assert point.x == pytest.approx(13.3690)
+
+
+def test_plain_ids_without_double_colon_are_unchanged() -> None:
+    # `::`-splitting must not touch ids that have no `::` — bus_42 stands alone
+    # (no parent, no quay siblings) rather than being merged into anything.
+    out = build_stops(_stops(), _stop_times(), _trips(), _routes())
+    assert "bus_42" in set(out["stop_id"])
 
 
 def test_stops_modes_and_lines_aggregated() -> None:
