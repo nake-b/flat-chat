@@ -95,7 +95,7 @@ def test_get_state_default_then_persisted(async_db_url):
         # Persist a non-trivial snapshot, then read it back over HTTP.
         session.state = SessionState(
             total_results=2,
-            result_markers=[Marker(id="x", lat=52.5, lng=13.4, price_warm_eur=900.0)],
+            result_markers=[Marker(id="x", lat=52.5, lng=13.4, lens_value=900.0)],
         )
         await store.save(session)
         after = await client.get(f"/api/conversations/{session.id}/state")

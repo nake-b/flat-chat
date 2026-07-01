@@ -22,7 +22,10 @@ from typing import Literal
 from pydantic import BaseModel
 
 OverlayKind = Literal["place", "transit_line", "bezirk", "ring", "parks"]
-OverlayOrigin = Literal["search", "pinned"]
+# "search" = redrawn each search (tied to a filter); "pinned" = user/agent
+# explicit, sticky; "lens" = the anchor a lens drew (removed when the lens is
+# cleared / its anchor changes, so lens cleanup never touches user pins).
+OverlayOrigin = Literal["search", "pinned", "lens"]
 
 # Geometry simplification applied when resolving an overlay to GeoJSON (shared
 # by every resolver — PlaceService, TransitOverlayService). Douglas-Peucker

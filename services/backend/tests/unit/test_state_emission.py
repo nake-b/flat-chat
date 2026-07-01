@@ -25,7 +25,7 @@ from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import ToolReturn
 
 from flat_chat.chat.session_state import SessionState
-from flat_chat.chat.state_emission import StateEmittingToolset
+from flat_chat.chat.tools import StateEmittingToolset
 
 
 class _FakeWrapped:
@@ -146,7 +146,7 @@ _USER = "00000000-0000-0000-0000-000000000001"
 
 class _MockSearch:
     async def search(self, params):
-        markers = [Marker(id="x1", lat=52.5, lng=13.4, price_warm_eur=1000.0)]
+        markers = [Marker(id="x1", lat=52.5, lng=13.4, lens_value=1000.0)]
         preview = [ListingCard(id="x1", title="Apt", lat=52.5, lng=13.4)]
         # (markers, preview, total, facets) — facets added by the result-set
         # facets feature; this test doesn't assert on them.
@@ -194,6 +194,8 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
             listing_service=None,
             place_service=None,
             transit_overlay_service=None,
+            routing_service=None,
+            distance_service=None,
             store=store,
         )
         original = service_mod.build_chat_model

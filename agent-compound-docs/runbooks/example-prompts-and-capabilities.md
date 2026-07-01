@@ -103,6 +103,13 @@ In `agent.py`:
     the summary.
 - The reply is NOT verbatim — the model may reword for concision and a natural
   tone, keeping the honest caveat about the current database snapshot.
+- The summary covers the **map lens** (PR #41): colouring the map by travel
+  time (car / public transport) or straight-line distance to a named place,
+  with optional max-minutes / max-km cutoffs. Travel-time carries an extra
+  honesty caveat (depends on the routing service + loaded timetable), mirroring
+  the tool-side `<lens_protocol>` in `chat/tools/lenses.py`. The `commute`
+  starter prompt ("30 minutes by car to TU Berlin") maps to
+  `apply_travel_time_lens`.
 
 There is **no backend text-match shortcut**. An earlier version short-circuited
 an exact-text match to a canned `FunctionModel` reply to save a credit; it was
@@ -134,7 +141,7 @@ concrete objects — `{ category, emoji, label, prompt }` — not bare strings.
 Frontend-owned (these are UI/onboarding copy; matches the "frontend owns appearance"
 split).
 
-- **`category`** (`budget | place | transit | family | nature | calm | map | health`)
+- **`category`** (`budget | place | transit | commute | family | nature | calm | map | health`)
   drives `pickStratified(pool, 3)`: shuffle categories, take one prompt from each of 3
   distinct categories (fill from leftovers if fewer categories exist). So the visible
   trio always spans different capabilities — no three near-duplicates.

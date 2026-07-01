@@ -333,3 +333,97 @@ def test_overlay_geometry_alias_point_no_footprint_nearby_stays_point(async_db_u
     overlay = _run(async_db_url, body)
     assert overlay is not None
     assert overlay.geojson["type"] == "Point"
+
+
+# ---------------------------------------------------------------------------
+# B′ — transit stops in the gazetteer (0008). `world.transit_stops` is now a
+# UNION arm of `world.named_places`, so locate_place / anchor_point /
+# overlay_geometry resolve arbitrary S/U-Bahn/tram/bus stations. The arm
+# de-dups per-platform rows by `GROUP BY name` (centroid), and `src_id` is text
+# (a colon-laden GTFS stop_id). These EXECUTE against Postgres — the view, the
+# trgm index, and the GROUP BY centroid only exist there.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_transit_stop(session, stop_id, name, lon, lat):
+    await session.execute(
+        sa.text(
+            "INSERT INTO world.transit_stops "
+            "(stop_id, name, geom, modes_served, lines_served) VALUES "
+            "(:sid, :n, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), "
+            "ARRAY[1]::smallint[], ARRAY['U2']::text[])"
+        ),
+        {"sid": stop_id, "n": name, "lon": lon, "lat": lat},
+    )
+
+
+def test_locate_resolves_transit_stop_by_trigram(async_db_url):
+    """A seeded station is found by a fuzzy name; the view composes a
+    `transit_stop:<stop_id>` place_ref over the (text) GTFS stop_id."""
+
+    async def body(session: AsyncSession):
+        await _insert_transit_stop(
+            session, "de:11000:900100003", "S+U Alexanderplatz", 13.4132, 52.5219
+        )
+        return await PlaceService(session).locate("Alexanderplatz")
+
+    candidates = _run(async_db_url, body)
+    assert candidates, "expected a trigram match on the station name"
+    hit = next((c for c in candidates if c.kind == "transit_stop"), None)
+    assert hit is not None
+    assert hit.place_ref == "transit_stop:de:11000:900100003"
+    assert hit.lat is not None and abs(hit.lat - 52.5219) < 1e-3
+    assert hit.lon is not None and abs(hit.lon - 13.4132) < 1e-3
+
+
+def test_locate_dedups_same_named_platforms_to_one_station(async_db_url):
+    """VBB ships one row per platform; the `GROUP BY name` arm collapses them
+    into ONE candidate at the centroid of the platforms."""
+
+    async def body(session: AsyncSession):
+        name = "Schönhauser Allee"
+        await _insert_transit_stop(session, "stop:u2", name, 13.412, 52.549)
+        await _insert_transit_stop(session, "stop:s41", name, 13.414, 52.549)
+        return await PlaceService(session).locate(name)
+
+    candidates = _run(async_db_url, body)
+    stations = [c for c in candidates if c.kind == "transit_stop"]
+    assert len(stations) == 1, "platforms must collapse to one station"
+    # Centroid sits between the two platforms (~lon 13.413).
+    assert stations[0].lat is not None and abs(stations[0].lat - 52.549) < 1e-3
+    assert stations[0].lon is not None and abs(stations[0].lon - 13.413) < 1e-2
+
+
+def test_anchor_point_resolves_transit_stop(async_db_url):
+    """`apply_travel_time` reads `anchor_point` for the routing destination —
+    a station ref must resolve to (name, lat, lon)."""
+
+    async def body(session: AsyncSession):
+        await _insert_transit_stop(session, "stop:ost", "Ostkreuz", 13.469, 52.503)
+        return await PlaceService(session).anchor_point("transit_stop:stop:ost")
+
+    anchor = _run(async_db_url, body)
+    assert anchor is not None
+    label, lat, lon = anchor
+    assert label == "Ostkreuz"
+    assert abs(lat - 52.503) < 1e-3
+    assert abs(lon - 13.469) < 1e-3
+
+
+def test_overlay_geometry_transit_stop_stays_point_not_snapped(async_db_url):
+    """A station overlay must draw the station POINT — NOT snap to a nearby
+    building footprint the way a seed-alias point does. Guards the kind-guard:
+    we seed a polygon landmark right next to the stop and assert the overlay is
+    still the Point."""
+
+    async def body(session: AsyncSession):
+        # A building footprint 20 m from the stop — the snap path would grab it.
+        await _insert_landmark(session, "Bahnhofsgebäude", _box(13.469, 52.503))
+        await _insert_transit_stop(session, "stop:ost2", "Ostkreuz", 13.4695, 52.5032)
+        return await PlaceService(session).overlay_geometry("transit_stop:stop:ost2")
+
+    overlay = _run(async_db_url, body)
+    assert overlay is not None
+    assert overlay.kind == "place"
+    assert overlay.label == "Ostkreuz"
+    assert overlay.geojson["type"] == "Point"  # not snapped to the polygon

@@ -1,7 +1,7 @@
 """Berlin apartment search agent.
 
 Role-level instructions only — tool-protocol guidance and the phrase-map
-cheat sheet live on the toolset (`tools.py:tool_protocol_instructions`).
+cheat sheet live on the toolsets (`chat/tools/*.py`).
 Per-turn state (active search summary + which card the user has expanded)
 is composed by `llm_context.build_dynamic_state_prompt` and injected via
 the `@agent.instructions` decorator below.
@@ -14,7 +14,12 @@ from pydantic_ai import Agent, RunContext
 
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.tools import ListingsCapability
+from flat_chat.chat.tools import (
+    TOOL_BACKBONE,
+    CoreCapability,
+    LensCapability,
+    MapOverlayCapability,
+)
 
 # Reference summary of the assistant's current capabilities. Kept as
 # implicit string concatenation (not a triple-quoted block) so each source
@@ -42,6 +47,12 @@ CAPABILITIES_AT_THE_MOMENT_REPLY = (
     "example transit, family-friendliness, greenery, quietness).\n"
     "- Draw and clear map overlays (places and transit lines) without "
     "changing filters.\n"
+    "- Colour the map by travel time or distance to a place you name (a "
+    '"lens"): how many minutes each apartment is from it by car or public '
+    "transport, or how far it is in a straight line — and optionally keep only "
+    "those within a limit (for example under 30 minutes, or within 5 km). "
+    "Travel times depend on the routing service being available and on the "
+    "loaded timetable, so I'll flag when they're approximate or out of date.\n"
     "\n"
     "Important: this reflects what is available at the moment in your current "
     "database snapshot. If data is missing or outdated, I will still try to "
@@ -174,6 +185,11 @@ INSTRUCTIONS = "\n\n".join(
         _city_center_block(),
         _capabilities_block(),
         _semantic_fallback_block(),
+        # Cross-capability tool invariants (one result set, 1-based indices, the
+        # place_ref flow). Lives here — not on a single toolset — because it spans
+        # Core / MapOverlay / Lens; each capability's own protocol then describes
+        # only its own tools. Static → stays in the cached prefix.
+        TOOL_BACKBONE,
     ]
 )
 
@@ -182,15 +198,19 @@ INSTRUCTIONS = "\n\n".join(
 # immutable config (capability binding, instructions, retries). Per-request
 # state (model, deps, history) is passed at `agent.run(...)` time, so no DI
 # needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
-# primitive) — `ListingsCapability` wraps the search/listing toolset in
-# `StateEmittingToolset` (inside its `get_toolset`), so any `deps.state` mutation
-# a tool makes auto-emits a STATE_SNAPSHOT — emission is structural, not
-# something each tool remembers (see state_emission.py). Future tool groups
-# (map/frontend command tools, distance tools) add their own capabilities.
-# See agent-compound-docs/decisions/pydantic-v2-migration.md.
+# primitive), split by domain: `CoreCapability` (search / open / page / locate),
+# `MapOverlayCapability` (draw geometries), `LensCapability` (colour by travel
+# time / distance). Each returns its toolset wrapped in `StateEmittingToolset`
+# (inside `get_toolset`), so any `deps.state` mutation auto-emits a
+# STATE_SNAPSHOT — emission is structural, not something each tool remembers
+# (see chat/tools/emission.py). Splitting into capabilities is behavior-neutral to the
+# LLM (same combined tool list + instructions) and sets up `defer_loading` as a
+# later lever. The deferred `ListingProximityCapability` (single-listing distance
+# / travel queries, issue #44) lands next. See
+# agent-compound-docs/decisions/capability-landscape.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    capabilities=[ListingsCapability()],
+    capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability()],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

@@ -18,12 +18,18 @@ src/flat_chat/
                                       + GET /api/listings?ids=&view=card (batch tier-2)
                           bookmarks.py POST/DELETE /api/bookmarks/{listing_id} + GET /api/bookmarks(/ids)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
-                          tools.py        FunctionToolset[ChatDeps] + ListingsCapability
-                                          (search/open/page/locate_place/show_on_map/
-                                          hide_on_map/clear_map_overlays); get_toolset()
-                                          returns the toolset wrapped in StateEmittingToolset
-                          state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
+                          agent.py        Agent(capabilities=[CoreCapability(),
+                                          MapOverlayCapability(), LensCapability()], instructions=...)
+                          tools/backbone.py      TOOL_BACKBONE (cross-capability invariants:
+                                          one result set / 1-based indices / place_ref flow)
+                          tools/core.py        CoreCapability — search/open/page/locate_place;
+                                          calls the post-search hooks below
+                          tools/overlays.py MapOverlayCapability — show_on_map/hide_on_map/
+                                          clear_map_overlays + rebuild_search_overlays_hook
+                          tools/lenses.py   LensCapability — apply_travel_time_lens/
+                                          apply_distance_lens/clear_lens + generic _apply_lens
+                                          (provider registry) + reapply_lens_hook
+                          tools/emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
                                           on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
                           session_state.py SessionState (renamed from ui_state.py)
@@ -42,8 +48,11 @@ src/flat_chat/
                                           cookie+JWT backend, current_active_user)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total, facets)
+                          distance.py     DistanceService — {id: metres} via ST_Distance to a
+                                          named-place geometry (the distance-lens provider)
                           places.py       PlaceService — locate_place trigram lookup over
                                           world.named_places + overlay_geometry (→ GeoJSON)
+                                          + anchor_point (→ Anchor for lens anchors)
                           transit_overlays.py TransitOverlayService — line name → route-shape
                                           GeoJSON + served stations (world.transit_stops via
                                           lines_served) as MapOverlay.points; display only,
@@ -52,19 +61,23 @@ src/flat_chat/
                           schemas.py      SearchParams + SortBy (near_place_ref, inside_ring, kita, ...)
                           geo_filters.py  Filter input shapes only
   listings/            → NEW. Shared listing-domain primitives.
-                          models.py            Listing + ListingGeoContext + ListingNearby* + named_places
-                                               + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
-                          types.py             Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
-                          context.py           ListingDetail + ListingCard + nested dataclasses
-                          overlays.py          MapOverlay + OverlayPoint + OVERLAY_* consts
-                                               (leaf-layer overlay vocab; both search/ resolvers import it)
-                          projection.py        Shared tier-2 ListingCard projection (preview + get_cards)
-                          labels.py            bucket_*, walk_minutes, encode_modes, ...
-                          thresholds.py        Single source of truth for numeric constants
-                          service.py           ListingService — async get_detail(id) / get_cards(ids)
-                          bookmarks/           Bookmark subpackage (app schema)
-                                               models.py   Bookmark ORM (composite PK, CASCADE FKs)
-                                               service.py  BookmarkService — add/remove/list_ids/list_cards
+                          models.py       Listing + ListingGeoContext + ListingNearby* + named_places
+                                          + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
+                          types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
+                          context.py      ListingDetail + ListingCard + Marker + Anchor
+                          lenses.py       MarkerLens + ActiveLens union (TravelTimeLens |
+                                          DistanceLens) — leaf lens vocab (see lens-layer.md)
+                          geo.py          equirect_distance_m — cheap in-memory point math
+                                          (routing last-mile loop)
+                          overlays.py     MapOverlay + OverlayPoint + OVERLAY_* consts
+                                          (leaf-layer overlay vocab; both search/ resolvers import it)
+                          projection.py   Shared tier-2 ListingCard projection (preview + get_cards)
+                          labels.py       bucket_*, walk_minutes, encode_modes, ...
+                          thresholds.py   Single source of truth for numeric constants
+                          service.py      ListingService — async get_detail(id) / get_cards(ids)
+                          bookmarks/      Bookmark subpackage (app schema)
+                                          models.py   Bookmark ORM (composite PK, CASCADE FKs)
+                                          service.py  BookmarkService — add/remove/list_ids/list_cards
 ```
 
 ## Layering rules
@@ -112,7 +125,7 @@ Two channels between frontend and backend:
     `ListingService.get_cards(ids)`. This is the lazy-hydration channel
     for cards beyond the preview window.
 
-`SearchService` is agent-only (`chat/tools.py` is the sole caller — no
+`SearchService` is agent-only (`chat/tools/core.py` is the sole caller — no
 HTTP route exposes it). `ListingService` is shared.
 
 Decision doc: [`agent-vs-http-data-flow.md`](../../agent-compound-docs/decisions/agent-vs-http-data-flow.md).
@@ -220,7 +233,7 @@ Pydantic AI composes the agent's system prompt as:
 1. **Agent `instructions=`** (cached, static): role / UI / honesty /
    neutrality. In `chat/agent.py`.
 2. **`@toolset.instructions`** (cached, static): tool protocol + phrase
-   map. In `chat/tools.py`.
+   map. In `chat/tools/core.py`.
 3. **`@agent.instructions`** (uncached, per-turn): `<current_state>` +
    `<result_facets>` (whole-set stats) + `<user_focus>` from
    `build_dynamic_state_prompt`. In `chat/llm_context.py`.
@@ -242,7 +255,7 @@ Both directions share the same numbers. A threshold tweak is one place
 to edit; no gold rebuild needed.
 
 The same numbers also reach the **LLM**: the `search_apartments`
-docstring + phrase map (`chat/tools.py`) write the distance ladder /
+docstring + phrase map (`chat/tools/core.py`) write the distance ladder /
 noise / greenery / density cutoffs out literally. They must match the
 constants — `test_search_tool_docs_match_thresholds` reads
 `thresholds.py` and asserts each value appears in the right parameter

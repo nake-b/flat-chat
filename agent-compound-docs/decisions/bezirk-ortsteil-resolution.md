@@ -86,7 +86,7 @@ The `inside_ring` filter is related (it's the other polygon-membership fact land
 - **"Inside the ring" = the Umweltzone polygon**, ingested as `inner_city_zone`. Berlin's legal low-emission zone (Umweltzone) is bounded almost exactly by the S-Bahn ring — the shape Berliners call the *Hundekopf* ("dog's head"). It is published as **one clean WFS feature**, so we ingest it directly.
 - `enrich_inside_ring` sets `inside_ring` via `ST_Contains(inner_city_zone.geom, listing.location)`.
 - It is **NOT** derived from GTFS S41/S42 rail geometry — the rail centerline doesn't close into a clean polygon. The Umweltzone is the pragmatic, legally-grounded stand-in.
-- Berlin is **polycentric** (Mitte, City West around Zoo, several Kiez hubs) — there is no single "city center". The agent is instructed (`agent.py` `_city_center_block`) to interpret "city center" / "Zentrum" / "Innenstadt" as *inside the ring* rather than guessing one neighbourhood. The `<phrase_map>` in `tools.py` maps those phrases to `inside_ring: true`.
+- Berlin is **polycentric** (Mitte, City West around Zoo, several Kiez hubs) — there is no single "city center". The agent is instructed (`agent.py` `_city_center_block`) to interpret "city center" / "Zentrum" / "Innenstadt" as *inside the ring* rather than guessing one neighbourhood. The `<phrase_map>` in `tools/core.py` maps those phrases to `inside_ring: true`.
 
 (The literal S-Bahn rail-ring polygon from GTFS S41/S42 is a deferred nice-to-have if the Umweltzone approximation ever proves insufficient.)
 
@@ -105,5 +105,5 @@ The `inside_ring` filter is related (it's the other polygon-membership fact land
 | Gold ETL | `services/ingestion/src/gold/enrich_listings.py` | `enrich_admin_areas` (`ST_Covers`, smallest-polygon-wins) + `enrich_inside_ring` (`ST_Contains` against `inner_city_zone`). |
 | Search | `services/backend/src/flat_chat/search/service.py` | District filter OR-union across `Listing.district ∪ listing_bezirk ∪ listing_ortsteil`; `inside_ring` strict-equality predicate. |
 | Display | `services/backend/src/flat_chat/listings/{context.py,service.py}`, `services/frontend/src/components/CardDetail.tsx` | `listing_bezirk` / `listing_ortsteil` surfaced on detail; coalesced label; `inside_ring` yes/no + a `⭕ inside ring` card chip. |
-| Agent | `services/backend/src/flat_chat/chat/agent.py`, `chat/tools.py` | `_city_center_block` (polycentric Berlin → ring); `<phrase_map>` "in" vs "near the" Tiergarten, "city center" → `inside_ring`. |
+| Agent | `services/backend/src/flat_chat/chat/agent.py`, `chat/tools/core.py` | `_city_center_block` (polycentric Berlin → ring); `<phrase_map>` "in" vs "near the" Tiergarten, "city center" → `inside_ring`. |
 | Tests | `services/backend/tests/integration/test_search_service.py`, `services/ingestion/tests/integration/test_gold_enrichers_v2.py` | District OR-union; `inside_ring`; `enrich_admin_areas`; bezirke human-names regression. |

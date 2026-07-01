@@ -175,6 +175,11 @@ wfs:
     source_url: "https://gdi.berlin.de/services/wfs/alkis_gebaeude"
     update_cadence: yearly
     description: "Named ALKIS building footprints (full polygon). Loads with source='alkis', category='building'."
+    # Fetch ONLY named footprints server-side. The gebaeude layer is ~784k rows
+    # but only ~5800 carry a real name; `nam<>''` alone is unreliable here
+    # (matches ~245k whitespace rows), so require NOT NULL too. Without this the
+    # arm paged the whole cadastre client-side and the fetch failed → 0 rows.
+    cql_filter: "nam IS NOT NULL AND nam<>''"
     extra:
       source: alkis
       category: building

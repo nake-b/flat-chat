@@ -22,7 +22,11 @@ from __future__ import annotations
 
 from flat_chat.chat.service import merge_incoming_state
 from flat_chat.chat.session_state import SessionState
-from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.context import (
+    ListingCard,
+    ListingDetail,
+)
+from flat_chat.listings.lenses import DistanceLens, MarkerLens, TravelTimeLens
 from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import SearchParams
 
@@ -162,3 +166,92 @@ def test_merged_overlay_list_is_independent_of_persisted():
 
     # Mutating the per-run list must not bleed into the stored session.
     assert [o.id for o in persisted.map_overlays] == ["transit_line:U7"]
+
+
+# --- lens dismissal: the × on the lens legend -------------------------------
+# Same shrink-only authority as overlays — the frontend may CLEAR the active
+# lens but never SET one (setting stays agent-only, via apply_*_lens).
+
+
+def _lensed() -> SessionState:
+    return SessionState(
+        active_lens=TravelTimeLens(
+            anchor_label="TU Berlin",
+            anchor_lat=52.5,
+            anchor_lng=13.3,
+            mode="transit",
+            max_minutes=30,
+        ),
+        marker_lens=MarkerLens(key="commute_min", label="min to TU Berlin"),
+    )
+
+
+def _distance_lensed() -> SessionState:
+    return SessionState(
+        active_lens=DistanceLens(
+            anchor_label="TU Berlin",
+            anchor_lat=52.5,
+            anchor_lng=13.3,
+            max_km=2,
+        ),
+        marker_lens=MarkerLens(key="distance_m", label="km to TU Berlin"),
+    )
+
+
+def test_frontend_clear_drops_persisted_lens():
+    # Persisted had a lens; the incoming envelope dropped it → honour the clear.
+    merged = merge_incoming_state(_lensed(), SessionState())
+    assert merged.active_lens is None
+    assert merged.marker_lens.key == "price_warm"
+
+
+def test_frontend_clear_drops_persisted_distance_lens():
+    # Dismissal is kind-agnostic — a distance lens clears the same way.
+    merged = merge_incoming_state(_distance_lensed(), SessionState())
+    assert merged.active_lens is None
+    assert merged.marker_lens.key == "price_warm"
+
+
+def test_incoming_mirroring_lens_is_preserved():
+    # The frontend still shows the lens → it stays.
+    merged = merge_incoming_state(_lensed(), _lensed())
+    assert merged.active_lens is not None
+    assert merged.marker_lens.key == "commute_min"
+
+
+def test_frontend_cannot_set_a_lens():
+    # Persisted has no lens; an incoming lens is ignored (setting is agent-only).
+    merged = merge_incoming_state(SessionState(), _lensed())
+    assert merged.active_lens is None
+    assert merged.marker_lens.key == "price_warm"
+
+
+def test_none_incoming_keeps_persisted_lens():
+    merged = merge_incoming_state(_lensed(), None)
+    assert merged.active_lens is not None
+    assert merged.marker_lens.key == "commute_min"
+
+
+def test_dismissal_drops_lens_overlay_but_keeps_user_pin():
+    # The lens's own anchor overlay (origin="lens") is removed on dismissal; a
+    # user-pinned overlay (origin="pinned") — even of a different place — survives.
+    persisted = SessionState(
+        active_lens=TravelTimeLens(
+            anchor_label="TU", anchor_lat=52.5, anchor_lng=13.3, mode="transit"
+        ),
+        map_overlays=[
+            MapOverlay(
+                id="place:lens", kind="place", label="TU", geojson={}, origin="lens"
+            ),
+            MapOverlay(
+                id="place:pin", kind="place", label="Spree", geojson={}, origin="pinned"
+            ),
+        ],
+    )
+    # Frontend dropped the lens but still lists both overlays in the envelope.
+    incoming = SessionState(map_overlays=list(persisted.map_overlays))
+    merged = merge_incoming_state(persisted, incoming)
+    ids = {o.id for o in merged.map_overlays}
+    assert "place:lens" not in ids
+    assert "place:pin" in ids
+    assert merged.active_lens is None

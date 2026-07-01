@@ -22,6 +22,7 @@ export type StarterCategory =
   | "budget"
   | "place"
   | "transit"
+  | "commute"
   | "family"
   | "nature"
   | "calm"
@@ -108,6 +109,13 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     label: "Near a tram or bus, just a short walk",
     prompt:
       "I want apartments near a tram or bus stop, within a very short walk.",
+  },
+  // commute — travel-time lens (car / public transport to a named place)
+  {
+    category: "commute",
+    emoji: "🚗",
+    label: "30 minutes by car to TU Berlin",
+    prompt: "Show me apartments within 30 minutes by car of TU Berlin.",
   },
   // family — kita / playground / school
   {

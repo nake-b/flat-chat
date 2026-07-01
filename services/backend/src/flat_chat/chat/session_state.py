@@ -12,14 +12,14 @@ JSON-Patch deltas; tools emit a fresh snapshot per mutation (see
 
 Three tiers, co-located:
   - `result_markers` — tier-1, EVERY match (≤ MARKER_CAP), thin
-    {id,lat,lng,price}. The map plots these; the count is its length.
+    {id,lat,lng,lens_value}. The map plots these; the count is its length.
   - `preview_cards` — tier-2, the top-N full cards kept hot for the LLM and
     the card strip's first paint. The rest hydrate on demand by id via
     `GET /api/listings?ids=…&view=card`.
   - `active_listing_detail` — tier-3, the open listing.
 
 Wire compaction: `result_markers` serializes to a columnar dict
-`{ids,lats,lngs,prices}` (~200 KB at 5k vs ~425 KB array-of-objects) via
+`{ids,lats,lngs,values}` (~200 KB at 5k vs ~425 KB array-of-objects) via
 `@field_serializer`, and decodes back via the paired `@field_validator`. The
 pair MUST be symmetric: the AG-UI envelope echoes this state back every turn
 and `chat/service.py:_extract_incoming_state` calls `model_validate` on it —
@@ -33,11 +33,22 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    computed_field,
+    field_serializer,
+    field_validator,
+)
 
-from flat_chat.listings.context import ListingCard, ListingDetail, Marker
+from flat_chat.listings.context import (
+    ListingCard,
+    ListingDetail,
+    Marker,
+)
+from flat_chat.listings.lenses import ActiveLens, MarkerLens, marker_lens_for
 from flat_chat.listings.overlays import MapOverlay
-from flat_chat.search.schemas import ResultFacets, SearchParams
+from flat_chat.search.schemas import ResultFacets, SearchParams, SearchResult
 
 
 class SessionState(BaseModel):
@@ -92,6 +103,41 @@ class SessionState(BaseModel):
     """Geometries currently drawn on the map. GeoJSON rides as-is (no columnar
     packing); kept small via server-side simplification at resolution time."""
 
+    # Active map lens, if any. Selection-slice input re-applied by the shared
+    # lens derivation so the lens survives a follow-up `search_apartments` (which
+    # otherwise rebuilds markers from SQL only). None = default price pins. This
+    # is the SINGLE stored source of truth for the lens — `marker_lens` below is
+    # computed from it, and the anchor overlay carries its own `origin="lens"`.
+    active_lens: ActiveLens | None = None
+    """The active lens input — a `TravelTimeLens` or `DistanceLens` (discriminated
+    on `kind`). Set by an `apply_*_lens` tool; consumed by the matching provider
+    (`RoutingService.resolve` / `DistanceService.resolve`)."""
+
+    def apply_search_result(self, result: SearchResult) -> None:
+        """Load a fresh `SearchService.search()` result into the snapshot
+        (markers / preview / total / facets).
+
+        Does NOT touch `search_params` — the caller owns the query (a lens
+        re-derivation reuses the existing params; a new search sets them). Shared
+        by `search_apartments` and the lens layer's `_refresh_result_set` so the
+        four-field assignment lives in one place. Unpacks positionally (a
+        `SearchResult` is a NamedTuple) so a plain 4-tuple works too."""
+        markers, preview, total, facets = result
+        self.result_markers = markers
+        self.preview_cards = preview
+        self.total_results = total
+        self.facets = facets
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def marker_lens(self) -> MarkerLens:
+        """What `result_markers[*].lens_value` means right now — the frontend
+        descriptor (`key` → ramp, `label` → legend). DERIVED from `active_lens`
+        (single source of truth, can't drift). Serialized to the frontend like a
+        field; ignored on input (the frontend can't set it). Default `price_warm`
+        when no lens is active."""
+        return marker_lens_for(self.active_lens)
+
     @field_serializer("result_markers")
     def _serialize_markers(self, markers: list[Marker]) -> dict[str, list]:
         """Columnar wire form: drop repeated keys, round coords to ~1 m.
@@ -103,7 +149,9 @@ class SessionState(BaseModel):
             "ids": [m.id for m in markers],
             "lats": [round(m.lat, 5) for m in markers],
             "lngs": [round(m.lng, 5) for m in markers],
-            "prices": [m.price_warm_eur for m in markers],
+            # The single active-lens scalar (warm rent by default, commute
+            # minutes under a travel lens). `marker_lens` names it.
+            "values": [m.lens_value for m in markers],
         }
 
     @field_validator("result_markers", mode="before")
@@ -129,19 +177,23 @@ class SessionState(BaseModel):
             n = len(ids)
             lats = columns.get("lats") or []
             lngs = columns.get("lngs") or []
-            # `prices` is legitimately absent on old/empty envelopes; default
-            # it to all-None. Any present column, though, must match `ids`.
-            prices = columns.get("prices")
-            if prices is None:
-                prices = [None] * n
-            if len(lats) != n or len(lngs) != n or len(prices) != n:
+            # The lens-value column is legitimately absent on old/empty
+            # envelopes; default it to all-None. Accept the legacy "prices" key
+            # so snapshots persisted before the lens generalization still
+            # decode. Any present column, though, must match `ids`.
+            values = columns.get("values")
+            if values is None:
+                values = columns.get("prices")
+            if values is None:
+                values = [None] * n
+            if len(lats) != n or len(lngs) != n or len(values) != n:
                 raise ValueError(
                     "columnar result_markers has mismatched column lengths "
                     f"(ids={n}, lats={len(lats)}, lngs={len(lngs)}, "
-                    f"prices={len(prices)})"
+                    f"values={len(values)})"
                 )
             return [
-                {"id": i, "lat": la, "lng": lo, "price_warm_eur": pr}
-                for i, la, lo, pr in zip(ids, lats, lngs, prices, strict=True)
+                {"id": i, "lat": la, "lng": lo, "lens_value": v}
+                for i, la, lo, v in zip(ids, lats, lngs, values, strict=True)
             ]
         return value

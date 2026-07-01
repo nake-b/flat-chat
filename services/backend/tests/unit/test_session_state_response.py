@@ -57,8 +57,8 @@ def test_populated_state_validates_and_preserves_columnar_markers():
     state = SessionState(
         total_results=2,
         result_markers=[
-            Marker(id="a", lat=52.5, lng=13.4, price_warm_eur=1200.0),
-            Marker(id="b", lat=52.49, lng=13.41, price_warm_eur=None),
+            Marker(id="a", lat=52.5, lng=13.4, lens_value=1200.0),
+            Marker(id="b", lat=52.49, lng=13.41, lens_value=None),
         ],
         preview_cards=[ListingCard(id="a", district="Kreuzberg", rooms=2.0)],
         active_id="a",
@@ -66,9 +66,9 @@ def test_populated_state_validates_and_preserves_columnar_markers():
     dumped = state.model_dump(mode="json")
 
     resp = SessionStateResponse.model_validate(dumped)
-    # Columnar columns are positional and preserved (incl. a null price).
+    # Columnar columns are positional and preserved (incl. a null value).
     assert resp.result_markers.ids == ["a", "b"]
-    assert resp.result_markers.prices == [1200.0, None]
+    assert resp.result_markers.values == [1200.0, None]
     assert resp.total_results == 2
     assert resp.active_id == "a"
     assert resp.preview_cards[0].district == "Kreuzberg"

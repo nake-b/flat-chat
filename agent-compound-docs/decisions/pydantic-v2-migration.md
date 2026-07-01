@@ -52,7 +52,13 @@ still small (3 tools) keeps the migration cheap and attributable.
   the now-repo-wide context lean (the per-service `services/backend/.dockerignore`
   was removed — only the context-root one is honored).
 
-### Capability refactor (`chat/tools.py`, `chat/agent.py`)
+### Capability refactor (`chat/tools/core.py`, `chat/agent.py`)
+> **Later (PR #41):** the single `ListingsCapability` was split by domain into
+> `CoreCapability` (`chat/tools/core.py`) + `MapOverlayCapability` (`chat/tools/overlays.py`)
+> + `LensCapability` (`chat/tools/lenses.py`) as the tool surface grew — see
+> [`capability-landscape.md`](capability-landscape.md). The single-capability form
+> below is the original migration; the pattern (a capability per tool group) is
+> unchanged.
 - New `ListingsCapability(AbstractCapability[ChatDeps])` returns the existing
   `FunctionToolset` from `get_toolset()`. The three tools (`search_apartments`,
   `open_listing`, `get_result_page`) and the `@toolset.instructions` protocol

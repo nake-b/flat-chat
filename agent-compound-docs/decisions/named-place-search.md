@@ -131,7 +131,7 @@ OSM is **ODbL**: the frontend keeps an explicit `© OpenStreetMap contributors` 
 | ORM | `services/backend/src/flat_chat/listings/models.py` | `named_places` mapped as a read-only Core `Table` on dedicated metadata (excluded from `create_all` + the drift test). |
 | Place service | `services/backend/src/flat_chat/search/places.py` | `PlaceService.locate(name)` — trigram resolution, ≤5 candidates, agent-only (like `SearchService`). |
 | Search filter | `services/backend/src/flat_chat/search/service.py` | `near_place_ref` → scalar-subquery geometry resolution → `ST_DWithin`; `_parse_place_ref` (format-only, fail-closed). |
-| Tool | `services/backend/src/flat_chat/chat/tools.py` | `locate_place` tool (pure lookup, no state mutation); `search_apartments` gains `near_place_ref`; `<tool_protocol>` documents the 2-tool flow; `<phrase_map>` distinguishes "in" vs "near the" Tiergarten. |
+| Tool | `services/backend/src/flat_chat/chat/tools/core.py` | `locate_place` tool (pure lookup, no state mutation); `search_apartments` gains `near_place_ref`; `<tool_protocol>` documents the 2-tool flow; `<phrase_map>` distinguishes "in" vs "near the" Tiergarten. |
 | Frontend | `services/frontend/src/components/MapPane.tsx`, `state/toolStatus.ts` | ODbL `AttributionControl`; `locate_place` status pill (`Locating … / Found …`). |
 | Tests | `services/backend/tests/integration/test_place_service.py`, `test_search_service.py`, `tests/unit/test_place_ref_parse.py` | Trigram resolution; `near_place_ref` precise distance against an extended geometry; format-only token parsing incl. malformed input. |
 

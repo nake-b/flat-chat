@@ -410,9 +410,39 @@ def _current_state_block(view: LlmResultSetView) -> str:
         f"  {xml_inline('order', view.order_label())}",
         f"  {xml_inline('filters', filters_json)}",
     ]
+    lens_line = _lens_line(view.state)
+    if lens_line:
+        lines.append(lens_line)
     if overlays_line:
         lines.append(overlays_line)
     return xml_block("current_state", "\n".join(lines))
+
+
+def _lens_line(state: SessionState) -> str:
+    """One line describing the active map lens, so the agent knows the map is
+    already coloured (and won't redundantly re-apply it).
+
+    Empty when no lens is active. Travel: mode + anchor + filter/annotate scope
+    (+ a note when the transit schedule is stale). Distance: anchor + km cutoff
+    or annotate-only."""
+    lens = state.active_lens
+    if lens is None:
+        return ""
+    if lens.kind == "travel_time":
+        how = "car" if lens.mode == "car" else "transit"
+        if lens.max_minutes is not None:
+            scope = f"filtering to ≤{lens.max_minutes} min"
+        else:
+            scope = "colour/annotate only (no cutoff)"
+        note = " (schedule stale)" if lens.schedule_stale else ""
+        body = f"{how} time to {lens.anchor_label}; {scope}{note}"
+    else:  # distance
+        if lens.max_km is not None:
+            scope = f"filtering to ≤{lens.max_km} km"
+        else:
+            scope = "colour/annotate only (no cutoff)"
+        body = f"straight-line distance to {lens.anchor_label}; {scope}"
+    return f"  <active_lens>{body}</active_lens>"
 
 
 def _map_overlays_line(state: SessionState) -> str:

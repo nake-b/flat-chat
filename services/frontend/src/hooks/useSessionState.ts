@@ -99,7 +99,26 @@ export function useSessionState() {
     [setState],
   );
 
-  return { ...coAgent, activate, dismissOverlay };
+  // Dismiss the active lens: revert to the default `price_warm` lens, drop the
+  // active lens, AND remove the lens's own anchor overlay (origin="lens") for an
+  // instant recolour + clean map. The cleared state is echoed back where
+  // `merge_incoming_state` honours it authoritatively (sticky — the agent sees
+  // no lens and won't re-apply, and drops the same overlay). Recolour-only (the
+  // current result set is kept, like removing an overlay doesn't change the
+  // search). Only `origin==="lens"` overlays go — user pins / search overlays stay.
+  const dismissLens = useCallback(() => {
+    setState((prev) => {
+      const s = prev ?? EMPTY_SESSION_STATE;
+      return {
+        ...s,
+        marker_lens: { key: "price_warm", label: null },
+        active_lens: null,
+        map_overlays: (s.map_overlays ?? []).filter((o) => o.origin !== "lens"),
+      };
+    });
+  }, [setState]);
+
+  return { ...coAgent, activate, dismissOverlay, dismissLens };
 }
 
 // Backwards-compat alias — existing components import `useUiState`.

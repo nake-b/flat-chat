@@ -53,7 +53,7 @@ The same threshold table is needed in *two* directions:
 
 - **Filter parsing** (`search/geo_filters.py`): user says `max_noise="quiet"`
   → SQL threshold `noise_total_lden < 55`. Reads `thresholds.py`.
-- **Result projection** (`search/service.py` / `chat/tools.py`): raw
+- **Result projection** (`search/service.py` / `chat/tools/core.py`): raw
   value `58` → label `"lively"`. Reads `labels.py` which reads
   `thresholds.py`.
 

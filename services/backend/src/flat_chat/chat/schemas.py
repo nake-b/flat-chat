@@ -2,7 +2,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.context import (
+    ListingCard,
+    ListingDetail,
+)
+from flat_chat.listings.lenses import ActiveLens, MarkerLens
 from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import ResultFacets, SearchParams
 
@@ -30,15 +34,17 @@ class ColumnarMarkers(BaseModel):
     """The wire form of `SessionState.result_markers` — four parallel columns.
 
     `SessionState` keeps markers as a `list[Marker]` in memory but serializes
-    them columnar (`{ids, lats, lngs, prices}`) via a `@field_serializer` to
+    them columnar (`{ids, lats, lngs, values}`) via a `@field_serializer` to
     halve the payload at 5k markers. Index `i` across all four columns is one
-    marker. See `chat/session_state.py:_serialize_markers`.
+    marker. `values` is the single active-lens scalar (warm rent by default,
+    commute minutes under a travel lens — see `MarkerLens`). See
+    `chat/session_state.py:_serialize_markers`.
     """
 
     ids: list[str] = Field(default_factory=list)
     lats: list[float] = Field(default_factory=list)
     lngs: list[float] = Field(default_factory=list)
-    prices: list[float | None] = Field(default_factory=list)
+    values: list[float | None] = Field(default_factory=list)
 
 
 class SessionStateResponse(BaseModel):
@@ -64,3 +70,5 @@ class SessionStateResponse(BaseModel):
     active_id: str | None = None
     active_listing_detail: ListingDetail | None = None
     map_overlays: list[MapOverlay] = Field(default_factory=list)
+    marker_lens: MarkerLens = Field(default_factory=MarkerLens)
+    active_lens: ActiveLens | None = None

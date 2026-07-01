@@ -17,10 +17,13 @@ get a fresh label even if thresholds changed since the gold rebuild.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
+# Re-exported so existing `from flat_chat.listings.context import MarkerLens`
+# call sites keep working after the lens vocab moved to the `lenses` leaf.
+from .lenses import MarkerLens as MarkerLens
 from .types import (
     DensityLabel,
     GreeneryLabel,
@@ -135,12 +138,34 @@ class DensityProfile(BaseModel):
 
 class Marker(BaseModel):
     """One map marker — tier-1. lat/lng are required (search drops
-    null-coordinate listings before projecting), price may be null."""
+    null-coordinate listings before projecting).
+
+    `lens_value` is the ONE active visualization scalar for this marker —
+    whatever `SessionState.marker_lens` currently names. By default that is
+    the warm rent (the `price_warm` lens); under a travel lens it is the
+    commute time in minutes (`commute_min`), under a distance lens the
+    straight-line distance in metres (`distance_m`). The map colours pins by
+    this value against a per-lens ramp owned by the frontend
+    (`state/lensStyles.ts`); identity lives once in `marker_lens`, never
+    repeated per marker. May be null (e.g. a listing with no price, or
+    unreachable under the active lens) → rendered in a neutral "no data"
+    colour."""
 
     id: str
     lat: float
     lng: float
-    price_warm_eur: float | None = None
+    lens_value: float | None = None
+
+
+class Anchor(NamedTuple):
+    """A place resolved to a routing/distance anchor — the human name plus a
+    single point (a geometry centroid). Returned by `PlaceService.anchor_point`
+    and fed to the OSRM/MOTIS engines. NamedTuple so it stays unpackable at
+    existing `label, lat, lon = anchor` call sites."""
+
+    label: str
+    lat: float
+    lon: float
 
 
 # ---------------------------------------------------------------------------

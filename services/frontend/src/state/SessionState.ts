@@ -251,16 +251,22 @@ export type SearchParams = Record<string, unknown>;
 // ---------------------------------------------------------------------------
 // ResultMarkers — the COLUMNAR wire shape for the full result set (≤5000
 // matches). Parallel, index-aligned arrays: the i-th match is
-// { id: ids[i], lat: lats[i], lng: lngs[i], price_warm_eur: prices[i] }.
-// This is what CopilotKit stores verbatim — it's both the map source and
-// the ordered result set. Decode into objects with `decodeMarkers()`.
+// { id: ids[i], lat: lats[i], lng: lngs[i], lens_value: values[i] }.
+// `values` is the single active visualization scalar (warm rent by default,
+// commute minutes under a travel lens — see `MarkerLens`). This is what
+// CopilotKit stores verbatim — both the map source and the ordered result
+// set. Decode into objects with `decodeMarkers()`.
 // ---------------------------------------------------------------------------
 
 export interface ResultMarkers {
   ids: string[];
   lats: number[];
   lngs: number[];
-  prices: (number | null)[];
+  values: (number | null)[];
+  // Legacy column name for snapshots persisted before the lens
+  // generalization; `decodeMarkers` falls back to it. New backends emit
+  // `values`.
+  prices?: (number | null)[];
 }
 
 // ---------------------------------------------------------------------------
@@ -288,11 +294,12 @@ export interface ResultFacets {
 }
 
 // A single decoded marker — one row zipped out of the parallel arrays.
+// `lens_value` is whatever `SessionState.marker_lens` currently names.
 export interface MarkerPoint {
   id: string;
   lat: number;
   lng: number;
-  price_warm_eur: number | null;
+  lens_value: number | null;
 }
 
 // Zip the parallel arrays into objects. Guards null/undefined → []. Length
@@ -302,6 +309,7 @@ export function decodeMarkers(
   m: ResultMarkers | null | undefined,
 ): MarkerPoint[] {
   if (!m || !m.ids) return [];
+  const col = m.values ?? m.prices; // back-compat with the legacy key
   const out: MarkerPoint[] = [];
   for (let i = 0; i < m.ids.length; i++) {
     const lat = m.lats?.[i];
@@ -313,11 +321,58 @@ export function decodeMarkers(
       id: m.ids[i],
       lat,
       lng,
-      price_warm_eur: m.prices?.[i] ?? null,
+      lens_value: col?.[i] ?? null,
     });
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// MarkerLens — names the single scalar every marker's `lens_value`
+// carries (the active map visualization lens). Mirror of
+// listings/context.py:MarkerLens. Backend sets SEMANTICS (`key` + `label`);
+// APPEARANCE (colour ramp / domain / number format) is decided here in
+// `state/lensStyles.ts`, keyed off `key`. Default `price_warm` → the plain
+// pin (no heatmap); `commute_min` → a travel-time ramp.
+// ---------------------------------------------------------------------------
+
+export interface MarkerLens {
+  key: string;
+  label: string | null;
+}
+
+// The active map lens, if any — a discriminated union on `kind`. Mirror of
+// listings/lenses.py:ActiveLens (TravelTimeLens | DistanceLens). Drives the lens
+// label + (when a cutoff is set) the dropped markers.
+//
+// Travel time: `schedule_as_of` / `schedule_stale` describe the TRANSIT
+// timetable the times were computed against — when MOTIS's loaded VBB feed has
+// lapsed the backend clamps the departure to the last covered day and flags it
+// so the legend can show "schedule as of <date>". Defaulted for car
+// (date-independent) and an in-window feed.
+// Distance: straight-line metres to the anchor's geometry; `max_km` cutoff.
+export interface TravelTimeLens {
+  kind: "travel_time";
+  anchor_label: string;
+  anchor_lat: number;
+  anchor_lng: number;
+  near_place_ref: string | null;
+  mode: "transit" | "car";
+  max_minutes: number | null;
+  schedule_as_of: string | null;
+  schedule_stale: boolean;
+}
+
+export interface DistanceLens {
+  kind: "distance";
+  anchor_label: string;
+  anchor_lat: number;
+  anchor_lng: number;
+  near_place_ref: string | null;
+  max_km: number | null;
+}
+
+export type ActiveLens = TravelTimeLens | DistanceLens;
 
 // ---------------------------------------------------------------------------
 // Map overlays — geometries the agent draws on the map (the Spree, a U-Bahn
@@ -334,7 +389,7 @@ export type OverlayKind =
   | "bezirk"
   | "ring"
   | "parks";
-export type OverlayOrigin = "search" | "pinned";
+export type OverlayOrigin = "search" | "pinned" | "lens";
 
 // A labelled point decorating an overlay — currently a transit line's served
 // stations (rendered as dots + line badges). Mirror of context.py:OverlayPoint.
@@ -377,17 +432,21 @@ export interface SessionState {
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
   map_overlays: MapOverlay[];
+  marker_lens: MarkerLens;
+  active_lens: ActiveLens | null;
 }
 
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   search_params: null,
   total_results: 0,
-  result_markers: { ids: [], lats: [], lngs: [], prices: [] },
+  result_markers: { ids: [], lats: [], lngs: [], values: [] },
   preview_cards: [],
   facets: null,
   active_id: null,
   active_listing_detail: null,
   map_overlays: [],
+  marker_lens: { key: "price_warm", label: null },
+  active_lens: null,
 }) as SessionState;
 
 export const AGENT_NAME = "berlin-agent";

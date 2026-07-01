@@ -10,6 +10,7 @@ import {
 } from "@vis.gl/react-maplibre";
 import type {
   CircleLayerSpecification,
+  ExpressionSpecification,
   GeoJSONSource,
   Map as MaplibreGl,
   MapLayerMouseEvent,
@@ -20,6 +21,13 @@ import type { Feature, FeatureCollection, Point } from "geojson";
 import { useSessionState } from "../hooks/useSessionState";
 import { useActiveIdMirror, useHover } from "../hooks/useHover";
 import { decodeMarkers } from "../state/SessionState";
+import type { MarkerLens } from "../state/SessionState";
+import {
+  lensColorExpression,
+  lensDomain,
+  lensStyle,
+  rampColorExpression,
+} from "../state/lensStyles";
 import {
   BADGE_TEXT_COLOR,
   FLOW_DASH_SEQUENCE,
@@ -52,6 +60,7 @@ import {
   overlayShape,
 } from "../state/overlayStyles";
 import { OverlayLegend } from "./OverlayLegend";
+import { LensLegend } from "./LensLegend";
 import {
   REFRAME_MAX_ZOOM,
   REFRAME_MS,
@@ -245,37 +254,78 @@ function lineEndpoints(geom: GeoJSON.Geometry): [number, number][] {
   return [];
 }
 
+// Cluster size always encodes COUNT (more listings → bigger bubble), in both
+// the default and lens modes — only the COLOUR changes between them.
+const CLUSTER_RADIUS_STEP: ExpressionSpecification = [
+  "step",
+  ["get", "point_count"],
+  16,
+  10,
+  20,
+  30,
+  26,
+  100,
+  34,
+];
+
+// Default lens: colour clusters red-by-count (tint → deep), doubling as a
+// casual density legend at zoom-out.
+const CLUSTER_COUNT_COLOR_STEP: ExpressionSpecification = [
+  "step",
+  ["get", "point_count"],
+  RED_TINT,
+  5,
+  RED,
+  25,
+  RED_DEEP,
+];
+
 const CLUSTER_LAYER: CircleLayerSpecification = {
   id: "clusters",
   type: "circle",
   source: "apartments",
   filter: ["has", "point_count"],
   paint: {
-    "circle-color": [
-      "step",
-      ["get", "point_count"],
-      RED_TINT,
-      5,
-      RED,
-      25,
-      RED_DEEP,
-    ],
+    "circle-color": CLUSTER_COUNT_COLOR_STEP,
     "circle-opacity": 0.92,
-    "circle-radius": [
-      "step",
-      ["get", "point_count"],
-      16,
-      10,
-      20,
-      30,
-      26,
-      100,
-      34,
-    ],
+    "circle-radius": CLUSTER_RADIUS_STEP,
     "circle-stroke-color": "#ffffff",
     "circle-stroke-width": 2,
   },
 };
+
+// Cluster paint under the active visualization lens ("lens"). A lens
+// repaints individual pins but, without this, the cluster bubbles stay
+// red-by-count and drown the heatmap at city zoom. So when a lens is active we
+// colour each cluster by the MEAN lens value of its members
+// (`sum_value / n_valued`, both accumulated via `clusterProperties` on the
+// Source), reusing the SAME ramp as the pins. Clusters with no valued member
+// (e.g. all-unreachable under a commute lens) fall back to the no-data grey —
+// the `n_valued == 0` guard also avoids a divide-by-zero. Size stays count-based.
+// Default lens (`price_warm`) → the red-by-count look (unchanged).
+function buildClusterPaint(
+  lens: MarkerLens | null | undefined,
+  domain?: [number, number],
+): CircleLayerSpecification["paint"] {
+  const meanValue: ExpressionSpecification = [
+    "/",
+    ["get", "sum_value"],
+    ["max", ["get", "n_valued"], 1],
+  ];
+  const heatmap = rampColorExpression(
+    lens,
+    meanValue,
+    ["==", ["get", "n_valued"], 0] as ExpressionSpecification,
+    domain,
+  );
+  return {
+    "circle-color": heatmap ?? CLUSTER_COUNT_COLOR_STEP,
+    "circle-opacity": 0.92,
+    "circle-radius": CLUSTER_RADIUS_STEP,
+    "circle-stroke-color": "#ffffff",
+    "circle-stroke-width": 2,
+  };
+}
 
 const CLUSTER_COUNT_LAYER: SymbolLayerSpecification = {
   id: "cluster-count",
@@ -322,6 +372,54 @@ const PIN_LAYER: SymbolLayerSpecification = {
     "icon-halo-color": "#ffffff",
     "icon-halo-width": 1.2,
     "icon-color-transition": { duration: 140, delay: 0 },
+  },
+};
+
+// Pin paint for the active visualization lens. Default lens (`price_warm`)
+// → today's grey/hover look; a ramped lens (commute) → heatmap over
+// `lens_value`, hover still wins for affordance. Overrides PIN_LAYER.paint at
+// render time so the colour follows `marker_lens`.
+function buildPinPaint(
+  lens: MarkerLens | null | undefined,
+  domain?: [number, number],
+): SymbolLayerSpecification["paint"] {
+  return {
+    "icon-color": [
+      "case",
+      ["boolean", ["feature-state", "hover"], false],
+      RED,
+      lensColorExpression(lens, GREY, domain),
+    ],
+    "icon-halo-color": "#ffffff",
+    "icon-halo-width": 1.2,
+    "icon-color-transition": { duration: 140, delay: 0 },
+  };
+}
+
+// Number label over each declustered pin under an active heatmap lens (e.g. the
+// commute minutes). Mirrors CLUSTER_COUNT_LAYER's text approach. The value is
+// pre-formatted into `lens_label` on the feature (empty string when there's no
+// lens / no value → nothing drawn). `text-allow-overlap: false` declutters at
+// dense zooms; the label sits just above the teardrop tip. Recoloured per-pin to
+// match the heatmap so the number reads as part of the same encoding.
+const PIN_LABEL_LAYER: SymbolLayerSpecification = {
+  id: "unclustered-point-label",
+  type: "symbol",
+  source: "apartments",
+  filter: ["!", ["has", "point_count"]],
+  layout: {
+    "text-field": ["get", "lens_label"],
+    "text-size": 11,
+    "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+    "text-anchor": "bottom",
+    "text-offset": [0, -2.1],
+    "text-allow-overlap": false,
+    "text-optional": true,
+  },
+  paint: {
+    "text-color": "#1b1b1b",
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1.6,
   },
 };
 
@@ -496,6 +594,7 @@ export function MapPane() {
       <ApartmentLayer map={mapInstance} />
     </MapLibreMap>
       <OverlayLegend />
+      <LensLegend />
     </div>
   );
 }
@@ -839,6 +938,10 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
           lat: c.lat as number,
           lng: c.lng as number,
           price_warm_eur: c.price_warm_eur,
+          // Bookmark markers carry no active-lens scalar — the lens applies to
+          // the search result set, not the saved list. `null` keeps the shape a
+          // MarkerPoint so lens-aware consumers (pins/clusters) type-check.
+          lens_value: null,
         }));
     }
     return decodeMarkers(state?.result_markers);
@@ -856,6 +959,21 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
     [markers],
   );
 
+  const lens = state?.marker_lens;
+
+  // Adaptive ramp domain from the actual lens values (frontend-computed — the
+  // markers carry every value already). Stretches the ramp to the real spread
+  // so contrast tracks the data instead of the wide native window. `undefined`
+  // for the default (non-heatmap) lens.
+  const lensDomainValue = useMemo(
+    () => lensDomain(markers.map((m) => m.lens_value), lens),
+    [markers, lens],
+  );
+
+  // Compact per-pin number label ("24") under an active heatmap lens. Pre-format
+  // here (not in MapLibre) so it follows the lens's own formatter; empty string
+  // → no label drawn (default lens, or a null/unreachable value).
+  const style = lensStyle(lens);
   const geojson = useMemo<FeatureCollection<Point, ApartmentProps>>(() => {
     const features = markers.map((m) => ({
       type: "Feature" as const,
@@ -863,11 +981,34 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
       geometry: { type: "Point" as const, coordinates: [m.lng, m.lat] },
       properties: {
         id: m.id,
-        price_warm_eur: m.price_warm_eur,
+        // The active visualization lens's scalar — drives the pin heatmap
+        // when a non-default lens (e.g. commute) is active. `null` renders
+        // in the lens's "no data" colour.
+        lens_value: m.lens_value,
+        lens_label:
+          style && typeof m.lens_value === "number"
+            ? style.format(m.lens_value)
+            : "",
       },
     }));
     return { type: "FeatureCollection", features };
-  }, [markers]);
+  }, [markers, style]);
+
+  // Pin paint follows the active visualization lens (grey/hover by default;
+  // a commute heatmap once a travel lens is applied), stretched to the adaptive
+  // domain.
+  const pinPaint = useMemo(
+    () => buildPinPaint(lens, lensDomainValue),
+    [lens, lensDomainValue],
+  );
+
+  // Cluster paint follows the SAME lens — red-by-count by default, mean-lens
+  // heatmap when a lens is active (so the bubbles don't drown the pin heatmap at
+  // city zoom).
+  const clusterPaint = useMemo(
+    () => buildClusterPaint(lens, lensDomainValue),
+    [lens, lensDomainValue],
+  );
 
   // id → [lng, lat] for the active result set, so a card/pin click can pan
   // the map to the selected listing.
@@ -897,7 +1038,7 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
           type: "Feature",
           id: activeId,
           geometry: { type: "Point", coordinates: center },
-          properties: { id: activeId, price_warm_eur: null },
+          properties: { id: activeId, lens_value: null, lens_label: "" },
         },
       ],
     };
@@ -1036,10 +1177,30 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
         clusterRadius={50}
         clusterMaxZoom={14}
         promoteId="id"
+        // Accumulate the active lens scalar per cluster so the bubble can be
+        // coloured by its members' MEAN value (sum/n). `lens_value` is null
+        // for markers with no value in the active lens → counted as neither sum
+        // nor n, so the mean reflects only reachable/valued members.
+        clusterProperties={{
+          sum_value: [
+            "+",
+            [
+              "case",
+              ["==", ["get", "lens_value"], null],
+              0,
+              ["get", "lens_value"],
+            ],
+          ],
+          n_valued: [
+            "+",
+            ["case", ["==", ["get", "lens_value"], null], 0, 1],
+          ],
+        }}
       >
-        <Layer {...CLUSTER_LAYER} />
+        <Layer {...CLUSTER_LAYER} paint={clusterPaint} />
         <Layer {...CLUSTER_COUNT_LAYER} />
-        <Layer {...PIN_LAYER} />
+        <Layer {...PIN_LAYER} paint={pinPaint} />
+        <Layer {...PIN_LABEL_LAYER} />
       </Source>
       {/* Declared after the clustered source so the active pin draws on top. */}
       <Source id="active-apartment" type="geojson" data={activeGeojson}>
@@ -1051,5 +1212,6 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
 
 interface ApartmentProps {
   id: string;
-  price_warm_eur: number | null;
+  lens_value: number | null;
+  lens_label: string;
 }

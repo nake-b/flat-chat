@@ -116,6 +116,8 @@ def _drive(plan: list[str]) -> list[dict]:
             listing_service=None,
             place_service=None,
             transit_overlay_service=None,
+            routing_service=None,
+            distance_service=None,
             store=store,
         )
         original_build = service_mod.build_chat_model

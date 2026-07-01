@@ -61,7 +61,7 @@ The `<user_focus>` block disappears entirely when no listing is open.
 The XML structure is stable (Claude attends to tagged blocks better
 than inline prose); only the inner values change turn to turn.
 
-In `chat/tools.py:tool_protocol_instructions` (static, cached):
+In `chat/tools/core.py:tool_protocol_instructions` (static, cached):
 
 ```
 <tool_protocol>

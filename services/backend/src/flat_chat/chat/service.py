@@ -28,6 +28,8 @@ from flat_chat.chat.title_gen import TitleGenerationService, is_first_completed_
 from flat_chat.chat.tools import SEARCH_TOOL_NAME
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
+from flat_chat.routing.service import RoutingService
+from flat_chat.search.distance import DistanceService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.search.transit_overlays import TransitOverlayService
@@ -194,12 +196,16 @@ class ChatService:
         listing_service: ListingService,
         place_service: PlaceService,
         transit_overlay_service: TransitOverlayService,
+        routing_service: RoutingService,
+        distance_service: DistanceService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
         self.place_service = place_service
         self.transit_overlay_service = transit_overlay_service
+        self.routing_service = routing_service
+        self.distance_service = distance_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
@@ -266,6 +272,8 @@ class ChatService:
             listing_service=self.listing_service,
             place_service=self.place_service,
             transit_overlay_service=self.transit_overlay_service,
+            routing_service=self.routing_service,
+            distance_service=self.distance_service,
             session=session,
             state=deps_state,
         )
@@ -441,6 +449,17 @@ def merge_incoming_state(
     # shows. Only shrinks the set — never adds.
     visible_ids = {o.id for o in incoming.map_overlays}
     merged.map_overlays = [o for o in merged.map_overlays if o.id in visible_ids]
+
+    # Lens dismissal (the × on the lens legend): the frontend may only CLEAR the
+    # active lens, never set one. If the persisted state had a lens (travel or
+    # distance) and the incoming envelope has dropped it, honour the clear —
+    # recolour-only, the result set is kept (same shrink-only authority as
+    # overlays). Also drop the lens's own anchor overlay (origin="lens") so it
+    # doesn't linger; `marker_lens` is computed from `active_lens`, so it needs
+    # no reset. Setting a lens stays agent-only (`apply_*_lens`).
+    if persisted.active_lens is not None and incoming.active_lens is None:
+        merged.active_lens = None
+        merged.map_overlays = [o for o in merged.map_overlays if o.origin != "lens"]
 
     return merged
 

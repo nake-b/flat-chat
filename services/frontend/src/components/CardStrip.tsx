@@ -4,7 +4,13 @@ import { useSessionState } from "../hooks/useSessionState";
 import { useHover } from "../hooks/useHover";
 import { useCardCache } from "../state/cardCache";
 import { useBookmarks } from "../state/useBookmarks";
-import { decodeMarkers, type ListingCard, type MarkerPoint } from "../state/SessionState";
+import {
+  decodeMarkers,
+  type ListingCard,
+  type MarkerLens,
+  type MarkerPoint,
+} from "../state/SessionState";
+import { lensColorForValue, lensDomain, lensStyle } from "../state/lensStyles";
 import { formatTransitCompact } from "../lib/transit";
 import { BookmarkHeart } from "./BookmarkHeart";
 
@@ -65,6 +71,13 @@ export function CardStrip() {
   const total = markers.length;
   const headerCount = state?.total_results ?? total;
   const previewCards = state?.preview_cards;
+
+  // Adaptive lens domain over the whole result set — shared by every card's
+  // badge colour so a card's lens value matches its map pin (same ramp + domain).
+  const lensDomainValue = useMemo(
+    () => lensDomain(markers.map((m) => m.lens_value), state?.marker_lens),
+    [markers, state?.marker_lens],
+  );
 
   // A cheap, stable fingerprint of the result set: length + first/last id. A
   // new search (different filters) yields a different list, hence a different
@@ -248,6 +261,9 @@ export function CardStrip() {
                     apt={card}
                     index={idx + 1}
                     hovered={hoverId === m.id}
+                    lens={state?.marker_lens ?? null}
+                    lensValue={m.lens_value}
+                    lensDomain={lensDomainValue}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
                     onClick={() => {
                       void activate(m.id);
@@ -256,6 +272,7 @@ export function CardStrip() {
                 ) : (
                   <SkeletonCard
                     marker={m}
+                    lens={state?.marker_lens ?? null}
                     index={idx + 1}
                     hovered={hoverId === m.id}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
@@ -312,17 +329,30 @@ function ApartmentCard({
   apt,
   index,
   hovered,
+  lens,
+  lensValue,
+  lensDomain,
   onClick,
   onHoverChange,
 }: {
   apt: ListingCard;
   index: number;
   hovered: boolean;
+  lens: MarkerLens | null;
+  lensValue: number | null;
+  lensDomain?: [number, number];
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
   const isBlank =
     apt.title == null && apt.address == null && apt.price_warm_eur == null;
+  // Under an active heatmap lens (e.g. commute/distance), surface its value as a
+  // badge coloured by the lens ramp (so it matches the map pin). Default (price)
+  // lens has no style → no badge (the warm-rent figure below already carries it).
+  const lensStyleSpec = lensStyle(lens);
+  const lensBadge =
+    lensStyleSpec && lensValue != null ? lensStyleSpec.format(lensValue) : null;
+  const lensBadgeColor = lensColorForValue(lens, lensValue, lensDomain);
   const isBookmarked = useBookmarks((s) => s.ids.has(apt.id));
   const toggleBookmark = useBookmarks((s) => s.toggle);
   return (
@@ -359,6 +389,14 @@ function ApartmentCard({
               <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
                 {apt.district ?? "Berlin"}
               </span>
+              {lensBadge ? (
+                <span
+                  className="ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white"
+                  style={{ backgroundColor: lensBadgeColor ?? "#E4003C" }}
+                >
+                  {lensBadge}
+                </span>
+              ) : null}
             </div>
             <div className="line-clamp-2 font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
               {apt.title ?? "(untitled)"}
@@ -416,17 +454,33 @@ function ApartmentCard({
 // Carries hover wiring so map ↔ strip highlight still works pre-hydration.
 function SkeletonCard({
   marker,
+  lens,
   index,
   hovered,
   onClick,
   onHoverChange,
 }: {
   marker: MarkerPoint;
+  lens: MarkerLens | null;
   index: number;
   hovered: boolean;
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
+  // Show the active lens's scalar as the instant anchor: warm rent (€) under
+  // the default lens, or the lens's own format (e.g. "32 min") under a
+  // travel lens. The full card hydrates the rest tier-2.
+  const style = lensStyle(lens);
+  const value = marker.lens_value;
+  const valueLabel = style ? style.legendTitle : "warm";
+  const valueText =
+    value != null
+      ? style
+        ? style.format(value)
+        : `€${Math.round(value).toLocaleString("de-DE")}`
+      : style
+        ? "—"
+        : "€—";
   const isBookmarked = useBookmarks((s) => s.ids.has(marker.id));
   const toggleBookmark = useBookmarks((s) => s.toggle);
   return (
@@ -455,12 +509,10 @@ function SkeletonCard({
         <div className="flex items-end justify-between border-t border-paper-rule pt-1.5">
           <div className="flex flex-col">
             <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
-              warm
+              {valueLabel}
             </span>
             <span className="font-mono text-lg font-medium tabular-nums tracking-tight text-ink">
-              {marker.price_warm_eur != null
-                ? `€${Math.round(marker.price_warm_eur).toLocaleString("de-DE")}`
-                : "€—"}
+              {valueText}
             </span>
           </div>
           <div className="h-3 w-10 animate-pulse bg-paper-rule" />

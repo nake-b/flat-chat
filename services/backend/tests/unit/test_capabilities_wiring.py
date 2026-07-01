@@ -1,11 +1,11 @@
 """Capability wiring — the agent surfaces its tools via `capabilities=[...]`.
 
-The Pydantic AI v2 upgrade moved tool binding from `toolsets=[toolset]` to
-`capabilities=[ListingsCapability()]` (ListingsCapability wraps the same
-`FunctionToolset` via `get_toolset()`). This guards that the indirection
-actually reaches the model: the agent must still advertise exactly its tool
-set to the LLM. If a future refactor drops the capability, marks it
-`defer_loading=True` by accident, or breaks `get_toolset()`, this fails.
+Tool binding is split across three capabilities — `CoreCapability`,
+`MapOverlayCapability`, `LensCapability` — each wrapping its own `FunctionToolset`
+via `get_toolset()`. This guards that the composition actually reaches the model:
+the agent must advertise exactly the UNION of all three capabilities' tools. If a
+future refactor drops a capability, marks one `defer_loading=True` by accident, or
+breaks `get_toolset()`, this fails.
 
 `get_toolset()` returns the toolset wrapped in `StateEmittingToolset` (the
 forget-proof state-emission wrapper) — this also confirms that wrapping a
@@ -40,13 +40,19 @@ from flat_chat.listings.thresholds import (
 _SQM_PER_HECTARE = 10_000
 
 EXPECTED_TOOLS = {
+    # CoreCapability
     "search_apartments",
     "open_listing",
     "get_result_page",
     "locate_place",
+    # MapOverlayCapability
     "show_on_map",
     "hide_on_map",
     "clear_map_overlays",
+    # LensCapability
+    "apply_travel_time_lens",
+    "apply_distance_lens",
+    "clear_lens",
 }
 
 
@@ -62,6 +68,8 @@ def test_agent_advertises_listing_tools_via_capability():
         listing_service=None,  # type: ignore[arg-type]
         place_service=None,  # type: ignore[arg-type]
         transit_overlay_service=None,  # type: ignore[arg-type]
+        routing_service=None,  # type: ignore[arg-type]
+        distance_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-wiring"),
         state=SessionState(),
     )
@@ -109,6 +117,8 @@ def _capture_search_param_docs() -> dict[str, str]:
         listing_service=None,  # type: ignore[arg-type]
         place_service=None,  # type: ignore[arg-type]
         transit_overlay_service=None,  # type: ignore[arg-type]
+        routing_service=None,  # type: ignore[arg-type]
+        distance_service=None,  # type: ignore[arg-type]
         session=ChatSession(id="t-doc"),
         state=SessionState(),
     )

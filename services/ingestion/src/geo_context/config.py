@@ -33,6 +33,12 @@ class WfsDataset:
     update_cadence: str
     description: str
     extra: dict[str, str | int | bool] | None = None
+    # Optional WFS server-side CQL filter (pushed as `CQL_FILTER` on every
+    # GetFeature page). Lets a layer fetch only the rows it wants instead of
+    # the whole layer + a client-side drop. Essential for `alkis_buildings`:
+    # the gebaeude layer is 784k footprints but only ~5800 are named — fetching
+    # all of them is slow and fragile (one dropped page rolls back the family).
+    cql_filter: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ def load_catalog(path: Path = DATASETS_YAML) -> Catalog:
             update_cadence=entry.get("update_cadence", "unknown"),
             description=entry.get("description", ""),
             extra=entry.get("extra"),
+            cql_filter=entry.get("cql_filter"),
         )
         for entry in (raw.get("wfs") or [])
     ]

@@ -8,9 +8,11 @@ import { formatSearchBreadcrumb, parseSearchCount } from "./searchBreadcrumb";
 //   executing → args are complete, tool body is running
 //   complete  → tool returned its result
 //
-// Adding a new backend tool: write the tool, then add one entry here AND
-// one matching `useToolPill("<name>")` call in `ChatPane.tsx`. Backend stays
-// pure data — no status strings live in tool bodies; UI copy lives here.
+// Adding a new backend tool: write the tool, then add one entry here. A single
+// wildcard `useCopilotAction({name: "*"})` in `hooks/useToolStatus.tsx` renders
+// the pill for ANY tool by looking up `TOOL_STATUS[name]` — no per-tool
+// registration. Backend stays pure data — no status strings live in tool
+// bodies; UI copy lives here.
 //
 // One entry gives the tool full control of both lifecycle phases. e.g. a
 // future `locate_place` tool:
@@ -100,6 +102,33 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
       a?.place_name ? `Locating ${a.place_name}…` : "Locating place…",
     complete: (a: { place_name?: string }) =>
       a?.place_name ? `Found ${a.place_name}` : "Place located",
+  },
+
+  apply_travel_time_lens: {
+    executing: (a: { mode?: string }) => {
+      const how = a?.mode === "car" ? "driving" : "transit";
+      return `Computing ${how} times`;
+    },
+    // SHORT label (the place name isn't in the args — near_place_ref is an opaque
+    // token — so read the human label off the lens the tool just set). Echoing
+    // the full prose result here made the pill wrap into a misaligned block.
+    complete: (_a, _r, state: { marker_lens?: { label?: string } } | null) => {
+      const label = state?.marker_lens?.label;
+      return label ? `Map coloured · ${label}` : "Travel times applied";
+    },
+  },
+
+  apply_distance_lens: {
+    executing: () => "Computing distances",
+    complete: (_a, _r, state: { marker_lens?: { label?: string } } | null) => {
+      const label = state?.marker_lens?.label;
+      return label ? `Map coloured · ${label}` : "Distances applied";
+    },
+  },
+
+  clear_lens: {
+    executing: () => "Removing lens",
+    complete: () => "Lens removed",
   },
 };
 

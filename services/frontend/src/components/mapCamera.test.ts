@@ -13,7 +13,7 @@ const mk = (id: string, lng: number, lat: number): MarkerPoint => ({
   id,
   lng,
   lat,
-  price_warm_eur: null,
+  lens_value: null,
 });
 
 describe("markersBBox", () => {

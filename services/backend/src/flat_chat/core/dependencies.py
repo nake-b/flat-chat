@@ -13,10 +13,15 @@ from pydantic_ai import Embedder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.chat.sessions import DbSessionStore, SessionStore
+from flat_chat.core.config import settings
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
 from flat_chat.listings.bookmarks import BookmarkService
 from flat_chat.listings.service import ListingService
+from flat_chat.routing.motis import MotisClient
+from flat_chat.routing.osrm import OsrmClient
+from flat_chat.routing.service import RoutingService
+from flat_chat.search.distance import DistanceService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.search.transit_overlays import TransitOverlayService
@@ -90,10 +95,25 @@ def get_place_service(
     return PlaceService(db)
 
 
+def get_distance_service(
+    db: AsyncSession = Depends(get_async_db),
+) -> DistanceService:
+    return DistanceService(db)
+
+
 def get_transit_overlay_service(
     db: AsyncSession = Depends(get_async_db),
 ) -> TransitOverlayService:
     return TransitOverlayService(db)
+
+
+def get_routing_service() -> RoutingService:
+    # Orchestrates the OSRM (car) + MOTIS (transit) clients over HTTP; stateless
+    # w.r.t. the DB. Phase-2 hub lookups would add a `db` dependency here.
+    return RoutingService(
+        OsrmClient(osrm_url=settings.osrm_url),
+        MotisClient(motis_url=settings.motis_url),
+    )
 
 
 def get_chat_service(
@@ -103,6 +123,8 @@ def get_chat_service(
     transit_overlay_service: TransitOverlayService = Depends(
         get_transit_overlay_service
     ),
+    routing_service: RoutingService = Depends(get_routing_service),
+    distance_service: DistanceService = Depends(get_distance_service),
     store: SessionStore = Depends(get_session_store),
 ):
     # Import here to break the import cycle: chat/service.py imports
@@ -114,5 +136,7 @@ def get_chat_service(
         listing_service=listing_service,
         place_service=place_service,
         transit_overlay_service=transit_overlay_service,
+        routing_service=routing_service,
+        distance_service=distance_service,
         store=store,
     )

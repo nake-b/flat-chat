@@ -146,6 +146,8 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |
 | `PHOENIX_ENDPOINT`         | Phoenix OTLP endpoint                                                                                                  | `http://localhost:6006/v1/traces`  |
 | `LOG_LEVEL`                | Log level for the `flat_chat` namespace (DEBUG / INFO / WARNING / ERROR). Third-party loggers stay at WARNING.         | `INFO`                             |
+| `OSRM_URL`                 | OSRM car-routing engine (the `routing` profile). Used by `apply_travel_time` (mode=car). Degrades gracefully if down.  | `http://osrm:5000`                 |
+| `MOTIS_URL`                | MOTIS transit-routing engine (the `routing` profile). Used by `apply_travel_time` (mode=transit). Degrades gracefully. | `http://motis:8080`                |
 | `JWT_SECRET`               | Signs the fastapi-users login cookie. **Required** (no insecure default ships). `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Rotating it logs everyone out. | — (required)                       |
 | `JWT_LIFETIME_SECONDS`     | Login cookie lifetime                                                                                                  | `604800` (7 days)                  |
 | `COOKIE_SECURE`            | Login cookie `Secure` attribute — `false` for local HTTP, `true` for HTTPS deploys                                     | `false`                            |
