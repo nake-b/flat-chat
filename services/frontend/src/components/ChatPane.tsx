@@ -7,6 +7,7 @@ import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolSta
 import { useAuth } from "../hooks/useAuth";
 import {
   STARTER_HEADLINES,
+  STARTER_INTROS,
   STARTER_PROMPTS,
   pickRandom,
   pickStratified,
@@ -29,6 +30,7 @@ export function ChatPane({
   // sampled from DISTINCT capability categories so the pills showcase different
   // things the app can do, not near-duplicates.
   const [starterHeadline] = useState(() => pickRandom(STARTER_HEADLINES));
+  const [starterIntro] = useState(() => pickRandom(STARTER_INTROS));
   const [starterPrompts] = useState(() => pickStratified(STARTER_PROMPTS, 3));
 
   // Send a starter/capabilities prompt as a real user turn via CopilotKit's
@@ -156,8 +158,7 @@ export function ChatPane({
           className="h-full"
           labels={{
             title: "",
-            initial:
-              "Hi. Tell me what you want — 2 rooms in Kreuzberg under €1200 with a balcony, or just describe the vibe. I'll find it. If you're still unsure, just ask me [what I can do](#capabilities).",
+            initial: starterIntro,
             placeholder: "Describe your apartment…",
           }}
         />

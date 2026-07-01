@@ -39,6 +39,16 @@ export const STARTER_HEADLINES = [
   "A few examples to try:",
 ] as const;
 
+// First assistant bubble (CopilotChat `labels.initial`) — rotated per empty
+// thread like the headline. Each MUST keep the `[what I can do](#capabilities)`
+// link (the click handler in ChatPane intercepts it) and reference only real
+// capabilities. Niche examples live in the prompt cards, not here.
+export const STARTER_INTROS = [
+  "Hi. Tell me what you want — 2 rooms in Kreuzberg under €1200 with a balcony, or just describe the vibe. I'll find it. If you're still unsure, just ask me [what I can do](#capabilities).",
+  "Hi. Tell me what you're after — 3 rooms in Neukölln under €1,400, say — and I'll put the matches on the map. Not sure where to start? Here's [what I can do](#capabilities).",
+  "Hey. Tell me whatever matters — a quiet 2-room near the U8, or anything inside the S-Bahn ring — and I'll pull it up. Curious first? [what I can do](#capabilities).",
+] as const;
+
 export const STARTER_PROMPTS: StarterPrompt[] = [
   // budget — price / size / amenities
   {

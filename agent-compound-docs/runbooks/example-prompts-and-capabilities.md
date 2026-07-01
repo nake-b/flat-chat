@@ -58,6 +58,10 @@ drops the hardcoded English keyword lists that were a maintenance liability.
 ## Capabilities Trigger UX
 
 ### Initial bubble link
+- The initial assistant bubble (`CopilotChat` `labels.initial`) rotates per empty
+  thread among `STARTER_INTROS` (`state/starterPrompts.ts`, picked via `pickRandom`
+  on mount — same lifecycle as the headline/cards). Every variant contains the
+  `#capabilities` link and references only real capabilities.
 - The initial assistant bubble contains markdown link text: `what I can do`.
 - A click handler intercepts `#capabilities` links inside assistant messages and auto-sends a capabilities prompt (`CAPABILITIES_PROMPT` in `ChatPane.tsx`).
 - The click sends a normal user turn through `POST /api/agent` — it is persisted in history and visible to the agent on later turns, same as any typed message.
