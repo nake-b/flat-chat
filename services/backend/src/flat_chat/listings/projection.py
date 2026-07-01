@@ -10,7 +10,12 @@ tweaks don't need a gold rebuild.
 from __future__ import annotations
 
 from .context import ListingCard
-from .labels import bucket_density, bucket_noise, walk_minutes
+from .labels import (
+    bucket_density,
+    bucket_noise,
+    primary_transit_line,
+    walk_minutes,
+)
 from .models import Listing, ListingGeoContext
 
 # Columns a card row must SELECT: the Listing entity + the chip scalars off
@@ -39,7 +44,9 @@ def row_to_listing_card(row, *, with_score: bool) -> ListingCard:
     mapping = row._mapping
 
     nearest_transit_lines = mapping.get("nearest_transit_lines")
-    nearest_transit_line = nearest_transit_lines[0] if nearest_transit_lines else None
+    # Prefer rail (U/S) over tram/bus rather than taking the array's first
+    # element — a stop serving both a bus and a U-Bahn should surface the U-Bahn.
+    nearest_transit_line = primary_transit_line(nearest_transit_lines)
     nearest_transit_m = mapping.get("nearest_transit_m")
     noise_lden = mapping.get("noise_total_lden")
     pph = mapping.get("persons_per_hectare")

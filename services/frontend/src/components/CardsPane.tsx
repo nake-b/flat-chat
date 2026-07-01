@@ -31,7 +31,13 @@ export function CardsPane() {
 
   return (
     <div className="h-full bg-paper">
-      {activeId ? <CardDetail apt={activeApt} /> : <CardStrip />}
+      {activeId ? (
+        // `key={activeId}` remounts per listing so the entrance animation
+        // (and a fresh scroll-to-top) replays each time a new card is opened.
+        <CardDetail key={activeId} apt={activeApt} />
+      ) : (
+        <CardStrip />
+      )}
     </div>
   );
 }

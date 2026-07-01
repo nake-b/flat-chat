@@ -20,6 +20,8 @@ This doc is the **audit trail for every numeric constant and label choice** used
 
 **Rule**: constants without a row in this doc are technical debt. Doc-first, code-second.
 
+**The LLM tool docs must match these constants.** The distance ladder / noise / greenery / density cutoffs are written out literally in the `search_apartments` docstring + phrase map (`chat/tools.py`). When you tune a constant here, update that prose too — `test_search_tool_docs_match_thresholds` reads these constants and asserts each appears in the right parameter description, so drift fails CI loudly.
+
 Each section has the chosen value, the original research/spec value that informed it, the source URL, and (where applicable) a "Berlin delta" column explaining why we adjusted from the canonical number.
 
 ---

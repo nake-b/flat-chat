@@ -82,9 +82,7 @@ class RoutingService:
         return _last_mile(markers, stops)
 
 
-def _last_mile(
-    markers: list[Marker], stops: list[ReachableStop]
-) -> dict[str, float]:
+def _last_mile(markers: list[Marker], stops: list[ReachableStop]) -> dict[str, float]:
     """Each listing's transit time = min over stops within walking range of
     (anchor→stop minutes + walk minutes). A cheap lat/lon bounding-box pre-filter
     keeps this fast (a few k stops × tens of listings) before the distance calc.

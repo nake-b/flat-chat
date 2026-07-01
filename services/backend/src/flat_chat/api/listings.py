@@ -13,11 +13,12 @@ same `ListingService` powers these routes and the agent's tools.
 Architecture-decision doc: `agent-compound-docs/decisions/agent-vs-http-data-flow.md`
 """
 
+import uuid
 from enum import StrEnum
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from flat_chat.core.dependencies import get_listing_service
+from flat_chat.core.dependencies import get_listing_service, valid_listing_id
 from flat_chat.listings.context import ListingCard, ListingDetail
 from flat_chat.listings.service import ListingService
 
@@ -70,8 +71,8 @@ async def list_listings(
 
 @router.get("/{listing_id}", response_model=ListingDetail)
 async def get_listing(
-    listing_id: str,
     response: Response,
+    listing_id: uuid.UUID = Depends(valid_listing_id),
     service: ListingService = Depends(get_listing_service),
 ) -> ListingDetail:
     """Return one listing's full tier-3 detail.

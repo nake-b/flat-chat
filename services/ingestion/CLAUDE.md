@@ -21,6 +21,9 @@ src/
     run.py              → `python -m silver.run` — chains gold + platinum at end
     transformer.py      → Dispatcher by source; UPSERT logic + `deduplicate`
                           (collapses reposted same-title+address flats) +
+                          `prune_stale` (drops listings scraped before the
+                          SILVER_MIN_SCRAPED_AT cutoff; `transform` also skips
+                          stale bronze so old flats never re-enter) +
                           geocoding pass that backfills NULL coordinates via
                           Nominatim (tail of `transform()`)
     sources/            → Per-source transformers (kleinanzeigen, wg_gesucht,
@@ -97,7 +100,7 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
 
 ## Chain triggers
 
-- `silver.run` → `transform` → `deduplicate` → `gold.run.main([])` → then
+- `silver.run` → `transform` → `prune_stale` → `deduplicate` → `gold.run.main([])` → then
   attempts `platinum.run.main([])` best-effort (skipped silently if
   `JINA_API_KEY` isn't set — semantic search degrades to recency, no fatal
   failure). **`transform` itself** ends with a best-effort geocoding pass
@@ -116,6 +119,15 @@ Decision doc: [`gold-platinum-layers.md`](../../agent-compound-docs/decisions/go
   delete (FK is `ON DELETE SET NULL`) and `transform` reprocesses all of bronze,
   so a one-off cleanup would be re-undone next run. See
   [`silver-deduplication.md`](../../agent-compound-docs/decisions/silver-deduplication.md).
+  `prune_stale` (in `transformer.py`) applies the **freshness cutoff**
+  (`SILVER_MIN_SCRAPED_AT`, default `2026-06-01`): a `DELETE FROM listings WHERE
+  scraped_at < cutoff` that drops stale "old flat" ads no longer on the market.
+  Same every-run rationale as dedup — `transform` *also* filters bronze to
+  `scraped_at >= cutoff` so stale rows never re-materialize, and `prune_stale`
+  clears any that predate the filter. It runs **before** dedup (so a still-listed
+  repost isn't lost when its stale original would be the survivor) and **before**
+  gold. Advance the cutoff to drop an older batch; bronze stays intact as the
+  archive.
 - `geo_context.run` → if any WFS/GTFS family succeeded, calls
   `gold.run.main([])`. Geo-context refreshes invalidate every listing's
   gold row, so the chain ensures fresh enrichment without manual

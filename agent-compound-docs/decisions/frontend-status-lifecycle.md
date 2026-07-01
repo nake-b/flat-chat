@@ -71,6 +71,72 @@ decisions that depend on a *type* or *lifecycle position* are made where that in
 lives (backend for the retry type; the phase hook for the run position), and the rendered
 copy stays dumb.
 
+## Tool finishes persist via the transcript (issue #22)
+
+A second symptom in the same family: within one turn the agent may run several
+`search_apartments` calls (search → 0 hits → broaden → search again), so the chat stacked a
+wall of identical "No apartments found…" pills.
+
+The principle is the same one this whole doc is about — **make the decision where the
+information lives** — applied to persistence: the message transcript is the single source of
+truth. A tool "finish" is a real tool-call result *message*; "Thinking" is an ephemeral
+phase indicator and is not a message. So finishes persist (and re-render on reload) for
+free, and Thinking does not.
+
+How it works:
+
+- **Render copy** stays in `state/toolStatus.ts` (the SSOT for pill text). The search finish
+  is `search_apartments.complete → formatSearchBreadcrumb(parseSearchCount(result))`. The
+  wildcard `useCopilotAction({name:"*"})` render shows it.
+- **Live and reload use the same render path.** On reload `ConversationRecovery` calls
+  `setMessages` with the FULL transcript (`GET /messages` → `AGUIAdapter.dump_messages`,
+  `by_alias` camelCase). CopilotKit's `useLazyToolRenderer` re-fires the wildcard render for
+  restored `toolCalls` + matching `role:"tool"` results — so the finish reappears with zero
+  extra frontend state.
+- **The "let-through" policy is the backend's, in both paths** (cf.
+  `ag-ui-tool-retry-suppression.md`): the live AG-UI event stream
+  (`chat/service.py:_FlatChatEventStream.transform_stream`) and the reload serializer
+  (`api/chat.py:_serialize_history`) each drop `reasoning`/`activity` (Thinking ephemeral) and
+  blank retry results (`error` set). A blanked tool result has empty content → the wildcard
+  render shows nothing.
+- **CopilotKit can't clear a pill.** Once a tool pill shows a result it can't be replaced or
+  cleared — a second `TOOL_CALL_RESULT` for the same `toolCallId` is ignored (verified in a
+  browser). So a single status line that *mutates* ("No apartments found" → Thinking →
+  "Searching") is impossible with the per-call pills; finishes only coexist. The collapse
+  works by HOLDING a search result and choosing whether to emit it empty or with content —
+  never by clearing one already shown.
+- **Live** (`transform_stream`): hold each search result; when the NEXT search starts, emit
+  the held (superseded) one EMPTY (its only result event → pill resolves to nothing, so no
+  lingering or doubled "Searching…"). Flush the held result WITH content at the answer text /
+  run end. Net: a silent broadening turn (0→0→48) shows ONE finish; a turn that narrates
+  between searches shows each result once, interleaved with its narration — never two
+  spinners.
+- **Reload** (`_serialize_history`): collapses to the LAST search finish per turn — the
+  settled summary. A narrated turn that showed 3→6→23 live restores as just "Found 23". Live
+  is the working narration; reload is the clean record.
+
+### What was rejected (and why it took a browser to learn)
+
+First attempt derived the count by scanning the assistant renderer's `messages` prop for the
+turn's last `search_apartments` result, surfaced via a zustand store + a custom
+`AssistantMessage` wrapper that froze counts by message id. Two things only a real browser
+revealed:
+- CopilotKit's react-ui **strips tool calls/results out of the `messages` prop** handed to
+  renderers — it carries only user/assistant TEXT. So the message-scan approach had no data.
+- Even when rendered, a bare child of `.copilotKitMessagesContainer` is force-hidden by
+  `> div:not(.copilotKitMessage){display:none!important}`.
+
+The store/wrapper also never survived reload (in-memory, populated only by the live tool
+render). All of it was deleted in favour of the transcript-SSOT approach above. The contract
+is pinned by `backend/tests/integration/test_conversations_api.py` (GET /messages includes
+tool calls/results, collapses multi-search, blanks retries, drops thinking) +
+`test_llm_context.py` (summary first-line shape) + `frontend/src/state/searchBreadcrumb.test.ts`
+(parser) + `toolStatus.test.ts` (finish copy).
+
+**Lesson:** for CopilotKit render integration, verify the runtime prop shape in a browser —
+the TypeScript types (`AssistantMessageProps.messages: Message[]`) advertised tool messages
+the runtime doesn't actually deliver to renderers.
+
 ## What was rejected
 
 - **Keying on a richer set of booleans inline in the pill.** That's what produced the bug —

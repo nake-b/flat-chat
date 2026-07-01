@@ -50,6 +50,9 @@ class ChatSession:
     message_history: list[ModelMessage] = field(default_factory=list)
     state: SessionState = field(default_factory=SessionState)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Mirrors `app.conversations.title`. Null until the background title-gen
+    # task fires once after the first completed turn (see `chat/service.py`).
+    title: str | None = None
 
 
 @dataclass

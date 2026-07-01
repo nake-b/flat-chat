@@ -12,10 +12,11 @@ src/flat_chat/
   core/                → DB engines (sync + async), config, observability, deps
   api/                 → HTTP routes — thin
                           auth.py     fastapi-users routers mounted under /api/auth
-                          chat.py     POST /api/conversations + GET messages + GET state
+                          chat.py     POST /api/conversations + GET list + DELETE /{id} + GET messages + GET state
                           agent.py    POST /api/agent (AG-UI SSE)
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
+                          bookmarks.py POST/DELETE /api/bookmarks/{listing_id} + GET /api/bookmarks(/ids)
   chat/                → Agent orchestration domain
                           agent.py        Agent(capabilities=[CoreCapability(),
                                           MapOverlayCapability(), LensCapability()], instructions=...)
@@ -36,7 +37,11 @@ src/flat_chat/
                           models.py       app.* ORMs: Conversation, Message, SessionStateRow
                           sessions.py     SessionStore Protocol + InMemory + DbSessionStore
                           service.py      ChatService — dispatches AG-UI run, history-authoritative
-                          providers/      Provider dispatch (Anthropic / Azure)
+                          title_gen.py    TitleGenerationService(model) + pure title helpers
+                                          (fired as a background task after the first turn)
+                          providers/      Provider dispatch (Anthropic / Azure) — one
+                                          parameterized builder per provider serves both
+                                          chat + title (build_chat_model / build_title_model)
   users/               → Identity domain (app.* owned).
                           models.py       User ORM (fastapi-users columns)
                           auth.py         fastapi-users wiring (UserManager,
@@ -70,6 +75,9 @@ src/flat_chat/
                           labels.py       bucket_*, walk_minutes, encode_modes, ...
                           thresholds.py   Single source of truth for numeric constants
                           service.py      ListingService — async get_detail(id) / get_cards(ids)
+                          bookmarks/      Bookmark subpackage (app schema)
+                                          models.py   Bookmark ORM (composite PK, CASCADE FKs)
+                                          service.py  BookmarkService — add/remove/list_ids/list_cards
 ```
 
 ## Layering rules
@@ -246,6 +254,13 @@ them for result-time label application (`noise_total_lden=58` → `"lively"`).
 Both directions share the same numbers. A threshold tweak is one place
 to edit; no gold rebuild needed.
 
+The same numbers also reach the **LLM**: the `search_apartments`
+docstring + phrase map (`chat/tools.py`) write the distance ladder /
+noise / greenery / density cutoffs out literally. They must match the
+constants — `test_search_tool_docs_match_thresholds` reads
+`thresholds.py` and asserts each value appears in the right parameter
+description, so tuning a constant without updating the prose fails CI.
+
 Each constant traces to a row in
 [`geo-context-thresholds.md`](../../agent-compound-docs/decisions/geo-context-thresholds.md).
 
@@ -258,7 +273,9 @@ cd services/backend && alembic upgrade head    # Apply APP-schema migrations
 
 > **Schema ownership.** The backend's Alembic owns the `app` schema
 > (`users` / `conversations` / `messages` / `session_state` as of
-> `0001_app_users_sessions`; `bookmarks` planned). The
+> `0001_app_users_sessions`; `bookmarks` as of `0002_app_bookmarks` — composite
+> PK `(user_id, listing_id)`, CASCADE on both FKs including the cross-schema
+> one to `world.listings.id`). The
 > medallion + geo-context tables the backend READS live in the `world` schema,
 > owned and migrated by the **ingestion** service; the backend's ORM
 > (`listings/models.py`) carries `{"schema": "world"}` and a drift test
@@ -310,9 +327,14 @@ When adding a new search filter, add a test in the same change.
   placeholder). Logto is the
   documented future migration; Authlib (social) deferred. See
   [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
-- Bookmarks not implemented; slot ready (`listings/bookmarks_service.py`
-  + `api/bookmarks.py` following the same pattern as listings). Decision: a
-  per-user join table with a plain `listing_id` reference (see session-persistence.md).
+- Bookmarks shipped — per-user saved listings via the `listings/bookmarks/`
+  subpackage (`models.py` + `service.py`) + `api/bookmarks.py`. HTTP-only
+  (idempotent POST/DELETE, GET /ids for fast star hydration, GET / for tier-2
+  cards). Malformed `{listing_id}` → 422 via the shared `valid_listing_id`
+  dependency (also applied to `GET /api/listings/{id}`). Migration
+  `0002_app_bookmarks` carries the
+  composite-PK join table with CASCADE on both FKs (including the cross-schema FK
+  to `world.listings.id`, so a delisting sweeps any bookmarks pointing at it).
 - Refinement cache deferred (see `session-state-design.md` — if
   refinement becomes slow, integrate pandas into `SessionState` and add
   `state.refine(params)` for in-memory filtering).

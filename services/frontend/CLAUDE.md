@@ -15,12 +15,14 @@ src/
     SessionState.ts       → CANONICAL TypeScript mirror of backend Pydantic SessionState
     UiState.ts            → Compat re-export of SessionState (existing imports keep working)
     conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
-    toolStatus.ts         → Tool-name → status-pill label registry
+    toolStatus.ts         → Tool-name → status-pill label registry (the render-copy SSOT)
+    searchBreadcrumb.ts   → Pure: parse search count → "Found N apartments" finish copy
     overlayStyles.ts      → Map-overlay APPEARANCE registry: (kind, geometry type) → paint
                             (frontend owns colors/opacity; backend sends semantics only).
                             Also owns the motion constants: breathing area overlays,
                             transit station dots + pulsing aura, BVG line-badge palette
     cardCache.ts          → zustand store of lazily-hydrated tier-2 ListingCards (by id)
+    useBookmarks.ts       → zustand store: per-user bookmarked listing ids (optimistic toggle)
   hooks/
     useSessionState.ts    → CANONICAL. useCoAgent<SessionState> + activate() + dismissOverlay()
     useUiState.ts         → Compat re-export of useSessionState
@@ -28,11 +30,26 @@ src/
   api/
     session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
-    ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
-    ChatPane.tsx, MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
+    ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages, FULL AG-UI transcript incl. tool calls/results)
+    ConversationSidebar.tsx → slide-out left panel: + New chat + list of previous conversations
+    ConversationSidebarItem.tsx → single sidebar row (title + relative timestamp + active highlight)
+    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + rich landscape detail rows (bigger than result cards; click to pan + open detail)
+    BookmarkHeart.tsx → clickable heart button (red-filled when bookmarked, outline otherwise); heart matches property-search convention (see bookmark-affordance.md)
+    AccountMenu.tsx → header account dropdown (email · Settings(soon) · Sign out); Escape + outside-click close, role=menu
+    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — + new chat + ☰ conversations + home-with-heart bookmarks + AccountMenu; takes onNewChat prop; renders capability-tagged starter cards while the thread is empty + an AssistantLink markdown renderer for the #capabilities link),
+                            MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
                             pins: breathing fills, transit station dots + line badges, via one
                             prefers-reduced-motion-gated rAF loop), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
     OverlayLegend.tsx     → chips for drawn map_overlays, each with × dismiss
+  hooks/
+    useConversationList.ts → fetch + refetch-on-turn-end for the conversation sidebar list
+    useSidebarOpen.ts → zustand store: open/closed state of the conversation sidebar
+    useBookmarkSidebarOpen.ts → zustand store: open/closed state of the bookmark sidebar
+    useBookmarkList.ts → fetch tier-2 cards for the bookmark sidebar rows
+  api/
+    bookmarks.ts → list/add/remove for /api/bookmarks (plain fetch, typed)
+  utils/
+    relativeTime.ts → "12:04 PM" / "Yesterday" / "3 days ago" / "Jun 12" formatter
 ```
 
 ## Reload recovery + New conversation
@@ -50,6 +67,83 @@ typed, and works WITHOUT a publicApiKey (the public `useCopilotChat` omits it).
 a clean remount (fresh state + empty chat). The backend is history-authoritative,
 so the agent keeps context on resume even if the transcript restore is skipped.
 See [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+
+## Bookmark panel (and bookmark mode)
+
+`BookmarkSidebar.tsx` is a **full-cover panel that replaces the chat column**,
+not a thin slide-out. It's rendered INSIDE the chat-column `<aside>` in
+`App.tsx` (the `<aside>` is `relative`), so the panel is `absolute inset-0`,
+opaque (`bg-paper`), and covers ONLY the chat — there is **no backdrop** and
+nothing else on screen is dimmed. Always mounted; `data-open` drives the
+slide transform so close also animates. `ChatPane` stays mounted underneath
+(CopilotChat streaming/scroll survive). Esc and the panel's own `×` close it
+(the chat-header toggle button is hidden beneath the panel while open).
+Mutual exclusion with the conversation sidebar is wired in `App.tsx` via two
+`useEffect`s — opening one closes the other (avoids a circular zustand-import).
+
+The panel is a browsing surface: a **search box** filters rows client-side by
+title (falling back to district/bezirk/address so null-title listings are
+still findable) — rows-only, the map keeps all bookmarked pins. Each row
+(`BookmarkSidebarItem.tsx`) is a **rich landscape detail row — deliberately more
+detailed than the compact result cards**: large thumbnail, title, address, a
+price block (warm + cold/Nebenkosten), a rooms·bedrooms·m² meta line, a
+`min walk` transit line, and a generous chip row (park/noise/density/ring/floor/
+amenities/availability). See `agent-compound-docs/decisions/bookmark-affordance.md`.
+Clicking anywhere on the row calls
+`onSelect(id)` → `activate(id)` (`useSessionState`), which pans the (visible,
+right-column) map via MapPane's `easeTo` effect and opens the detail panel; the
+panel stays open so the user keeps browsing. The row's remove heart opens the
+shared `ConfirmDialog` ("Remove bookmark?") — the panel tracks a
+`pendingRemoveId` and only calls `onRemove` on confirm (same pattern as the
+conversation sidebar's delete). While the dialog is open the panel yields
+Escape to it (cancel) instead of closing.
+
+While the panel is open the layout enters **bookmark mode**, with the
+right-column heights (`App.tsx` `mapPct`/`stripPct`) driven by `bookmarkOpen`
++ `active_id`:
+- nothing selected → map `100` / cards `0` (strip collapsed, map fills the
+  column showing only bookmarked pins);
+- a bookmark row clicked → map `55` / cards `45`, so the bottom panel **rises**
+  to show that listing's `CardDetail` (images + full detail) while the map
+  stays large enough to show the panned-to pin.
+`transition-[height]` animates the reveal; the detail content additionally
+plays an `animate-detail-rise` entrance (keyframe in `tailwind.config.js`),
+re-triggered per listing via a `key={activeId}` remount of `CardDetail` in
+`CardsPane`. Clicking a row → `activate(id)` sets `active_id` (→ the height
+shift + the map's `easeTo` pan) and fetches tier-3 detail; the detail's
+"← back" / Esc calls `activate(null)`, collapsing the panel again.
+
+The map's `ApartmentLayer` reads `useBookmarkSidebarOpen.open` and substitutes
+its marker source — `bookmarkCards` (from `useBookmarkList`) instead of
+`state.result_markers` — so only bookmarked pins render. The existing fade +
+camera reframe (keyed off `markersSig`) gives a free cross-fade and re-fit.
+Closing the panel restores `result_markers` and the card strip.
+
+The header utility-bar button that opens the panel (`ChatPane.tsx`) is a
+**house outline with a red heart inside** (the house follows `currentColor` for
+hover; the heart fill is fixed Berliner Rot). Per-listing save controls are red
+hearts (`BookmarkHeart.tsx`) — heart over star matches property-search
+convention; see `agent-compound-docs/decisions/bookmark-affordance.md`.
+
+Per-user bookmark state lives OUTSIDE `SessionState` (which is
+per-conversation) in `useBookmarks` — a zustand `Set<string>` hydrated once
+on app mount from `GET /api/bookmarks/ids`. Toggles are optimistic; failures
+roll back and refetch. Every visible star (card + detail header + sidebar
+remove icon) subscribes to the same store so a toggle anywhere flips every
+star with that id.
+
+## Conversation sidebar
+
+`ConversationSidebar.tsx` is a slide-out left panel housing the "+ New chat"
+button (relocated from `ChatPane.tsx`) and a list of the user's previous
+conversations. It hydrates from `GET /api/conversations` on mount and refetches
+whenever `useAgentPhase()` transitions back to `idle` (a turn just finished →
+persistence has run → the list may have grown / titles may have arrived).
+Clicking a row goes through the same `setResumed(true)` + `setConversationId(...)`
+flow as page-reload recovery, so `ConversationRecovery` hydrates state +
+messages via plain HTTP. Open/closed state is a zustand singleton
+(`useSidebarOpen`) so the hamburger in `ChatPane`, the panel, and the backdrop
+each subscribe without prop-drilling.
 
 ## The data-flow split (frontend perspective)
 
@@ -118,6 +212,43 @@ See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/fronten
 Adding a new backend tool: register a label in `toolStatus.ts` and a
 `useCopilotAction` handler. Zero backend churn — tools stay pure data
 mutators.
+
+**Tool finishes persist because the transcript is the SSOT** (issue #22).
+A tool "finish" (e.g. "Found 12 apartments", "Opened listing #k") is a real
+tool-call result message, not a side-channel. It renders via the wildcard
+`useCopilotAction` render both live AND on reload — on reload CopilotKit's
+`useLazyToolRenderer` re-fires the same render for restored `toolCalls` +
+`role:"tool"` results. So nothing special persists the breadcrumb; the message
+does. "Thinking" is NOT a message (it's the ephemeral phase pill) and is not
+saved. See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/frontend-status-lifecycle.md).
+
+- The search finish copy lives in `toolStatus.ts`:
+  `search_apartments.complete` → `formatSearchBreadcrumb(parseSearchCount(result))`
+  (the summary's first line). Same render path live + reload.
+- Reload restores the full transcript: `GET /messages` returns
+  `AGUIAdapter.dump_messages(history)` (`by_alias` camelCase), and
+  `ConversationRecovery` passes it to `setMessages` unmodified.
+- "Let-through" policy lives on the BACKEND (`chat/service.py:
+  _FlatChatEventStream` live + `api/chat.py:_serialize_history` on reload): both
+  drop `reasoning`/`activity` (Thinking ephemeral) and blank retry results.
+  - **CopilotKit constraint:** a tool pill, once it shows a result, cannot be
+    cleared or replaced (a second result event for the same `toolCallId` is
+    ignored — verified in a browser). So a single status line that *mutates*
+    ("No apartments found" → Thinking → "Searching") is NOT achievable with the
+    per-call pills; finishes can only coexist.
+  - **Live** (`transform_stream`): to avoid a stack we HOLD each search result;
+    when the NEXT search starts, the held (superseded) one is completed EMPTY
+    (its only result event), so its pill resolves to nothing — never two
+    "Searching…" at once, no lingering spinner. A held search is flushed WITH
+    content at the answer text / run end. Net: a silently-broadening turn
+    (0 → 0 → 48, no narration) shows ONE finish; a turn that NARRATES between
+    searches shows each result once, interleaved with its narration (the
+    progression the user asked to see), never overlapping spinners.
+  - **Reload** (`_serialize_history`): collapses to the LAST search finish per
+    turn — a clean settled summary. So a narrated turn that showed 3 → 6 → 23
+    live restores as just "Found 23 apartments".
+- The summary first-line contract is pinned by `backend/tests/unit/
+  test_llm_context.py::test_summary_first_line_is_frontend_breadcrumb_parseable`.
 
 Because the wildcard pill echoes the tool `result`, a tool **retry/
 validation error** would otherwise print its raw error text. That's

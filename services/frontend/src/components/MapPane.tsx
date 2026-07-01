@@ -1,4 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useBookmarkList } from "../hooks/useBookmarkList";
+import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import {
   Map as MapLibreMap,
   Source,
@@ -914,13 +917,35 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
   // first-paint/hydration window before the mirror effect runs.
   const activeId = clientActiveId ?? state?.active_id ?? null;
 
+  // Bookmark mode swaps the marker source: while the bookmark sidebar is open,
+  // we plot ONLY bookmarked listings (their lat/lng come from the same
+  // `GET /api/bookmarks` cards the sidebar renders). The existing fade + camera
+  // reframe effect — keyed off `markersSig` below — gives a free cross-fade
+  // and re-fit when the source flips. `useBookmarkList` is cheap when the
+  // sidebar is closed (no fetch, items stay at their last value).
+  const bookmarkOpen = useBookmarkSidebarOpen((s) => s.open);
+  const { items: bookmarkCards } = useBookmarkList();
+
   // The decoded result set — the single source for the geojson, the id→coord
   // lookup, and the result-set fingerprint below. (decodeMarkers is cheap, but
   // doing it once keeps the three derivations in lockstep.)
-  const markers = useMemo(
-    () => decodeMarkers(state?.result_markers),
-    [state?.result_markers],
-  );
+  const markers = useMemo(() => {
+    if (bookmarkOpen) {
+      return bookmarkCards
+        .filter((c) => c.lat != null && c.lng != null)
+        .map((c) => ({
+          id: c.id,
+          lat: c.lat as number,
+          lng: c.lng as number,
+          price_warm_eur: c.price_warm_eur,
+          // Bookmark markers carry no active-lens scalar — the lens applies to
+          // the search result set, not the saved list. `null` keeps the shape a
+          // MarkerPoint so lens-aware consumers (pins/clusters) type-check.
+          lens_value: null,
+        }));
+    }
+    return decodeMarkers(state?.result_markers);
+  }, [bookmarkOpen, bookmarkCards, state?.result_markers]);
 
   // Cheap, stable fingerprint of the result set: length + first/last id. A new
   // search yields a different signature; the same set echoed across turns keeps

@@ -19,6 +19,38 @@ from flat_chat.chat.prompts import TOOL_BACKBONE
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools import CoreCapability
 
+# Reference summary of the assistant's current capabilities. Kept as
+# implicit string concatenation (not a triple-quoted block) so each source
+# line stays within the 88-char lint limit while the runtime text — the exact
+# bullet list the LLM adapts from — is unchanged. `_capabilities_block()` feeds
+# this to the model as guidance, NOT verbatim output (see that function).
+CAPABILITIES_AT_THE_MOMENT_REPLY = (
+    "Right now, I can help you search Berlin apartments and refine results "
+    "step by step using both listing details and the geo-context data.\n"
+    "\n"
+    "What I can do at the moment:\n"
+    "- Search and filter listings by rent, rooms, size, district/Ortsteil, "
+    "amenities, availability, and text preferences.\n"
+    "- Find apartments near specific places (for example lakes, parks, "
+    "campuses, hospitals, schools, kitas, landmarks) and show them on the "
+    "map.\n"
+    "- Filter by transit access using stops, modes, and lines (U-Bahn, "
+    "S-Bahn, tram, bus, ferry, regional/mainline where available in current "
+    "data).\n"
+    "- Use neighbourhood context currently available in the database: parks, "
+    "playgrounds, water, schools, kitas, hospitals, landmarks, disabled "
+    "parking, noise, greenery, population density, and admin areas "
+    "(Bezirk/Ortsteil), plus inside/outside S-Bahn ring context.\n"
+    "- Open and compare listing details with contextual highlights (for "
+    "example transit, family-friendliness, greenery, quietness).\n"
+    "- Draw and clear map overlays (places and transit lines) without "
+    "changing filters.\n"
+    "\n"
+    "Important: this reflects what is available at the moment in your current "
+    "database snapshot. If data is missing or outdated, I will still try to "
+    "answer and clearly tell you where coverage is limited."
+)
+
 
 def _role_block() -> str:
     return xml_block(
@@ -88,6 +120,48 @@ def _city_center_block() -> str:
     )
 
 
+def _capabilities_block() -> str:
+    return xml_block(
+        "capabilities_reply_policy",
+        "When the user asks what you can do — either a GENERAL/OPEN question\n"
+        '("what can you do", "what skills do you have", "what do you know") or a\n'
+        'SCOPED one ("which data can you access", "can you filter by transit") —\n'
+        "use the reference summary below as your source of truth for what is\n"
+        "actually available right now. Do NOT invent capabilities beyond it.\n\n"
+        "Adapt the summary to the question: for an open question, cover the whole\n"
+        "picture; for a scoped question, lead with and focus on the relevant part\n"
+        "(e.g. just the geo-context data for a data-access question) and drop the\n"
+        "rest. Keep the honest caveat about the current database snapshot. You may\n"
+        "reword for concision and a natural tone — do not pad it out.\n\n"
+        "Reference summary of current capabilities:\n\n"
+        f"{CAPABILITIES_AT_THE_MOMENT_REPLY}\n\n"
+        "If the user asks about a SPECIFIC feature or concrete operation, answer the\n"
+        "specific question directly instead of reciting the summary.",
+    )
+
+
+def _semantic_fallback_block() -> str:
+    return xml_block(
+        "semantic_fallback_policy",
+        "Some requests describe an attribute we have NO structured filter for —\n"
+        '"dog-friendly", "student-friendly", "arty", "good for parties", "loft\n'
+        'vibe", and similar. There is no boolean/field to match these. The only\n'
+        "tool that engages them is the free-text `query` argument of\n"
+        "`search_apartments`, which ranks results by semantic similarity to the\n"
+        "user's words (it does NOT hard-filter — a result may rank high without\n"
+        "truly having the attribute).\n\n"
+        "So when you put such a wish into `query`, be honest in ONE short sentence:\n"
+        "tell the user you cannot filter by that attribute directly and that you\n"
+        "instead ranked the matches by how closely they fit their words, so they\n"
+        "should double-check the listing text. Do NOT claim the results are\n"
+        "guaranteed to have the attribute. Example: \"I can't filter for\n"
+        "'dog-friendly' directly, so I ranked these by how well their descriptions\n"
+        'match that — worth checking each listing." Structured filters (price,\n'
+        "rooms, district, transit, near a place, quiet, greenery, etc.) need no\n"
+        "such caveat.",
+    )
+
+
 # Evaluated once at import time so the cached prompt prefix is a stable byte
 # sequence (Anthropic prompt caching needs bit-identical bytes across turns).
 # The `_*_block()` helpers MUST stay pure — no settings reads, no env vars, no
@@ -101,6 +175,8 @@ INSTRUCTIONS = "\n\n".join(
         _user_references_block(),
         _honesty_block(),
         _city_center_block(),
+        _capabilities_block(),
+        _semantic_fallback_block(),
         # Cross-capability tool invariants (one result set, 1-based indices, the
         # place_ref flow). Lives here — not on a single toolset — because it spans
         # Core / MapOverlay / Lens; each capability's own protocol then describes

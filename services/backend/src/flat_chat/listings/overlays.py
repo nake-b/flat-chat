@@ -57,6 +57,17 @@ OVERLAY_CLUSTER_RADIUS_M = 500
 # back to the point itself if nothing solid is within range. Metres.
 OVERLAY_SNAP_RADIUS_M = 150
 
+# A transit line's served stations are matched by `lines_served` membership, but
+# that array is aggregated over EVERY trip pattern of the line while the drawn
+# overlay is one representative shape per direction. To keep the drawn dots
+# consistent with the drawn spine, we additionally require a station to lie
+# within this radius of the resolved line geometry — dropping off-shape
+# variant-pattern stops and cross-region duplicates of an ambiguous line number.
+# 250 m absorbs the station-node→centerline offset at big interchanges
+# (Hauptbahnhof / Alexanderplatz span >150 m) while still excluding stops that
+# sit on entirely different streets. Metres.
+OVERLAY_STATION_SNAP_M = 250
+
 
 class OverlayPoint(BaseModel):
     """A labelled point that decorates an overlay — e.g. a transit line's

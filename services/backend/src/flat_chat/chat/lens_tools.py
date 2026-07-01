@@ -301,11 +301,7 @@ async def apply_travel_time_lens(
     # into the last covered day and flagged it — tell the user the schedule's age.
     lens = state.active_lens
     stale_note = ""
-    if (
-        isinstance(lens, TravelTimeLens)
-        and lens.schedule_stale
-        and lens.schedule_as_of
-    ):
+    if isinstance(lens, TravelTimeLens) and lens.schedule_stale and lens.schedule_as_of:
         stale_note = (
             f" Note: the transit timetable data only runs through "
             f"{lens.schedule_as_of}, so these times reflect that day's schedule."

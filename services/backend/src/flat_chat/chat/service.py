@@ -1,21 +1,31 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from ag_ui.core import BaseEvent, EventType, ToolCallResultEvent
+from ag_ui.core import (
+    BaseEvent,
+    EventType,
+    RunFinishedEvent,
+    TextMessageStartEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
 from pydantic import ValidationError
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
 from starlette.responses import Response
 
 from flat_chat.chat.agent import agent
-from flat_chat.chat.providers import build_chat_model
+from flat_chat.chat.providers import build_chat_model, build_title_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
+from flat_chat.chat.title_gen import TitleGenerationService, is_first_completed_turn
+from flat_chat.chat.tools import SEARCH_TOOL_NAME
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
@@ -31,6 +41,12 @@ except ImportError:  # pragma: no cover — observability is optional
 
 logger = logging.getLogger(__name__)
 
+# Strong references to fire-and-forget background tasks (title generation).
+# `asyncio.create_task` returns a task the event loop only weakly references, so
+# without holding it here the task can be garbage-collected mid-execution. Each
+# task removes itself via `add_done_callback(_background_tasks.discard)`.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 class InvalidAgentRequestError(Exception):
     """The AG-UI request envelope failed validation."""
@@ -40,28 +56,32 @@ class LlmProviderUnavailableError(Exception):
     """No LLM provider is configured / could be built for this run."""
 
 
-class _QuietRetryEventStream(AGUIEventStream[ChatDeps, str]):
-    """AG-UI event stream that hides tool-retry / validation errors from the UI.
+class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
+    """AG-UI event stream that shapes which tool "finishes" reach the UI.
 
-    When the LLM emits invalid tool args (or a tool raises ModelRetry), Pydantic
-    AI builds a `RetryPromptPart` and the stock `AGUIEventStream._handle_tool_result`
-    unconditionally streams its `model_response()` — the raw "N validation errors…
-    Fix the errors and try again." dump — as the tool-call result content. Our
-    wildcard status pill echoes that content, so the error leaks into the chat.
+    Two transformations, both expressing the same rule the reload path applies in
+    `api/chat.py:_serialize_history` — so what's on screen live and what comes back
+    after a refresh match:
 
-    The agent retries the call (a *new* tool_call_id) and usually succeeds, so the
-    failure is a transient internal correction the user should never see. We can
-    only tell a retry from a real result by *type* (`RetryPromptPart`), and that
-    type survives only here on the backend — the frontend receives a flat content
-    string with no error flag. So we make the decision here: emit an EMPTY-content
-    result for a retry (the frontend renders nothing for an empty result) and let
-    real `ToolReturnPart` results flow through untouched.
+    1. **Retry suppression** (`_handle_tool_result`): a `RetryPromptPart` (invalid
+       tool args / `ModelRetry`) would otherwise stream its raw "N validation
+       errors…" dump as the tool result, which the wildcard status pill echoes.
+       The agent retries with a new tool_call_id and usually succeeds, so the
+       failure is an internal correction the user should never see. We emit an
+       EMPTY-content result (renders nothing, lifecycle still completes — no stuck
+       pill). The decision is by *type*, which only survives here on the backend.
+       See `agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md`.
 
-    Empty content rather than dropping the event entirely keeps CopilotKit's tool
-    lifecycle intact (the call still completes → no stuck/pulsing pill).
-
-    Full rationale + why this isn't fixable upstream:
-    `agent-compound-docs/decisions/ag-ui-tool-retry-suppression.md`.
+    2. **Search-finish collapse** (`transform_stream`): within one turn the agent
+       may run several `search_apartments` calls (search → 0 → broaden → search
+       again). Each result's pill, once shown, can't be cleared by CopilotKit, so
+       to avoid a stack we HOLD a search's result instead of emitting it
+       immediately. When the NEXT search starts, the held (now superseded) result
+       is completed EMPTY — its first-and-only result event, so its pill resolves
+       to nothing (no lingering "Searching…", no two "Searching…" at once). The
+       turn's LAST held search is flushed WITH content at the answer text / run
+       end, so exactly one finish ("Found N" / "No apartments found") survives per
+       turn. The reload path (`api/chat.py`) collapses identically.
     """
 
     async def _handle_tool_result(
@@ -79,12 +99,62 @@ class _QuietRetryEventStream(AGUIEventStream[ChatDeps, str]):
         async for event in super()._handle_tool_result(result):
             yield event
 
+    async def transform_stream(
+        self, stream, on_complete=None
+    ) -> AsyncIterator[BaseEvent]:  # type: ignore[override]
+        search_call_ids: set[str] = set()
+        pending: ToolCallResultEvent | None = (
+            None  # held search result, not yet emitted
+        )
+
+        def _blank(ev: ToolCallResultEvent) -> ToolCallResultEvent:
+            return ToolCallResultEvent(
+                message_id=ev.message_id,
+                type=EventType.TOOL_CALL_RESULT,
+                role="tool",
+                tool_call_id=ev.tool_call_id,
+                content="",
+            )
+
+        async for event in super().transform_stream(stream, on_complete):
+            if isinstance(event, ToolCallStartEvent):
+                if event.tool_call_name == SEARCH_TOOL_NAME:
+                    search_call_ids.add(event.tool_call_id)
+                    # New search supersedes the held one → resolve its pill to
+                    # empty BEFORE this search's "Searching…" shows, so they never
+                    # stack.
+                    if pending is not None:
+                        yield _blank(pending)
+                        pending = None
+                yield event
+                continue
+
+            if (
+                isinstance(event, ToolCallResultEvent)
+                and event.tool_call_id in search_call_ids
+            ):
+                pending = event  # hold (don't emit yet)
+                continue
+
+            # Answer text begins / run ends → the held search was the turn's last;
+            # emit its finish with content (anchored to its call).
+            if pending is not None and isinstance(
+                event, (TextMessageStartEvent, RunFinishedEvent)
+            ):
+                yield pending
+                pending = None
+
+            yield event
+
+        if pending is not None:  # safety net
+            yield pending
+
 
 class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
-    """AG-UI adapter wired to use the retry-suppressing event stream."""
+    """AG-UI adapter wired to use the finish-shaping event stream."""
 
-    def build_event_stream(self) -> _QuietRetryEventStream:
-        return _QuietRetryEventStream(
+    def build_event_stream(self) -> _FlatChatEventStream:
+        return _FlatChatEventStream(
             self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version
         )
 
@@ -219,6 +289,25 @@ class ChatService:
             await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
 
+            # Fire-and-forget title generation on the FIRST completed turn,
+            # after persistence has returned. Background-task isolation keeps
+            # a cosmetic LLM call off the user-visible critical path; a title
+            # failure leaves the row with `title=NULL`, the list endpoint
+            # returns null, and the frontend renders "Untitled".
+            if session.title is None and is_first_completed_turn(
+                session.message_history
+            ):
+                task = asyncio.create_task(
+                    _generate_and_persist_title(
+                        self.store, session.id, session.message_history
+                    )
+                )
+                # Hold a strong reference until the task finishes — the loop
+                # only weakly references it, so without this it could be GC'd
+                # mid-run and the conversation would stay "Untitled".
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+
         try:
             model = build_chat_model()
         except RuntimeError as exc:
@@ -274,6 +363,39 @@ def _extract_incoming_state(adapter) -> SessionState | None:
     except Exception as exc:  # pragma: no cover — defensive logging
         logger.warning("Could not parse incoming state from envelope: %s", exc)
     return None
+
+
+async def _generate_and_persist_title(
+    store: SessionStore,
+    session_id: str,
+    history: list[ModelMessage],
+) -> None:
+    """Background task: generate a title from the first turn, persist if NULL.
+
+    Catches all exceptions — the title is cosmetic and a failure here must
+    never propagate into the user's request loop. `asyncio.create_task` runs
+    the coroutine in a COPY of the current context, so the `session_id`
+    ContextVar bound in `dispatch_agent_request` DOES propagate (a snapshot
+    taken at task-creation time) and the SQL hook in `core/database.py` tags
+    this task's statements with the same session. Either way it reads via
+    `.get("")`, so a missing value would just omit the SQL comment — no error.
+    """
+    try:
+        try:
+            model = build_title_model()
+        except RuntimeError as exc:
+            logger.warning("Title model unavailable: %s", exc)
+            return
+        title = await TitleGenerationService(model).generate(history)
+        if title is None:
+            return
+        updated = await store.set_title_if_unset(session_id, title)
+        if updated:
+            logger.info(
+                "Conversation title set: session=%s title=%r", session_id, title
+            )
+    except Exception:
+        logger.exception("Background title generation failed for %s", session_id)
 
 
 # Fields the FRONTEND owns — the only ones an incoming envelope may change.

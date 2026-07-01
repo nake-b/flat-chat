@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
 import time
@@ -26,6 +27,27 @@ from .upsert import conflict_update_set
 
 logger = logging.getLogger(__name__)
 
+# Freshness cutoff. Listings scraped before this date are treated as stale —
+# gone from the market — and are neither materialized into silver nor kept in
+# the listings table. Configurable via SILVER_MIN_SCRAPED_AT (ISO date).
+#
+# This MUST be enforced on EVERY silver run, not as a one-off DELETE: bronze
+# `raw_listings` rows survive a silver delete and `transform` reprocesses all of
+# bronze, so a manual cleanup of old flats is silently undone on the next run.
+# Durability comes from two coordinated halves, both keyed on this cutoff:
+#   1. `transform` skips bronze rows older than the cutoff (never re-introduced)
+#   2. `prune_stale` drops listings rows older than the cutoff (clears any that
+#      predate the filter, e.g. from a run before this existed)
+# Advance the cutoff to drop an older batch; bronze stays intact as the archive.
+_DEFAULT_MIN_SCRAPED_AT = "2026-06-01"
+
+
+def _min_scraped_at() -> dt.date:
+    """The freshness cutoff as a date. Env override: SILVER_MIN_SCRAPED_AT."""
+    raw = os.environ.get("SILVER_MIN_SCRAPED_AT", _DEFAULT_MIN_SCRAPED_AT).strip()
+    return dt.date.fromisoformat(raw)
+
+
 _TRANSFORMERS = {
     "wg-gesucht": wg_gesucht.to_listing_row,
     "kleinanzeigen": kleinanzeigen.to_listing_row,
@@ -42,7 +64,15 @@ def transform(session: Session) -> int:
     raw_listings = get_table("raw_listings")
     listings = get_table("listings")
 
-    rows = session.execute(select(raw_listings)).mappings().all()
+    # Skip stale bronze (scraped before the freshness cutoff) so old flats are
+    # never re-materialized into silver. The matching `prune_stale` step clears
+    # any stale rows already in `listings`. See `_min_scraped_at`.
+    cutoff = _min_scraped_at()
+    rows = (
+        session.execute(select(raw_listings).where(raw_listings.c.scraped_at >= cutoff))
+        .mappings()
+        .all()
+    )
 
     count = 0
     skipped: dict[str, int] = {}
@@ -161,6 +191,28 @@ def deduplicate(session: Session) -> int:
     Returns the number of rows deleted. Idempotent — a second call deletes 0.
     """
     result = session.execute(_DEDUP_SQL)
+    session.commit()
+    return result.rowcount
+
+
+# Drop listings older than the freshness cutoff (see `_min_scraped_at`). A flat
+# not re-seen since the cutoff is treated as gone from the market. Runs every
+# silver.run AFTER `transform` and BEFORE `deduplicate` — pruning first means a
+# still-listed June repost is never lost to dedup because its stale May original
+# happened to be the survivor — and BEFORE gold so stale rows are never
+# enriched. Pairs with the cutoff filter in `transform` (which stops stale
+# bronze from re-materializing); this half clears rows that predate the filter.
+_PRUNE_STALE_SQL = text("DELETE FROM listings WHERE scraped_at < :cutoff")
+
+
+def prune_stale(session: Session, cutoff: dt.date | None = None) -> int:
+    """Delete listings scraped before the freshness cutoff. Returns rows deleted.
+
+    Idempotent — a second call with the same cutoff deletes 0. ``cutoff`` is
+    injectable for tests; production passes None to read SILVER_MIN_SCRAPED_AT.
+    """
+    cutoff = cutoff or _min_scraped_at()
+    result = session.execute(_PRUNE_STALE_SQL, {"cutoff": cutoff})
     session.commit()
     return result.rowcount
 

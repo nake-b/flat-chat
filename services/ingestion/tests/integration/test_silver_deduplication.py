@@ -57,6 +57,7 @@ def _bootstrap(url: str) -> None:
         conn.execute(sa.text("CREATE SCHEMA public"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         conn.execute(sa.text("CREATE SCHEMA world"))
         conn.execute(sa.text("CREATE SCHEMA app"))
     engine.dispose()

@@ -9,11 +9,21 @@ export interface Conversation {
   created_at: string;
 }
 
+// One AG-UI message as returned by GET /messages — the full transcript shape
+// (text + tool calls + tool results), produced by Pydantic AI's
+// `AGUIAdapter.dump_messages` (camelCase via `by_alias`). Mirrors the shape
+// CopilotKit's `setMessages` consumes so the transcript is restored verbatim;
+// tool "finishes" re-render through the same wildcard tool-pill path as live.
 export interface StoredMessage {
   id: string;
-  role: "user" | "assistant" | string;
-  content: string;
-  created_at: string;
+  role: "user" | "assistant" | "tool" | "system" | string;
+  content?: string | null;
+  toolCalls?: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+  toolCallId?: string;
 }
 
 export async function createConversation(): Promise<Conversation> {

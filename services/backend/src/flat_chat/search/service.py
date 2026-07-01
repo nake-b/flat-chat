@@ -36,7 +36,11 @@ from sqlalchemy import ARRAY, Boolean, Integer, Select, Text, cast, func, or_, s
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import Marker
-from flat_chat.listings.labels import encode_modes, resolve_near_spec
+from flat_chat.listings.labels import (
+    WATER_KIND_TO_RAW,
+    encode_modes,
+    resolve_near_spec,
+)
 from flat_chat.listings.models import (
     Listing,
     ListingEmbedding,
@@ -63,6 +67,7 @@ from .geo_filters import (
     HospitalFilter,
     SchoolFilter,
     TransitFilter,
+    WaterFilter,
 )
 from .schemas import (
     MARKER_CAP,
@@ -498,11 +503,11 @@ class SearchService:
         """Geo-context filters.
 
         Two shapes:
-          - **POI filters** (transit, schools, hospitals, kita, near_park,
-            near_playground, near_water): EXISTS against the per-listing
+          - **POI filters** (transit, schools, hospitals, kita, near_water,
+            near_park, near_playground): EXISTS against the per-listing
             junction table populated by `gold.enrich_nearby_*`. Honours
             any per-family attribute filter (modes, lines, school_type,
-            hospital tier, ...). See
+            hospital tier, water kind, ...). See
             `agent-compound-docs/decisions/spatial-neighbor-tables.md`.
           - **Scalar / field filters** (inside_ring, max_noise,
             min_greenery, density): B-tree / JSONB-extract predicates on the
@@ -523,7 +528,7 @@ class SearchService:
 
         if params.kita is not None:
             # Kitas carry no sub-type — pure proximity, same shape as
-            # near_park / near_playground / near_water.
+            # near_park / near_playground.
             stmt = self._apply_proximity_filter(
                 stmt, params.kita.distance, ListingNearbyKita
             )
@@ -540,9 +545,7 @@ class SearchService:
             )
 
         if params.near_water is not None:
-            stmt = self._apply_proximity_filter(
-                stmt, params.near_water, ListingNearbyWater
-            )
+            stmt = self._apply_water_filter(stmt, params.near_water)
 
         # ----- Scalar / field filters on listings_geo_context -----
 
@@ -665,10 +668,33 @@ class SearchService:
         # f.tier == "any" → no tier predicate
         return stmt.where(subq.exists())
 
+    def _apply_water_filter(self, stmt: Select, f: WaterFilter) -> Select:
+        """EXISTS-any against `listings_nearby_water`, optionally kind-filtered.
+
+        `f.kinds` (semantic buckets — lake / river / harbor) resolve to the
+        raw German `water_kind` values stored in the junction table via
+        `WATER_KIND_TO_RAW`; multiple kinds OR together (IN-list). Omitting
+        `kinds` matches ANY water body — the old distance-only behaviour.
+
+        No index on `water_kind` is needed: the EXISTS is already keyed by
+        `(listing_id, distance_m)` (ix_lnw_listing_distance), so only a
+        handful of neighbour rows per listing are scanned before this check.
+        """
+        nbr = ListingNearbyWater
+        max_m = resolve_near_spec(f.distance)
+        subq = select(nbr.listing_id).where(
+            nbr.listing_id == Listing.id,
+            nbr.distance_m <= max_m,
+        )
+        if f.kinds:
+            raw = sorted({v for k in f.kinds for v in WATER_KIND_TO_RAW[k]})
+            subq = subq.where(nbr.water_kind.in_(raw))
+        return stmt.where(subq.exists())
+
     def _apply_proximity_filter(self, stmt: Select, spec, model) -> Select:
         """EXISTS-any against a single-attribute proximity junction table.
 
-        Shared by near_park / near_playground / near_water — these tables
+        Shared by near_park / near_playground / kita — these tables
         carry no per-family attribute logic, only `(listing_id, distance_m)`.
         """
         max_m = resolve_near_spec(spec)

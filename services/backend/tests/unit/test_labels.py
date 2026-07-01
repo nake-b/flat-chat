@@ -19,7 +19,9 @@ from flat_chat.listings.labels import (
     decode_modes,
     display_modes,
     encode_modes,
+    primary_transit_line,
     resolve_near_spec,
+    transit_mode,
     walk_minutes,
 )
 from flat_chat.listings.thresholds import (
@@ -175,3 +177,29 @@ def test_encode_modes_uses_threshold_mapping():
 def test_display_modes_returns_human_readable_names():
     # 400 = u_bahn → "U-Bahn"; 109 = s_bahn → "S-Bahn".
     assert display_modes([400, 109]) == ["U-Bahn", "S-Bahn"]
+
+
+def test_transit_mode_classifies_by_prefix():
+    assert transit_mode("U7") == "u_bahn"
+    assert transit_mode("S41") == "s_bahn"
+    assert transit_mode("M10") == "tram"
+    assert transit_mode("N7") == "night"
+    assert transit_mode("245") == "bus"
+    assert transit_mode("X9") == "bus"
+
+
+def test_primary_transit_line_prefers_rail_over_bus():
+    # A stop serving buses + a U-Bahn should surface the U-Bahn, not the
+    # array's first element.
+    assert primary_transit_line(["140", "248", "N7", "U7"]) == "U7"
+    # Rail beats tram.
+    assert primary_transit_line(["M10", "S1"]) == "S1"
+    # Single bus line stays as-is (this is the confusing "245" case).
+    assert primary_transit_line(["245"]) == "245"
+    # Night bus is last resort.
+    assert primary_transit_line(["N1", "N7"]) == "N1"
+
+
+def test_primary_transit_line_none_on_empty():
+    assert primary_transit_line(None) is None
+    assert primary_transit_line([]) is None

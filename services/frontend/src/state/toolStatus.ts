@@ -1,3 +1,5 @@
+import { formatSearchBreadcrumb, parseSearchCount } from "./searchBreadcrumb";
+
 // Single source of truth for status-pill labels in the chat thread.
 //
 // Each entry maps a backend tool name to a small spec describing what label
@@ -49,7 +51,16 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
       a?.districts?.length
         ? `Searching ${a.districts.join(", ")}`
         : "Searching apartments",
-    complete: (_a, result) => firstLine(result) || "Search complete.",
+    // The completion "finish" — "Found 12 apartments" / "No apartments found …"
+    // — parsed from the backend summary's first line. This is a real tool-call
+    // result message in the transcript, so it persists across reload through
+    // the same render path (issue #22). A turn that searches several times is
+    // collapsed to its LAST result by the backend (only the final tool result
+    // keeps its content), so these don't stack. "" → renders nothing.
+    complete: (_a, result) => {
+      const n = parseSearchCount(result);
+      return n === null ? "" : formatSearchBreadcrumb(n);
+    },
   },
 
   get_result_page: {

@@ -4,6 +4,7 @@ import { useCopilotChatInternal } from "@copilotkit/react-core";
 
 import { getConversationMessages, getConversationState } from "../api/session";
 import { useSessionState } from "../hooks/useSessionState";
+import { useRecovery } from "../state/recovery";
 
 // Reload recovery (renders nothing). On a resumed conversation, hydrates the
 // frontend from the durable store over plain HTTP — NO agent turn:
@@ -44,15 +45,17 @@ export function ConversationRecovery({
       if (cancelled) return;
       if (state) setState(state);
       if (messages.length && typeof setMessages === "function") {
-        // AG-UI user/assistant messages are plain {id, role, content} objects.
-        setMessages(
-          messages.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-          })) as never,
-        );
+        // Restore the FULL AG-UI transcript verbatim — text plus tool calls and
+        // tool results. CopilotKit re-renders restored tool calls through the
+        // same wildcard tool-pill path as live (useLazyToolRenderer keys on
+        // toolCalls/toolCallId), so tool "finishes" (e.g. "Found 12 apartments")
+        // persist. The backend already dropped ephemeral roles (Thinking) and
+        // collapsed multi-search turns; no projection here.
+        setMessages(messages as never);
       }
+      // History is now known (even if empty / the fetch failed) — let ChatPane
+      // decide whether to show the starter cards without a flash.
+      useRecovery.getState().setHistoryLoaded(true);
     })();
 
     return () => {
