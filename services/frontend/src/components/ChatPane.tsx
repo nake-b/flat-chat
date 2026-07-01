@@ -127,10 +127,10 @@ export function ChatPane({
       </div>
 
       {starterOpen ? (
-        <div className="px-5 py-3">
-          <p className="mb-2 font-sans text-sm text-ink-ghost">{starterHeadline}</p>
-          {/* Chat-bubble cards — an emoji + a short descriptive label; the full
-              prompt is sent on click. Three-across grid so they span the row,
+        <div className="px-5 pt-2 pb-1">
+          <p className="mb-1.5 font-sans text-sm text-ink-ghost">{starterHeadline}</p>
+          {/* Chat-bubble cards — an inline emoji + a short descriptive label; the
+              full prompt is sent on click. Three-across grid so they span the row,
               one per distinct capability (see pickStratified). */}
           <div className="grid grid-cols-3 gap-2">
             {starterPrompts.map((p) => (
@@ -139,12 +139,12 @@ export function ChatPane({
                 type="button"
                 title={p.prompt}
                 onClick={() => sendPrompt(p.prompt)}
-                className="flex min-h-[76px] flex-col gap-1 rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
+                className="rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
               >
-                <span className="text-base leading-none" aria-hidden>
+                <span className="mr-1" aria-hidden>
                   {p.emoji}
                 </span>
-                <span>{p.label}</span>
+                {p.label}
               </button>
             ))}
           </div>
