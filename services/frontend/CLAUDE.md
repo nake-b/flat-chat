@@ -15,7 +15,8 @@ src/
     SessionState.ts       → CANONICAL TypeScript mirror of backend Pydantic SessionState
     UiState.ts            → Compat re-export of SessionState (existing imports keep working)
     conversationId.ts     → Persist/read the active conversation id (URL /c/{id} + localStorage)
-    toolStatus.ts         → Tool-name → status-pill label registry
+    toolStatus.ts         → Tool-name → status-pill label registry (the render-copy SSOT)
+    searchBreadcrumb.ts   → Pure: parse search count → "Found N apartments" finish copy
     overlayStyles.ts      → Map-overlay APPEARANCE registry: (kind, geometry type) → paint
                             (frontend owns colors/opacity; backend sends semantics only).
                             Also owns the motion constants: breathing area overlays,
@@ -29,13 +30,13 @@ src/
   api/
     session.ts            → create / getState / getMessages for a conversation (thread_id)
   components/
-    ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
+    ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages, FULL AG-UI transcript incl. tool calls/results)
     ConversationSidebar.tsx → slide-out left panel: + New chat + list of previous conversations
     ConversationSidebarItem.tsx → single sidebar row (title + relative timestamp + active highlight)
     BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + rich landscape detail rows (bigger than result cards; click to pan + open detail)
     BookmarkHeart.tsx → clickable heart button (red-filled when bookmarked, outline otherwise); heart matches property-search convention (see bookmark-affordance.md)
     AccountMenu.tsx → header account dropdown (email · Settings(soon) · Sign out); Escape + outside-click close, role=menu
-    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — + new chat + ☰ conversations + home-with-heart bookmarks + AccountMenu; takes onNewChat prop),
+    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — + new chat + ☰ conversations + home-with-heart bookmarks + AccountMenu; takes onNewChat prop; renders capability-tagged starter cards while the thread is empty + an AssistantLink markdown renderer for the #capabilities link),
                             MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
                             pins: breathing fills, transit station dots + line badges, via one
                             prefers-reduced-motion-gated rAF loop), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
@@ -211,6 +212,43 @@ See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/fronten
 Adding a new backend tool: register a label in `toolStatus.ts` and a
 `useCopilotAction` handler. Zero backend churn — tools stay pure data
 mutators.
+
+**Tool finishes persist because the transcript is the SSOT** (issue #22).
+A tool "finish" (e.g. "Found 12 apartments", "Opened listing #k") is a real
+tool-call result message, not a side-channel. It renders via the wildcard
+`useCopilotAction` render both live AND on reload — on reload CopilotKit's
+`useLazyToolRenderer` re-fires the same render for restored `toolCalls` +
+`role:"tool"` results. So nothing special persists the breadcrumb; the message
+does. "Thinking" is NOT a message (it's the ephemeral phase pill) and is not
+saved. See [`frontend-status-lifecycle.md`](../../agent-compound-docs/decisions/frontend-status-lifecycle.md).
+
+- The search finish copy lives in `toolStatus.ts`:
+  `search_apartments.complete` → `formatSearchBreadcrumb(parseSearchCount(result))`
+  (the summary's first line). Same render path live + reload.
+- Reload restores the full transcript: `GET /messages` returns
+  `AGUIAdapter.dump_messages(history)` (`by_alias` camelCase), and
+  `ConversationRecovery` passes it to `setMessages` unmodified.
+- "Let-through" policy lives on the BACKEND (`chat/service.py:
+  _FlatChatEventStream` live + `api/chat.py:_serialize_history` on reload): both
+  drop `reasoning`/`activity` (Thinking ephemeral) and blank retry results.
+  - **CopilotKit constraint:** a tool pill, once it shows a result, cannot be
+    cleared or replaced (a second result event for the same `toolCallId` is
+    ignored — verified in a browser). So a single status line that *mutates*
+    ("No apartments found" → Thinking → "Searching") is NOT achievable with the
+    per-call pills; finishes can only coexist.
+  - **Live** (`transform_stream`): to avoid a stack we HOLD each search result;
+    when the NEXT search starts, the held (superseded) one is completed EMPTY
+    (its only result event), so its pill resolves to nothing — never two
+    "Searching…" at once, no lingering spinner. A held search is flushed WITH
+    content at the answer text / run end. Net: a silently-broadening turn
+    (0 → 0 → 48, no narration) shows ONE finish; a turn that NARRATES between
+    searches shows each result once, interleaved with its narration (the
+    progression the user asked to see), never overlapping spinners.
+  - **Reload** (`_serialize_history`): collapses to the LAST search finish per
+    turn — a clean settled summary. So a narrated turn that showed 3 → 6 → 23
+    live restores as just "Found 23 apartments".
+- The summary first-line contract is pinned by `backend/tests/unit/
+  test_llm_context.py::test_summary_first_line_is_frontend_breadcrumb_parseable`.
 
 Because the wildcard pill echoes the tool `result`, a tool **retry/
 validation error** would otherwise print its raw error text. That's

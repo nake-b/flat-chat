@@ -32,7 +32,39 @@ from .thresholds import (
     NOISE_QUIET_MAX_LDEN,
     PEDESTRIAN_M_PER_S,
 )
-from .types import DensityLabel, GreeneryLabel, GtfsMode, NearSpec, NoiseLabel
+from .types import (
+    DensityLabel,
+    GreeneryLabel,
+    GtfsMode,
+    NearSpec,
+    NoiseLabel,
+    WaterKind,
+)
+
+# ---------------------------------------------------------------------------
+# Water kinds — bridge the semantic EN buckets used in the `near_water` filter
+# to the raw German `gewart` values stored in `world.water_bodies.water_kind`
+# (a passthrough from the Berlin GDI Gewässerkarte, no normalisation at ETL).
+# There is no distinct "canal" class in the source — Berlin canals (e.g. the
+# Landwehrkanal) are "Fließgewässer" (flowing water), i.e. `"river"`.
+# `Hafen/Fließgewässer` intentionally maps to both river and harbor: a single
+# raw value satisfies either intent under the IN-list OR in the query builder.
+# ---------------------------------------------------------------------------
+
+WATER_KIND_TO_RAW: dict[WaterKind, list[str]] = {
+    "lake": ["Stehendes Gewässer", "Stehendes Gewässer (künstlich fließend)"],
+    "river": ["Fließgewässer", "Hafen/Fließgewässer"],
+    "harbor": ["Hafen", "Hafen/Fließgewässer"],
+}
+
+# Reverse map: raw German `water_kind` → friendly EN label for LLM-facing prose.
+WATER_KIND_LABEL: dict[str, str] = {
+    "Stehendes Gewässer": "lake",
+    "Stehendes Gewässer (künstlich fließend)": "lake",
+    "Fließgewässer": "river",
+    "Hafen": "harbor",
+    "Hafen/Fließgewässer": "harbor",
+}
 
 
 def bucket_noise(total_lden: float | None) -> NoiseLabel | None:
@@ -140,6 +172,14 @@ def resolve_near_spec(spec: NearSpec) -> int:
     if isinstance(spec, int):
         return spec
     return BUCKET_TO_METERS[spec]
+
+
+def water_kind_label(raw: str | None) -> str | None:
+    """Friendly EN label for a raw German `water_kind`, or the raw value if
+    unmapped (keeps unexpected GDI values visible rather than dropping them)."""
+    if raw is None:
+        return None
+    return WATER_KIND_LABEL.get(raw, raw)
 
 
 # GTFS mode helpers — bridge the int codes stored in

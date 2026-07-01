@@ -17,7 +17,16 @@ import uuid
 
 import httpx
 from httpx import ASGITransport
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from flat_chat.chat.session_state import SessionState
@@ -119,6 +128,153 @@ def test_get_messages_projects_user_and_assistant(async_db_url):
         ("user", "hi there"),
         ("assistant", "hello back"),
     ]
+
+
+def test_get_messages_includes_tool_calls_and_results(async_db_url):
+    # The transcript is the SSOT for tool "finishes" (issue #22): GET /messages
+    # carries the tool call (assistant.toolCalls) + its result (role:"tool"),
+    # camelCase, so the frontend re-renders the finish on reload.
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="2br kreuzberg")]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments",
+                        args={"districts": ["Kreuzberg"]},
+                        tool_call_id="c1",
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name="search_apartments",
+                        content="Found 48 listings, most recent first.",
+                        tool_call_id="c1",
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content="Here are 48.")]),
+        ]
+        await store.save(session)
+        return await client.get(f"/api/conversations/{session.id}/messages")
+
+    resp = drive(async_db_url, body)
+    assert resp.status_code == 200
+    msgs = resp.json()
+    tool_calls = [m for m in msgs if m["role"] == "assistant" and m.get("toolCalls")]
+    assert tool_calls
+    assert tool_calls[0]["toolCalls"][0]["function"]["name"] == "search_apartments"
+    tool_results = [m for m in msgs if m["role"] == "tool"]
+    assert tool_results
+    assert tool_results[0]["toolCallId"] == "c1"
+    assert tool_results[0]["content"].startswith("Found 48 listings")
+
+
+def test_get_messages_collapses_multi_search_to_last(async_db_url):
+    # A turn that broadens (0 → 48) must persist only the LAST search finish.
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="broaden it")]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c1"
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name="search_apartments",
+                        content="No apartments found matching those criteria.",
+                        tool_call_id="c1",
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c2"
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name="search_apartments",
+                        content="Found 48 listings, most recent first.",
+                        tool_call_id="c2",
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content="Broadened to 48.")]),
+        ]
+        await store.save(session)
+        return await client.get(f"/api/conversations/{session.id}/messages")
+
+    resp = drive(async_db_url, body)
+    msgs = resp.json()
+    by_id = {m["toolCallId"]: m["content"] for m in msgs if m["role"] == "tool"}
+    assert by_id["c1"] == ""  # superseded intermediate blanked
+    assert by_id["c2"].startswith("Found 48 listings")  # last kept
+
+
+def test_get_messages_blanks_retry_results(async_db_url):
+    # A failed-validation retry must show nothing on reload (mirrors the live
+    # _QuietRetryEventStream contract).
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_apartments", args={}, tool_call_id="c1"
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content="2 validation errors. Fix and retry.",
+                        tool_name="search_apartments",
+                        tool_call_id="c1",
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content="ok")]),
+        ]
+        await store.save(session)
+        return await client.get(f"/api/conversations/{session.id}/messages")
+
+    resp = drive(async_db_url, body)
+    msgs = resp.json()
+    tool_results = [m for m in msgs if m["role"] == "tool"]
+    assert tool_results
+    assert all(m["content"] == "" for m in tool_results)
+
+
+def test_get_messages_drops_thinking(async_db_url):
+    # "Thinking" is ephemeral — it must not become a persisted transcript message.
+    async def body(client, store):
+        session = await store.create(USER_A)
+        session.message_history = [
+            ModelRequest(parts=[UserPromptPart(content="hi")]),
+            ModelResponse(
+                parts=[ThinkingPart(content="let me think"), TextPart(content="answer")]
+            ),
+        ]
+        await store.save(session)
+        return await client.get(f"/api/conversations/{session.id}/messages")
+
+    resp = drive(async_db_url, body)
+    msgs = resp.json()
+    assert all(m["role"] != "reasoning" for m in msgs)
+    assert any(m["role"] == "assistant" and m.get("content") == "answer" for m in msgs)
 
 
 def test_unknown_conversation_404(async_db_url):

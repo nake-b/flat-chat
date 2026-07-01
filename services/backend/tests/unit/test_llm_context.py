@@ -157,6 +157,38 @@ def test_summary_caps_at_top_n_and_shows_remaining_in_footer():
     assert "get_result_page(page=N)" in out
 
 
+def test_summary_first_line_is_frontend_breadcrumb_parseable():
+    """Cross-language contract: the summary's first line must stay parseable by
+    the frontend's `parseSearchCount` (services/frontend/src/state/
+    searchBreadcrumb.ts), which renders the per-turn "Found N apartments"
+    breadcrumb (issue #22). Reword the prose → update that parser in the same
+    change; this test is the tripwire.
+
+    The regex below is a VERBATIM port of the frontend's (commas/whitespace and
+    all) so the two stay honest — a backend that started emitting
+    `Found 1,234 listings` must still parse the same on both sides, not just in
+    the no-separator happy path."""
+    import re
+
+    # Mirror of `parseSearchCount`: `^Found\s+([\d,]+)\s+listings?` (case-insensitive),
+    # then strip thousands separators before int().
+    hit = re.compile(r"^Found\s+([\d,]+)\s+listings?", re.IGNORECASE)
+
+    found = LlmResultSetView(_state(n_markers=48, total=48)).summary(
+        _state(n_markers=48).preview_cards
+    )
+    m = hit.match(found.splitlines()[0])
+    assert m is not None and int(m.group(1).replace(",", "")) == 48
+
+    empty_state = SessionState()
+    empty_state.search_params = SearchParams(rooms_min=2.0)
+    empty = LlmResultSetView(empty_state).summary(empty_state.preview_cards)
+    assert (
+        re.match(r"^no apartments found", empty.splitlines()[0], re.IGNORECASE)
+        is not None
+    )
+
+
 # ---------------------------------------------------------------------------
 # page (CSV format) — now takes an explicit hydrated slice + offsets
 # ---------------------------------------------------------------------------
@@ -282,7 +314,7 @@ def _detail_full():
             )
         ],
         nearest_water=NearestWater(
-            name="Landwehrkanal", water_kind="canal", distance_m=500
+            name="Landwehrkanal", water_kind="Fließgewässer", distance_m=500
         ),
         nearest_kitas=[NearestKita(name="Kita Sonnenschein", distance_m=180)],
         nearest_landmarks=[
@@ -311,7 +343,7 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "  - Görlitzer Park — 400m" in out
     assert "Nearest playground: Mariannenplatz — 250m" in out
     assert "  - Urban-Krankenhaus (plan_hospital) — 900m" in out
-    assert "Nearest water: Landwehrkanal — 500m" in out
+    assert "Nearest river: Landwehrkanal — 500m" in out
     assert "  - Kita Sonnenschein — 180m" in out
     assert "  - Oberbaumbrücke (bridge) — 650m" in out
     assert (

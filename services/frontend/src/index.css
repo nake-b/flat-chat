@@ -129,6 +129,15 @@ body,
   font-weight: 600;
   color: theme("colors.ink.DEFAULT");
 }
+.copilotKitAssistantMessage a {
+  color: theme("colors.ink.soft");
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+.copilotKitAssistantMessage a:hover {
+  color: theme("colors.ink.DEFAULT");
+}
 .copilotKitAssistantMessage code {
   font-family: theme("fontFamily.mono");
   font-size: 0.85em;

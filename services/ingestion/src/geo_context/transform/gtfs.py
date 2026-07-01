@@ -35,9 +35,12 @@ def build_stops(
 ) -> gpd.GeoDataFrame:
     """Collapse platforms to parents, attach modes_served + lines_served.
 
-    Returns one GeoDataFrame row per logical stop or station (location_type
-    0 or 1). Platform children (location_type=0 with a parent_station) are
-    folded into their parent station; their modes and lines are unioned.
+    Returns one GeoDataFrame row per logical stop or station. Platform children
+    are folded into their parent: by `parent_station` when the feed sets it, and
+    otherwise by the base DHID (the part of the stop_id before the `::` quay
+    separator) — VBB leaves `parent_station` empty on its `::N` quays, so the
+    DHID fallback is what actually reunites them. Each complex's modes and lines
+    are unioned across its members.
     """
     # GTFS allows location_type to be NaN — treat as 0 (regular stop).
     if "location_type" not in stops.columns:
@@ -54,11 +57,21 @@ def build_stops(
     if "parent_station" not in stops.columns:
         stops["parent_station"] = pd.NA
 
-    # 1. Effective ID: the parent if there is one, else the stop itself.
-    #    Stations (location_type=1) never have parents and pass through.
+    # 1. Effective ID: the parent if there is one, else the stop's base DHID.
+    #    VBB stop_ids are DHIDs — a parent station `de:11000:900009102` plus
+    #    platform quays `de:11000:900009102::5`, `::6`, ... — but VBB does NOT
+    #    populate parent_station on the quays, so a `parent_station`-only collapse
+    #    leaves each quay as its own row, each with a partial lines_served (~48%
+    #    of stops ended up duplicated; "U Leopoldplatz" appeared 7×). So when
+    #    there's no explicit parent we fall back to the base DHID — everything
+    #    before the `::` quay separator — to reunite the quays. We split ONLY on
+    #    `::` (a single `:` is the DHID's own field separator); a plain id with
+    #    no `::` (test fixtures, non-DHID feeds) passes through unchanged. An
+    #    explicit parent_station is trusted as-is and never stripped.
+    base_dhid = stops["stop_id"].str.split("::", n=1).str[0]
     effective_id = stops["parent_station"].where(
         stops["parent_station"].notna() & (stops["parent_station"] != ""),
-        stops["stop_id"],
+        base_dhid,
     )
     stops = stops.assign(effective_id=effective_id)
 
@@ -88,31 +101,38 @@ def build_stops(
     )
     aggs = pd.concat([modes_served, lines_served], axis=1).reset_index()
 
-    # 5. Pick the canonical row per effective_id — prefer parent station
-    #    rows (location_type=1) when one exists, else the stop itself.
-    #    For the canonical rows effective_id == stop_id (the filter below
-    #    guarantees this) so we drop the redundant effective_id column to
-    #    avoid the merge below producing effective_id_x / effective_id_y.
-    canonical = stops.sort_values(by="location_type", ascending=False).drop_duplicates(
-        subset="effective_id", keep="first"
-    )
+    # 5. Pick the canonical row per effective_id by priority:
+    #      0) a real station node (location_type==1)
+    #      1) the bare base row (stop_id == effective_id) — its coordinate is the
+    #         station point
+    #      2) any quay — coordinate proxy (quays of one DHID sit within ~50 m,
+    #         well inside overlay precision)
+    #    A `== stop_id` filter would drop whole complexes that have ONLY quay
+    #    rows and no base/station row (VBB has these), so we rank instead.
+    priority = pd.Series(2, index=stops.index)
+    priority = priority.mask(stops["stop_id"] == stops["effective_id"], 1)
+    priority = priority.mask(stops["location_type"] == 1, 0)
     canonical = (
-        canonical[canonical["effective_id"] == canonical["stop_id"]]
-        .drop(columns="effective_id")
-        .copy()
+        stops.assign(_priority=priority)
+        .sort_values(by=["effective_id", "_priority"], kind="stable")
+        .drop_duplicates(subset="effective_id", keep="first")
     )
 
-    # 6. Merge aggregates. Stops with no stop_times rows get dropped.
-    out = canonical.merge(aggs, left_on="stop_id", right_on="effective_id", how="inner")
+    # 6. Merge aggregates on the shared effective_id (single key → no
+    #    effective_id_x / effective_id_y collision). Stops with no stop_times
+    #    rows get dropped (inner join).
+    out = canonical.merge(aggs, on="effective_id", how="inner")
 
-    # 7. Build geometry + final column set.
+    # 7. Build geometry + final column set. The emitted stop_id is the
+    #    effective_id (the collapsed identity) so quays don't re-fragment
+    #    downstream — every consumer keys on the one row per complex.
     geom = [
         Point(float(lon), float(lat))
         for lat, lon in zip(out["stop_lat"], out["stop_lon"], strict=True)
     ]
     gdf = gpd.GeoDataFrame(
         {
-            "stop_id": out["stop_id"].astype(str),
+            "stop_id": out["effective_id"].astype(str),
             "name": out["stop_name"].astype(str),
             "geom": geom,
             "modes_served": out["modes_served"],

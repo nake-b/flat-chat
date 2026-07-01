@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.labels import water_kind_label
 from flat_chat.search.schemas import NumericFacet, ResultFacets
 
 
@@ -271,9 +272,15 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
 
     if detail.nearest_water is not None:
         w = detail.nearest_water
-        parts.append(
-            f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
-        )
+        kind = water_kind_label(w.water_kind)
+        # Lead with the kind as the noun ("Nearest river: Landwehrkanal") so a
+        # type mismatch is explicit — this is the overall-nearest body, kind-
+        # agnostic, so someone who filtered for a lake sees "Nearest river: …"
+        # rather than a bare "Nearest water" that hides the mismatch. Fall back
+        # to "Nearest water" when the kind is unknown.
+        noun = kind or "water"
+        label = f": {w.name}" if w.name else ""
+        parts.append(f"Nearest {noun}{label} — {w.distance_m}m")
 
     parts.extend(
         _format_list_section(
