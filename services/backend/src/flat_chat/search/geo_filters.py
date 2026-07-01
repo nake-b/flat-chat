@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from flat_chat.listings.types import GtfsMode, NearSpec
+from flat_chat.listings.types import GtfsMode, NearSpec, WaterKind
 
 
 class TransitFilter(BaseModel):
@@ -86,3 +86,19 @@ class KitaFilter(BaseModel):
     """
 
     distance: NearSpec = "near"
+
+
+class WaterFilter(BaseModel):
+    """Filter listings by proximity to a water body, optionally by kind.
+
+    `kinds` narrows to specific water types — `["lake"]` = standing water
+    (Seen/Teiche), `["river"]` = flowing water (rivers, canals, the Spree),
+    `["harbor"]` = Hafen. Omit `kinds` for "near ANY water". Multiple kinds
+    combine with OR ("near a lake or river"). The Berlin GDI source has no
+    distinct "canal" class — canals are flowing water, so map them to
+    `"river"`. `kinds` resolve to raw German `water_kind` values via
+    `listings.labels.WATER_KIND_TO_RAW`.
+    """
+
+    distance: NearSpec = "near"
+    kinds: list[WaterKind] | None = None

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from flat_chat.chat.session_state import SessionState
 from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.labels import water_kind_label
 from flat_chat.search.schemas import NumericFacet, ResultFacets
 
 
@@ -271,9 +272,12 @@ def format_listing_detail_prose(idx: int, detail: ListingDetail) -> str:
 
     if detail.nearest_water is not None:
         w = detail.nearest_water
-        parts.append(
-            f"Nearest water: {w.name or w.water_kind or 'water'} — {w.distance_m}m"
-        )
+        kind = water_kind_label(w.water_kind)
+        label = w.name or kind or "water"
+        # Show the kind alongside a named body ("Landwehrkanal (river)").
+        if w.name and kind:
+            label = f"{w.name} ({kind})"
+        parts.append(f"Nearest water: {label} — {w.distance_m}m")
 
     parts.extend(
         _format_list_section(

@@ -44,6 +44,7 @@ from flat_chat.search.geo_filters import (
     KitaFilter,
     SchoolFilter,
     TransitFilter,
+    WaterFilter,
 )
 from flat_chat.search.schemas import PREVIEW_N, SearchParams
 from flat_chat.search.service import SearchService
@@ -648,7 +649,84 @@ def test_near_water_filter(async_db_url):
     junctions = [(ListingNearbyWater, nearby_water_row(near["id"], distance_m=300))]
 
     async def body(service):
-        results, _preview, _, _ = await service.search(SearchParams(near_water="near"))
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_water=WaterFilter(distance="near"))
+        )
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, seeds, body, junctions=junctions)
+    assert str(near["id"]) in ids
+
+
+def test_near_water_kind_lake_matches(async_db_url):
+    """`kinds=["lake"]` matches a standing-water ("Stehendes Gewässer") body."""
+    near = _listing_row()
+    seeds = [(near, _gold_row(near["id"]))]
+    junctions = [
+        (
+            ListingNearbyWater,
+            nearby_water_row(
+                near["id"], distance_m=300, water_kind="Stehendes Gewässer"
+            ),
+        )
+    ]
+
+    async def body(service):
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_water=WaterFilter(kinds=["lake"]))
+        )
+        return [r.id for r in results]
+
+    ids = _drive(async_db_url, seeds, body, junctions=junctions)
+    assert str(near["id"]) in ids
+
+
+def test_near_water_kind_excludes_other_kind(async_db_url):
+    """A flowing-water body is a river, not a lake — the mapping IN-list must
+    exclude it under kinds=["lake"] and include it under kinds=["river"]."""
+    river = _listing_row()
+    seeds = [(river, _gold_row(river["id"]))]
+    junctions = [
+        (
+            ListingNearbyWater,
+            nearby_water_row(river["id"], distance_m=300, water_kind="Fließgewässer"),
+        )
+    ]
+
+    async def as_lake(service):
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_water=WaterFilter(kinds=["lake"]))
+        )
+        return [r.id for r in results]
+
+    async def as_river(service):
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_water=WaterFilter(kinds=["river"]))
+        )
+        return [r.id for r in results]
+
+    lake_ids = _drive(async_db_url, seeds, as_lake, junctions=junctions)
+    assert str(river["id"]) not in lake_ids
+
+    river_ids = _drive(async_db_url, seeds, as_river, junctions=junctions)
+    assert str(river["id"]) in river_ids
+
+
+def test_near_water_no_kinds_matches_any(async_db_url):
+    """No `kinds` → matches any water body (back-compat with distance-only)."""
+    near = _listing_row()
+    seeds = [(near, _gold_row(near["id"]))]
+    junctions = [
+        (
+            ListingNearbyWater,
+            nearby_water_row(near["id"], distance_m=300, water_kind="Hafen"),
+        )
+    ]
+
+    async def body(service):
+        results, _preview, _, _ = await service.search(
+            SearchParams(near_water=WaterFilter(distance="near"))
+        )
         return [r.id for r in results]
 
     ids = _drive(async_db_url, seeds, body, junctions=junctions)
