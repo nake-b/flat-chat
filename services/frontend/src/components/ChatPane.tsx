@@ -5,47 +5,15 @@ import { CopilotChat } from "@copilotkit/react-ui";
 
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 import { useAuth } from "../hooks/useAuth";
-
-const STARTER_HEADLINES = [
-  "New here? Ask me something:",
-  "A few examples of what I can do:",
-  "What can I do for you? Ask:",
-] as const;
+import {
+  STARTER_HEADLINES,
+  STARTER_PROMPTS,
+  pickRandom,
+  pickStratified,
+} from "../state/starterPrompts";
 
 const CAPABILITIES_PROMPT =
   "What can you do right now? Please summarize your current capabilities and the world context data you can access at the moment.";
-
-const STARTER_PROMPTS = [
-  "🏡 I am looking for a 2 rooms apartment for up to 1200€ with a balcony. It would ideally be located in a quiet and green area.",
-  "We're moving with a dog 🐶. Please find dog friendly apartments close to a large park, so that we can go out regularly. We're looking for 2-3 rooms, 1800€ maximum.",
-  "📍 Show me all flats 500m around Alexanderplatz. Price and size do not matter.",
-  "Show me apartments 2km around UberArena. 🎶",
-  "👨‍👩‍👧‍👦 Please find a 2-3 rooms apartment located in Pankow or Reinickendorf for less than 1500€. It must be child friendly and have a playground close by.",
-  "Look for a apartment with disability parking close by.",
-  "🌾 I'm looking a new residence in a low populated area. 1-2 rooms would be ideal, price does not matter.",
-  "🗺️ Please visualise all available apartments around the S-Bahn Ring.",
-  "🚇 What flats do you have along the U7?",
-  "🚴 Find me a potential new home in biking distance to FU-Berlin.",
-  "Find me a residence that is located as close as possible to a lake. 🌊",
-  "🌳 What are the biggest parks in Berlin? Do you find any rooms close to them?",
-  "💶 What can I get for a budget up to 800€? Any student friendly accommodations close to a University?",
-  "🎓 Please find me a student friendly apartment in Steglitz-Zehlendorf. And what buses stop there?",
-  "Please find a flat with 2-3s bedrooms for a future family 👶. Filter for low-populated areas and a lot of greenery.",
-  "🏥 Show me apartments with a hospital nearby and compare how far the closest hospitals are.",
-  "Find me listings close to a Kita and a Grundschule at the same time.",
-  "Which flats are in quieter areas 🤫 and still close to parks?",
-  "I want apartments near tram or bus stops with very short walking distance.",
-  "Show me offers outside the S-Bahn ring but still close to water.",
-] as const;
-
-function pickRandomItems<T>(items: readonly T[], count: number): T[] {
-  const shuffled = [...items];
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled.slice(0, Math.min(count, shuffled.length));
-}
 
 export function ChatPane({
   onNewConversation,
@@ -57,9 +25,11 @@ export function ChatPane({
   const { messages, sendMessage } = useCopilotChatInternal();
   // Headline + the three example prompts are picked once on mount and stay
   // stable for the life of the (empty) thread — no reroll. They stop rendering
-  // as soon as the first user message lands (see `starterOpen`).
-  const [starterHeadline] = useState(() => pickRandomItems(STARTER_HEADLINES, 1)[0]);
-  const [starterPrompts] = useState(() => pickRandomItems(STARTER_PROMPTS, 3));
+  // as soon as the first user message lands (see `starterOpen`). The three are
+  // sampled from DISTINCT capability categories so the pills showcase different
+  // things the app can do, not near-duplicates.
+  const [starterHeadline] = useState(() => pickRandom(STARTER_HEADLINES));
+  const [starterPrompts] = useState(() => pickStratified(STARTER_PROMPTS, 3));
 
   // Send a starter/capabilities prompt as a real user turn via CopilotKit's
   // programmatic send API (`followUp: true` runs the agent). No DOM scraping —
@@ -158,16 +128,19 @@ export function ChatPane({
 
       {starterOpen ? (
         <div className="px-5 py-3">
-          <p className="mb-2 font-sans text-sm text-ink-ghost">{starterHeadline}</p>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-            {starterPrompts.map((prompt) => (
+          <p className="mb-2 font-sans text-xs text-ink-ghost">{starterHeadline}</p>
+          {/* Compact capability pills — short label on the chip, full prompt
+              sent on click. One per distinct capability (see pickStratified). */}
+          <div className="flex flex-wrap gap-2">
+            {starterPrompts.map((p) => (
               <button
-                key={prompt}
+                key={p.label}
                 type="button"
-                onClick={() => sendPrompt(prompt)}
-                className="min-h-[72px] rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
+                title={p.prompt}
+                onClick={() => sendPrompt(p.prompt)}
+                className="rounded-full border border-[#dedede] bg-[#ececec] px-3 py-1.5 text-left text-xs leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
               >
-                {prompt}
+                {p.label}
               </button>
             ))}
           </div>

@@ -137,6 +137,28 @@ def _capabilities_block() -> str:
     )
 
 
+def _semantic_fallback_block() -> str:
+    return xml_block(
+        "semantic_fallback_policy",
+        "Some requests describe an attribute we have NO structured filter for —\n"
+        '"dog-friendly", "student-friendly", "arty", "good for parties", "loft\n'
+        'vibe", and similar. There is no boolean/field to match these. The only\n'
+        "tool that engages them is the free-text `query` argument of\n"
+        "`search_apartments`, which ranks results by semantic similarity to the\n"
+        "user's words (it does NOT hard-filter — a result may rank high without\n"
+        "truly having the attribute).\n\n"
+        "So when you put such a wish into `query`, be honest in ONE short sentence:\n"
+        "tell the user you cannot filter by that attribute directly and that you\n"
+        "instead ranked the matches by how closely they fit their words, so they\n"
+        "should double-check the listing text. Do NOT claim the results are\n"
+        "guaranteed to have the attribute. Example: \"I can't filter for\n"
+        "'dog-friendly' directly, so I ranked these by how well their descriptions\n"
+        'match that — worth checking each listing." Structured filters (price,\n'
+        "rooms, district, transit, near a place, quiet, greenery, etc.) need no\n"
+        "such caveat.",
+    )
+
+
 # Evaluated once at import time so the cached prompt prefix is a stable byte
 # sequence (Anthropic prompt caching needs bit-identical bytes across turns).
 # The `_*_block()` helpers MUST stay pure — no settings reads, no env vars, no
@@ -151,6 +173,7 @@ INSTRUCTIONS = "\n\n".join(
         _honesty_block(),
         _city_center_block(),
         _capabilities_block(),
+        _semantic_fallback_block(),
     ]
 )
 

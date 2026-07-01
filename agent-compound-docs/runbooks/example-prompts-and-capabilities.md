@@ -8,15 +8,20 @@ This document describes the frontend and agent behavior added for:
 
 Primary files:
 - `services/frontend/src/components/ChatPane.tsx`
+- `services/frontend/src/state/starterPrompts.ts` (+ `.test.ts`) — the tagged prompt pool + `pickStratified`
 - `services/frontend/src/index.css`
 - `services/backend/src/flat_chat/chat/agent.py`
 
 ## Starter Prompt UX
 
 ### Rendering and placement
-- Example prompts render in the left chat pane under `+ New chat / Sign out`.
-- Three prompts are shown at once, randomly selected.
-- A random headline is shown above the prompt boxes.
+- Example prompts render as compact **pills** (rounded-full chips, `flex flex-wrap`)
+  in the left chat pane under `+ New chat / Sign out`, below a random headline.
+- Each pill shows a short **`label`** (e.g. "500 m around Alexanderplatz"); the full
+  sentence (`prompt`) is what gets sent on click. Decoupling label from payload is
+  what keeps the pills small while still sending a rich prompt.
+- **Three** pills are shown, sampled from **distinct capability categories** so they
+  showcase different things the app can do (see Prompt Set).
 
 ### Prompt click behavior (send immediately)
 `sendPrompt(prompt)` in `ChatPane.tsx` uses CopilotKit's programmatic send API:
@@ -78,10 +83,42 @@ guidance policy above does. Every capabilities question now runs a normal
 constructed once per process, not per message — the shortcut never saved model
 construction, only one LLM call.
 
+### Semantic-fallback honesty policy
+Some requests describe an attribute with **no structured filter** (dog-friendly,
+student-friendly, "arty", "loft vibe"). These only engage `search_apartments`'
+free-text `query`, which **ranks** by semantic similarity — it does not hard-filter.
+`_semantic_fallback_block()` in `agent.py` instructs the model, whenever it routes
+such a wish into `query`, to tell the user in one short sentence that it couldn't
+filter by that attribute and instead ranked by closeness to their words (so they
+should check the listing text). This is truthful in practice — embeddings are
+populated (the `world.listings_embeddings` table has rows), so semantic ranking
+actually runs rather than silently degrading to recency. Structured filters need no
+such caveat. It's an LLM-behavior policy (cached static instruction), covered by the
+conversation smoke harness, not a deterministic unit test.
+
 ## Prompt Set
-- Total starter prompt pool: 20 prompts.
-- Tree-specific prompt was removed and replaced (no tree-data dependency).
-- Emoji usage reduced (max 1 emoji per prompt; majority have one).
+The pool lives in `services/frontend/src/state/starterPrompts.ts` as an array of
+concrete objects — `{ category, label, prompt }` — not bare strings. Frontend-owned
+(these are UI/onboarding copy; matches the "frontend owns appearance" split).
+
+- **`category`** (`budget | place | transit | family | nature | calm | map | health
+  | semantic`) drives `pickStratified(pool, 3)`: shuffle categories, take one prompt
+  from each of 3 distinct categories (fill from leftovers if fewer categories exist).
+  So the visible trio always spans different capabilities — no three near-duplicates.
+- **`label`** is the short pill text; **`prompt`** is the full sentence sent.
+- **Curated to real capabilities.** Every prompt maps to a capability that actually
+  exists (verified against `search/schemas.py`, `geo_filters.py`, the `locate_place`
+  gazetteer, and `listings/types.py`). Removed the disability-parking prompt (no such
+  filter — it's detail-only) and the generic "near a University" prompt (no university
+  category; only *specific* named places resolve). Reworded "as close as possible to a
+  lake" → "close to a lake" and "biggest parks?" → "next to a big park" (no proximity/
+  size sort exists).
+- **`semantic` category = intentional soft-attribute demos.** "student-friendly" (and
+  the dog vibe under `nature`) have no structured filter; the agent routes them to the
+  free-text `query` (semantic ranking) and is instructed to say so — see below.
+
+`pickStratified` is unit-tested in `starterPrompts.test.ts` (distinct categories,
+count, pool-membership, leftover-fill).
 
 ## Notes
 - The logic intentionally tracks only `role === "user"` messages with non-empty string content.
