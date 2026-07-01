@@ -101,7 +101,7 @@ See [`agent-vs-http-data-flow.md`](agent-compound-docs/decisions/agent-vs-http-d
 - PostgreSQL is defined in docker-compose.yml only (no dedicated directory)
 - Backend package is `flat_chat` (not `app`) — run with `uvicorn flat_chat.main:app`
 - Domain services take `db: Session` in constructor — framework-agnostic, works in FastAPI, scripts, and tests
-- LLM uses Pydantic AI **v2** with `instructions=` (not `system_prompt=`), tools bound to the Agent via **three domain capabilities** (`capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability()]`; each `get_toolset()` returns its `FunctionToolset` wrapped in `StateEmittingToolset` — no module-level cycle between `agent.py` and the tool modules), `RunContext[ChatDeps]` for dependency injection. The split is behavior-neutral to the LLM and sets up `defer_loading` as a later lever; the deferred `ListingProximityCapability` (single-listing distance/travel queries) is a documented follow-up. See [`capability-landscape.md`](agent-compound-docs/decisions/capability-landscape.md) + [`pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md)
+- LLM uses Pydantic AI **v2** with `instructions=` (not `system_prompt=`), tools bound to the Agent via **four domain capabilities** (`capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability(), ListingProximityCapability()]`; each `get_toolset()` returns its `FunctionToolset` wrapped in `StateEmittingToolset` — no module-level cycle between `agent.py` and the tool modules), `RunContext[ChatDeps]` for dependency injection. The always-loaded three stay in the cached prefix; **`ListingProximityCapability` (single-listing `distance_to`/`travel_time_to` point queries) is `defer_loading=True`** — the first pulled lever, kept out of the cached prefix until the model loads it on demand (adds Pydantic AI's `load_capability` + `search_tools`). See [`capability-landscape.md`](agent-compound-docs/decisions/capability-landscape.md) + [`pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md)
 - **Map lenses** — a lens colours every marker by one scalar (travel time OR straight-line distance to a place; one active at a time). `SessionState.marker_lens` is the thin frontend descriptor (`key` → ramp in `state/lensStyles.ts`); `SessionState.active_lens` is the `TravelTimeLens | DistanceLens` discriminated-union input the backend re-applies after a refinement. Providers share `resolve(markers, lens) -> {id: value}` — `RoutingService` (OSRM/MOTIS) for travel, `DistanceService` (PostGIS `ST_Distance`) for distance — dispatched by `chat/tools/lenses.py:_apply_lens`. Tools: `apply_travel_time_lens`, `apply_distance_lens`, `clear_lens`. Vocab lives in the leaf `listings/lenses.py`. Full record: [`lens-layer.md`](agent-compound-docs/decisions/lens-layer.md)
 - Conversation state lives in `ChatSession` (history + `SessionState` + `user_id`), held by a `SessionStore` Protocol (async `create`/`get`/`save`, sync `lock`). `DbSessionStore` (Postgres `app.*`) is the default — durable across restarts; `InMemorySessionStore` is kept for unit tests. The store owns its own `AsyncSessionLocal` sessions (persistence runs in `on_complete` at SSE-stream end, after the request scope is gone). Identity is real password auth via **fastapi-users** — `get_user_id()` resolves the authenticated user from a signed httpOnly JWT cookie (login at `/api/auth/login`; dev user via `scripts/seed_users.py`). `get_user_id()` remains the single seam — call sites never change; a future Logto migration would touch only that function. See [`AUTH.md`](AUTH.md). The backend is **history-authoritative**: on a reload where the frontend sends only the new prompt (≤1 envelope message), `dispatch_agent_request` injects the DB-reconstructed history so the agent keeps context. See [`session-persistence.md`](agent-compound-docs/decisions/session-persistence.md)
 - **LLM-facing string composition is centralised in `chat/llm_context.py`** — `LlmResultSetView` (the active search wrapped with `summary` / `page` / `detail` formatting), `format_navigation_footer` (free function so the data class doesn't reference tool names), `format_geo_context_prose` (single-listing neighbourhood prose), and `build_dynamic_state_prompt` (per-turn `<current_state>` + `<user_focus>` XML blocks). Nothing outside this module composes prose for the LLM. See `agent-compound-docs/decisions/llm-tool-result-design.md`.
@@ -200,7 +200,7 @@ When you finish a change, do a quick sweep: grep for the old name / removed file
 
 Install (Pydantic AI **v2**): `pydantic-ai-slim[ag-ui,anthropic,openai]>=2.0,<3.0`. v2's core no longer bundles every provider — declare only the extras you use (`ag-ui` for the `AGUIAdapter` on `/api/agent`, `anthropic` + `openai` for our two providers). Do NOT add the `pydantic-ai` metapackage; it pulls every provider extra back in. See [`agent-compound-docs/decisions/pydantic-v2-migration.md`](agent-compound-docs/decisions/pydantic-v2-migration.md).
 
-Tools are bound to the Agent via `capabilities=[...]` (v2's composition primitive) — a capability bundles tools + instructions + hooks + model settings. Tools are split across three domain capabilities (`CoreCapability`, `MapOverlayCapability`, `LensCapability`), each wrapping its own `FunctionToolset`; see the Tools section below, [`capability-landscape.md`](agent-compound-docs/decisions/capability-landscape.md), and the migration doc.
+Tools are bound to the Agent via `capabilities=[...]` (v2's composition primitive) — a capability bundles tools + instructions + hooks + model settings. Tools are split across four domain capabilities (`CoreCapability`, `MapOverlayCapability`, `LensCapability`, and the `defer_loading=True` `ListingProximityCapability`), each wrapping its own `FunctionToolset`; see the Tools section below, [`capability-landscape.md`](agent-compound-docs/decisions/capability-landscape.md), and the migration doc.
 
 ### Agent Definition
 
@@ -281,10 +281,12 @@ ever importing the `agent` object — kills the `agent.py ↔ tools/core.py` cyc
 v2 the toolset is bound to the Agent via a **capability** (`capabilities=[...]`)
 rather than `toolsets=[...]`: a capability wraps its toolset by returning it from
 `get_toolset()`. Tools are grouped into `CoreCapability` (search/open/page/locate),
-`MapOverlayCapability`, and `LensCapability`, each its own module. New agent-callable
-tool groups (e.g. the deferred single-listing distance/travel queries) land as
-their own capabilities — optionally `defer_loading=True` to keep them out of the
-cached prompt prefix until the model loads them (the ToolSearch lever). See
+`MapOverlayCapability`, and `LensCapability`, each its own module, plus the
+`defer_loading=True` `ListingProximityCapability` (single-listing distance/travel
+point queries). New agent-callable tool groups land as their own capabilities —
+optionally `defer_loading=True` to keep them out of the cached prompt prefix until
+the model loads them on demand (`load_capability`/ToolSearch), as
+`ListingProximityCapability` does. See
 [`capability-landscape.md`](agent-compound-docs/decisions/capability-landscape.md).
 
 ```python
@@ -310,7 +312,8 @@ from flat_chat.chat.tools import CoreCapability
 from flat_chat.chat.overlay_tools import MapOverlayCapability
 from flat_chat.chat.lens_tools import LensCapability
 agent = Agent(deps_type=ChatDeps,
-              capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability()],
+              capabilities=[CoreCapability(), MapOverlayCapability(),
+                            LensCapability(), ListingProximityCapability()],
               instructions=...)
 ```
 

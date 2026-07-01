@@ -18,6 +18,7 @@ from flat_chat.chat.tools import (
     TOOL_BACKBONE,
     CoreCapability,
     LensCapability,
+    ListingProximityCapability,
     MapOverlayCapability,
 )
 
@@ -53,6 +54,9 @@ CAPABILITIES_AT_THE_MOMENT_REPLY = (
     "those within a limit (for example under 30 minutes, or within 5 km). "
     "Travel times depend on the routing service being available and on the "
     "loaded timetable, so I'll flag when they're approximate or out of date.\n"
+    "- Measure a single apartment against a place you name: how far one "
+    "listing (the one you have open, or a specific card) is from it in a "
+    "straight line, or how long the trip takes by car or public transport.\n"
     "\n"
     "Important: this reflects what is available at the moment in your current "
     "database snapshot. If data is missing or outdated, I will still try to "
@@ -200,17 +204,24 @@ INSTRUCTIONS = "\n\n".join(
 # needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
 # primitive), split by domain: `CoreCapability` (search / open / page / locate),
 # `MapOverlayCapability` (draw geometries), `LensCapability` (colour by travel
-# time / distance). Each returns its toolset wrapped in `StateEmittingToolset`
-# (inside `get_toolset`), so any `deps.state` mutation auto-emits a
-# STATE_SNAPSHOT — emission is structural, not something each tool remembers
-# (see chat/tools/emission.py). Splitting into capabilities is behavior-neutral to the
-# LLM (same combined tool list + instructions) and sets up `defer_loading` as a
-# later lever. The deferred `ListingProximityCapability` (single-listing distance
-# / travel queries, issue #44) lands next. See
+# time / distance), and the DEFERRED `ListingProximityCapability` (single-listing
+# distance / travel-time point queries, issue #44). Each returns its toolset
+# wrapped in `StateEmittingToolset` (inside `get_toolset`), so any `deps.state`
+# mutation auto-emits a STATE_SNAPSHOT — emission is structural, not something
+# each tool remembers (see chat/tools/emission.py). Splitting into capabilities is
+# behavior-neutral to the LLM for the always-loaded three; `ListingProximityCapability`
+# is the first to actually pull the `defer_loading` lever — its tools + protocol
+# stay out of the cached prefix until the model loads it on demand (adds Pydantic
+# AI's `load_capability` + `search_tools`). See
 # agent-compound-docs/decisions/capability-landscape.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability()],
+    capabilities=[
+        CoreCapability(),
+        MapOverlayCapability(),
+        LensCapability(),
+        ListingProximityCapability(),
+    ],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

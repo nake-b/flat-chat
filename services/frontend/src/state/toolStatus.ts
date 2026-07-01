@@ -130,6 +130,22 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
     executing: () => "Removing lens",
     complete: () => "Lens removed",
   },
+
+  // Single-listing point-to-point queries (deferred ListingProximityCapability).
+  // These are PURE queries — the assistant's prose reply IS the answer, so the
+  // finish stays silent to avoid duplicating it in a pill. The destination name
+  // isn't in the args (near_place_ref is an opaque token), so the running label
+  // stays generic.
+  distance_to: {
+    executing: () => "Measuring distance",
+    complete: () => "",
+  },
+
+  travel_time_to: {
+    executing: (a: { mode?: string }) =>
+      a?.mode === "car" ? "Checking drive time" : "Checking travel time",
+    complete: () => "",
+  },
 };
 
 // Rotating verb sets. Module-level (stable refs) so <RotatingWord>'s timer
