@@ -97,13 +97,22 @@ describe("BookmarkSidebar", () => {
           title: "Sunny corner flat",
           district: "Kreuzberg",
           price_warm_eur: 1450,
+          rooms: 2,
+          area_sqm: 64,
+          nearest_transit_line: "U7",
+          walk_min_to_transit: 8,
         }),
       ],
     });
     expect(screen.getByText("Sunny corner flat")).toBeTruthy();
     expect(screen.getByText("Kreuzberg")).toBeTruthy();
-    // Locale-aware formatting: de-DE uses '.' as thousands separator.
-    expect(screen.getByText(/1\.450 warm/i)).toBeTruthy();
+    // Price is a value span + a separate "warm" label. de-DE uses '.' as the
+    // thousands separator.
+    expect(screen.getByText("€1.450")).toBeTruthy();
+    expect(screen.getByText("warm")).toBeTruthy();
+    // Meta line + rail-preferred transit with explicit "min walk".
+    expect(screen.getByText("2 rooms · 64 m²")).toBeTruthy();
+    expect(screen.getByText("🚇 U7 · 8 min walk")).toBeTruthy();
   });
 
   it("falls back to 'Untitled' + 'Berlin' when the card lacks them", () => {

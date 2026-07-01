@@ -6,7 +6,7 @@ import {
   type ListingCard,
 } from "../state/SessionState";
 import { useBookmarks } from "../state/useBookmarks";
-import { BookmarkStar } from "./BookmarkStar";
+import { BookmarkHeart } from "./BookmarkHeart";
 
 // The subset of fields the detail body reads — present on BOTH ListingCard
 // and ListingDetail. We render from `active_listing_detail ?? apt` so the
@@ -152,7 +152,7 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {activeId != null && (
-              <BookmarkStar
+              <BookmarkHeart
                 filled={isBookmarked}
                 onToggle={() => void toggleBookmark(activeId)}
                 size="md"
@@ -198,7 +198,7 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          <BookmarkStar
+          <BookmarkHeart
             filled={isBookmarked}
             onToggle={() => void toggleBookmark(view.id)}
             size="md"

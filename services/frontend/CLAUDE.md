@@ -32,9 +32,11 @@ src/
     ConversationRecovery.tsx → reload hydration (renders null): setState(GET /state) + setMessages(GET /messages)
     ConversationSidebar.tsx → slide-out left panel: + New chat + list of previous conversations
     ConversationSidebarItem.tsx → single sidebar row (title + relative timestamp + active highlight)
-    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + detailed rows (click to pan + open detail)
-    BookmarkStar.tsx → clickable star button (yellow-filled when bookmarked, outline otherwise)
-    ChatPane.tsx, MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
+    BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + rich landscape detail rows (bigger than result cards; click to pan + open detail)
+    BookmarkHeart.tsx → clickable heart button (red-filled when bookmarked, outline otherwise); heart matches property-search convention (see bookmark-affordance.md)
+    AccountMenu.tsx → header account dropdown (email · Settings(soon) · Sign out); Escape + outside-click close, role=menu
+    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — ☰ conversations + home-with-heart bookmarks + AccountMenu),
+                            MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
                             pins: breathing fills, transit station dots + line badges, via one
                             prefers-reduced-motion-gated rAF loop), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx
     OverlayLegend.tsx     → chips for drawn map_overlays, each with × dismiss
@@ -81,11 +83,15 @@ Mutual exclusion with the conversation sidebar is wired in `App.tsx` via two
 The panel is a browsing surface: a **search box** filters rows client-side by
 title (falling back to district/bezirk/address so null-title listings are
 still findable) — rows-only, the map keeps all bookmarked pins. Each row
-(`BookmarkSidebarItem.tsx`) is a detailed card — large thumbnail, title,
-district, warm price, rooms·area, transit. Clicking anywhere on the row calls
+(`BookmarkSidebarItem.tsx`) is a **rich landscape detail row — deliberately more
+detailed than the compact result cards**: large thumbnail, title, address, a
+price block (warm + cold/Nebenkosten), a rooms·bedrooms·m² meta line, a
+`min walk` transit line, and a generous chip row (park/noise/density/ring/floor/
+amenities/availability). See `agent-compound-docs/decisions/bookmark-affordance.md`.
+Clicking anywhere on the row calls
 `onSelect(id)` → `activate(id)` (`useSessionState`), which pans the (visible,
 right-column) map via MapPane's `easeTo` effect and opens the detail panel; the
-panel stays open so the user keeps browsing. The row's remove star opens the
+panel stays open so the user keeps browsing. The row's remove heart opens the
 shared `ConfirmDialog` ("Remove bookmark?") — the panel tracks a
 `pendingRemoveId` and only calls `onRemove` on confirm (same pattern as the
 conversation sidebar's delete). While the dialog is open the panel yields
@@ -112,10 +118,11 @@ its marker source — `bookmarkCards` (from `useBookmarkList`) instead of
 camera reframe (keyed off `markersSig`) gives a free cross-fade and re-fit.
 Closing the panel restores `result_markers` and the card strip.
 
-The chat-header tab button that opens the panel (`ChatPane.tsx`) is a
-**house outline with an amber star in the middle** (the house follows
-`currentColor` for hover; the star fill is hard-coded amber). Per-listing
-save controls stay plain stars (`BookmarkStar.tsx`, unchanged).
+The header utility-bar button that opens the panel (`ChatPane.tsx`) is a
+**house outline with a red heart inside** (the house follows `currentColor` for
+hover; the heart fill is fixed Berliner Rot). Per-listing save controls are red
+hearts (`BookmarkHeart.tsx`) — heart over star matches property-search
+convention; see `agent-compound-docs/decisions/bookmark-affordance.md`.
 
 Per-user bookmark state lives OUTSIDE `SessionState` (which is
 per-conversation) in `useBookmarks` — a zustand `Set<string>` hydrated once
