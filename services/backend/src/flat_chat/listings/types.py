@@ -46,3 +46,14 @@ NearSpec = DistanceBucket | int
 
 GtfsMode = Literal["mainline", "regional", "s_bahn", "u_bahn", "bus", "tram", "ferry"]
 """Transit service-type enum used by the agent's `transit` filter."""
+
+
+# ---------------------------------------------------------------------------
+# Water kinds — user-facing enum for the `near_water` filter. Mapped to the
+# raw German `gewart` values stored in `world.water_bodies.water_kind` via
+# `listings.labels.WATER_KIND_TO_RAW`. The Berlin GDI vocabulary has no
+# distinct "canal" class — canals are flowing water ("river"). See doc §water.
+# ---------------------------------------------------------------------------
+
+WaterKind = Literal["lake", "river", "harbor"]
+"""Semantic water-body category: standing water, flowing water, or Hafen."""

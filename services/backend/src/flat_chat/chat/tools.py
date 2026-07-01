@@ -19,6 +19,7 @@ from flat_chat.search.geo_filters import (
     KitaFilter,
     SchoolFilter,
     TransitFilter,
+    WaterFilter,
 )
 from flat_chat.search.schemas import SearchParams, SortBy
 
@@ -124,8 +125,11 @@ filters for `search_apartments`:
   - "near a kita" / "daycare
     nearby"                     → kita: {distance: "near"}
   - "near a Grundschule"        → school: {school_type: "Grundschule"}
-  - "near a lake" /
-    "by the water"              → near_water: "near"
+  - "near a lake"               → near_water: {kinds: ["lake"]}
+  - "near a river" /
+    "by the canal"              → near_water: {kinds: ["river"]}
+  - "by the water" /
+    "waterfront"                → near_water: {distance: "near"}
   - "inside the ring" /
     "innerhalb des Rings" /
     "city center" / "central" /
@@ -206,9 +210,9 @@ async def search_apartments(
     school: SchoolFilter | None = None,
     hospital: HospitalFilter | None = None,
     kita: KitaFilter | None = None,
+    near_water: WaterFilter | None = None,
     near_park: NearSpec | None = None,
     near_playground: NearSpec | None = None,
-    near_water: NearSpec | None = None,
     max_noise: NoiseLabel | None = None,
     min_greenery: GreeneryLabel | None = None,
     density: DensityLabel | None = None,
@@ -321,6 +325,18 @@ async def search_apartments(
             For a SPECIFIC named kita ("near Kita Sonnenschein") use
             `locate_place` → `near_place_ref` instead.
 
+        near_water: Require a water body within `distance`. Pass as an object
+            like `{"kinds": ["lake"], "distance": "near"}`. Fields:
+              - `distance`: same `NearSpec` ladder as `transit.distance`.
+              - `kinds`: narrow by type, any of `"lake"` (standing water —
+                Seen/Teiche), `"river"` (flowing water — rivers, canals, the
+                Spree), `"harbor"` (Hafen). OR semantics (any-of). Omit for
+                ANY water. Berlin canals count as `"river"` (there is no
+                separate canal category in the data).
+            Examples: "near a lake" → `{"kinds": ["lake"]}`. "by the water" →
+            `{"distance": "near"}`. For a SPECIFIC named water ("near the
+            Wannsee") use `locate_place` → `near_place_ref` instead.
+
         near_park: Require a non-cemetery park within this distance.
             Same `NearSpec` ladder as `transit.distance` — `"next_to"` /
             `"very_near"` / `"near"` / `"walking_distance"` /
@@ -329,9 +345,6 @@ async def search_apartments(
 
         near_playground: Require a playground within this distance.
             Same ladder. Example: "playground for the kids" → `"near"`.
-
-        near_water: Require a water body (lake / river / canal) within
-            this distance. Same ladder.
 
         max_noise: Maximum Lden noise level. `"quiet"` (< 55 dB, WHO
             health-threshold) or `"lively"` (< 65 dB, normal urban band).

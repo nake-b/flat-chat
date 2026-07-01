@@ -27,6 +27,7 @@ from .geo_filters import (
     KitaFilter,
     SchoolFilter,
     TransitFilter,
+    WaterFilter,
 )
 
 SortBy = Literal["relevance", "price", "area", "recent"]
@@ -102,10 +103,10 @@ class SearchParams(BaseModel):
     school: SchoolFilter | None = None
     hospital: HospitalFilter | None = None
     kita: KitaFilter | None = None
+    near_water: WaterFilter | None = None
     # Flat (single concept each):
     near_park: NearSpec | None = None
     near_playground: NearSpec | None = None
-    near_water: NearSpec | None = None
     max_noise: NoiseLabel | None = None
     min_greenery: GreeneryLabel | None = None
     density: DensityLabel | None = None

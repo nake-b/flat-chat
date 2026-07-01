@@ -314,7 +314,7 @@ def _detail_full():
             )
         ],
         nearest_water=NearestWater(
-            name="Landwehrkanal", water_kind="canal", distance_m=500
+            name="Landwehrkanal", water_kind="Fließgewässer", distance_m=500
         ),
         nearest_kitas=[NearestKita(name="Kita Sonnenschein", distance_m=180)],
         nearest_landmarks=[
@@ -343,7 +343,7 @@ def test_format_listing_detail_prose_full_listing_has_every_section():
     assert "  - Görlitzer Park — 400m" in out
     assert "Nearest playground: Mariannenplatz — 250m" in out
     assert "  - Urban-Krankenhaus (plan_hospital) — 900m" in out
-    assert "Nearest water: Landwehrkanal — 500m" in out
+    assert "Nearest river: Landwehrkanal — 500m" in out
     assert "  - Kita Sonnenschein — 180m" in out
     assert "  - Oberbaumbrücke (bridge) — 650m" in out
     assert (
