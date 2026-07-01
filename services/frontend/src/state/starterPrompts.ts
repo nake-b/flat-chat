@@ -27,131 +27,151 @@ export type StarterCategory =
 
 export interface StarterPrompt {
   category: StarterCategory;
+  emoji: string;
   label: string;
   prompt: string;
 }
 
 export const STARTER_HEADLINES = [
-  "New here? Ask me something:",
-  "A few examples of what I can do:",
-  "What can I do for you? Ask:",
+  "Example prompts to get you started:",
+  "Not sure where to begin? Try one:",
+  "A few examples to try:",
 ] as const;
 
 export const STARTER_PROMPTS: StarterPrompt[] = [
   // budget — price / size / amenities
   {
     category: "budget",
-    label: "2-room · balcony · quiet & green",
+    emoji: "🏡",
+    label: "A 2-room with a balcony, somewhere quiet and green",
     prompt:
       "🏡 I am looking for a 2 rooms apartment for up to 1200€ with a balcony. It would ideally be located in a quiet and green area.",
   },
   {
     category: "budget",
-    label: "Cheapest inside the ring",
+    emoji: "💶",
+    label: "The cheapest places inside the S-Bahn ring",
     prompt:
       "💶 What's the cheapest place you can find inside the S-Bahn ring? Show them on the map.",
   },
   // place — proximity to a specific named place (locate_place)
   {
     category: "place",
-    label: "500 m around Alexanderplatz",
+    emoji: "📍",
+    label: "Everything within 500 m of Alexanderplatz",
     prompt:
       "📍 Show me all flats within 500 m of Alexanderplatz. Price and size don't matter.",
   },
   {
     category: "place",
-    label: "2 km around Uber Arena",
+    emoji: "🎶",
+    label: "Apartments near the Uber Arena",
     prompt: "🎶 Show me apartments within 2 km of the Uber Arena.",
   },
   {
     category: "place",
-    label: "Biking distance to FU Berlin",
+    emoji: "🚴",
+    label: "Within biking distance of FU Berlin",
     prompt:
       "🚴 Find me a potential new home within biking distance of Freie Universität Berlin.",
   },
   // transit
   {
     category: "transit",
-    label: "Along the U7",
+    emoji: "🚇",
+    label: "Flats right along the U7 line",
     prompt: "🚇 What flats do you have along the U7?",
   },
   {
     category: "transit",
-    label: "Near a tram or bus, short walk",
+    emoji: "🚊",
+    label: "Near a tram or bus, just a short walk",
     prompt:
       "I want apartments near a tram or bus stop, within a very short walk.",
   },
   // family — kita / playground / school
   {
     category: "family",
-    label: "Child-friendly, playground nearby",
+    emoji: "👨‍👩‍👧‍👦",
+    label: "Child-friendly, with a playground nearby",
     prompt:
       "👨‍👩‍👧‍👦 Find a 2-3 room apartment in Pankow or Reinickendorf under 1500€. It should be child friendly, with a playground nearby.",
   },
   {
     category: "family",
-    label: "Near a Kita and a Grundschule",
+    emoji: "🎒",
+    label: "Close to both a Kita and a Grundschule",
     prompt:
       "Find me listings close to a Kita and a Grundschule at the same time.",
   },
   // nature — park / water / greenery
   {
     category: "nature",
-    label: "Near a big park (moving with a dog)",
+    emoji: "🐶",
+    label: "Dog-friendly, next to a big park",
     prompt:
       "🐶 We're moving with a dog. Find dog-friendly apartments near a large park, 2-3 rooms, up to 1800€.",
   },
   {
     category: "nature",
-    label: "Close to a lake",
+    emoji: "🌊",
+    label: "As close to a lake as it gets",
     prompt: "🌊 Find me a place close to a lake.",
   },
   {
     category: "nature",
-    label: "Next to a big park",
+    emoji: "🌳",
+    label: "Right next to a big park",
     prompt: "🌳 Find apartments right next to a big park.",
   },
   // calm — quiet / low-density
   {
     category: "calm",
-    label: "Low-populated, lots of greenery",
+    emoji: "👶",
+    label: "A family home in a calm, leafy area",
     prompt:
       "Find a 2-3 bedroom home for a future family 👶 in a low-populated area with lots of greenery.",
   },
   {
     category: "calm",
-    label: "Quiet area near parks",
+    emoji: "🤫",
+    label: "Quiet streets, still close to parks",
     prompt: "Which flats are in quieter areas 🤫 and still close to parks?",
   },
   {
     category: "calm",
-    label: "Low-populated, 1–2 rooms",
+    emoji: "🌾",
+    label: "A calm, low-populated neighbourhood",
     prompt:
       "🌾 I'm looking for a new place in a low-populated area. 1-2 rooms would be ideal; price doesn't matter.",
   },
   // map — overlays / ring visualization
   {
     category: "map",
-    label: "Everything around the S-Bahn Ring",
+    emoji: "🗺️",
+    label: "Map everything around the S-Bahn Ring",
     prompt: "🗺️ Please visualise all available apartments around the S-Bahn Ring.",
   },
   {
     category: "map",
-    label: "Outside the ring, near water",
+    emoji: "💧",
+    label: "Outside the ring, but close to water",
     prompt:
       "Show me places outside the S-Bahn ring but still close to water.",
   },
   // health — hospitals
   {
     category: "health",
-    label: "Hospital nearby, compare distances",
+    emoji: "🏥",
+    label: "A hospital close by (compare distances)",
     prompt:
       "🏥 Show me apartments with a hospital nearby and compare how far the closest hospitals are.",
   },
   // semantic — soft attribute → free-text query (agent warns it can't hard-filter)
   {
     category: "semantic",
-    label: "Student-friendly + which buses",
+    emoji: "🎓",
+    label: "Student-friendly in Steglitz-Zehlendorf",
     prompt:
       "🎓 Find me a student-friendly apartment in Steglitz-Zehlendorf. And which buses stop there?",
   },

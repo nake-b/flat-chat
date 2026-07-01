@@ -31,9 +31,9 @@ describe("pickStratified", () => {
   it("fills from leftovers when categories are fewer than count", () => {
     // Two categories, ask for 3 → must still return 3 distinct prompts.
     const pool: StarterPrompt[] = [
-      { category: "budget", label: "a", prompt: "a" },
-      { category: "budget", label: "b", prompt: "b" },
-      { category: "transit", label: "c", prompt: "c" },
+      { category: "budget", emoji: "🅰️", label: "a", prompt: "a" },
+      { category: "budget", emoji: "🅱️", label: "b", prompt: "b" },
+      { category: "transit", emoji: "🇨", label: "c", prompt: "c" },
     ];
     const chosen = pickStratified(pool, 3);
     expect(chosen).toHaveLength(3);
@@ -42,8 +42,8 @@ describe("pickStratified", () => {
 
   it("does not exceed the pool size", () => {
     const pool: StarterPrompt[] = [
-      { category: "budget", label: "a", prompt: "a" },
-      { category: "transit", label: "b", prompt: "b" },
+      { category: "budget", emoji: "🅰️", label: "a", prompt: "a" },
+      { category: "transit", emoji: "🅱️", label: "b", prompt: "b" },
     ];
     expect(pickStratified(pool, 5)).toHaveLength(2);
   });

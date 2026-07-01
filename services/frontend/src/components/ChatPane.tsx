@@ -128,19 +128,23 @@ export function ChatPane({
 
       {starterOpen ? (
         <div className="px-5 py-3">
-          <p className="mb-2 font-sans text-xs text-ink-ghost">{starterHeadline}</p>
-          {/* Compact capability pills — short label on the chip, full prompt
-              sent on click. One per distinct capability (see pickStratified). */}
-          <div className="flex flex-wrap gap-2">
+          <p className="mb-2 font-sans text-sm text-ink-ghost">{starterHeadline}</p>
+          {/* Chat-bubble cards — an emoji + a short descriptive label; the full
+              prompt is sent on click. Three-across grid so they span the row,
+              one per distinct capability (see pickStratified). */}
+          <div className="grid grid-cols-3 gap-2">
             {starterPrompts.map((p) => (
               <button
                 key={p.label}
                 type="button"
                 title={p.prompt}
                 onClick={() => sendPrompt(p.prompt)}
-                className="rounded-full border border-[#dedede] bg-[#ececec] px-3 py-1.5 text-left text-xs leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
+                className="flex min-h-[76px] flex-col gap-1 rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
               >
-                {p.label}
+                <span className="text-base leading-none" aria-hidden>
+                  {p.emoji}
+                </span>
+                <span>{p.label}</span>
               </button>
             ))}
           </div>

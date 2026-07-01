@@ -15,12 +15,16 @@ Primary files:
 ## Starter Prompt UX
 
 ### Rendering and placement
-- Example prompts render as compact **pills** (rounded-full chips, `flex flex-wrap`)
-  in the left chat pane under `+ New chat / Sign out`, below a random headline.
-- Each pill shows a short **`label`** (e.g. "500 m around Alexanderplatz"); the full
-  sentence (`prompt`) is what gets sent on click. Decoupling label from payload is
-  what keeps the pills small while still sending a rich prompt.
-- **Three** pills are shown, sampled from **distinct capability categories** so they
+- Example prompts render as **chat-bubble cards** (asymmetric `rounded-[14px_14px_14px_4px]`
+  corner, `bg-#ececec`) in a full-width **three-across grid** in the left chat pane
+  under `+ New chat / Sign out`, below a headline.
+- Each card shows an **`emoji`** + a short descriptive **`label`** (e.g. 🏡 "A 2-room
+  with a balcony, somewhere quiet and green"); the full sentence (`prompt`) is what
+  gets sent on click. Decoupling label from payload keeps the card compact while still
+  sending a rich prompt.
+- The headline (`STARTER_HEADLINES`) is framed as *example prompts* ("Example prompts
+  to get you started:"), deliberately NOT echoing the "what I can do" link copy.
+- **Three** cards are shown, sampled from **distinct capability categories** so they
   showcase different things the app can do (see Prompt Set).
 
 ### Prompt click behavior (send immediately)
