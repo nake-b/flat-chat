@@ -1,7 +1,7 @@
 """Berlin apartment search agent.
 
 Role-level instructions only — tool-protocol guidance and the phrase-map
-cheat sheet live on the toolset (`tools.py:tool_protocol_instructions`).
+cheat sheet live on the toolsets (`chat/tools/*.py`).
 Per-turn state (active search summary + which card the user has expanded)
 is composed by `llm_context.build_dynamic_state_prompt` and injected via
 the `@agent.instructions` decorator below.
@@ -12,12 +12,14 @@ See `services/frontend/src/state/UiState.ts` for the matching frontend name.
 
 from pydantic_ai import Agent, RunContext
 
-from flat_chat.chat.lens_tools import LensCapability
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
-from flat_chat.chat.overlay_tools import MapOverlayCapability
-from flat_chat.chat.prompts import TOOL_BACKBONE
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.tools import CoreCapability
+from flat_chat.chat.tools import (
+    TOOL_BACKBONE,
+    CoreCapability,
+    LensCapability,
+    MapOverlayCapability,
+)
 
 # Reference summary of the assistant's current capabilities. Kept as
 # implicit string concatenation (not a triple-quoted block) so each source
@@ -201,7 +203,7 @@ INSTRUCTIONS = "\n\n".join(
 # time / distance). Each returns its toolset wrapped in `StateEmittingToolset`
 # (inside `get_toolset`), so any `deps.state` mutation auto-emits a
 # STATE_SNAPSHOT — emission is structural, not something each tool remembers
-# (see state_emission.py). Splitting into capabilities is behavior-neutral to the
+# (see chat/tools/emission.py). Splitting into capabilities is behavior-neutral to the
 # LLM (same combined tool list + instructions) and sets up `defer_loading` as a
 # later lever. The deferred `ListingProximityCapability` (single-listing distance
 # / travel queries, issue #44) lands next. See

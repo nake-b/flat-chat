@@ -26,9 +26,12 @@ Adding a lens is: a new union member here + a provider that returns
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from flat_chat.listings.context import Marker
 
 
 class MarkerLens(BaseModel):
@@ -96,6 +99,22 @@ class DistanceLens(_LensBase):
 ActiveLens = Annotated[TravelTimeLens | DistanceLens, Field(discriminator="kind")]
 """The one active lens input, if any. Discriminated on `kind` so it round-trips
 through the AG-UI envelope (`model_validate`) and persisted session state."""
+
+
+class LensValueProvider(Protocol):
+    """A source of per-marker lens values. Both `RoutingService` (travel time via
+    OSRM/MOTIS) and `DistanceService` (straight-line via PostGIS `ST_Distance`)
+    implement it, so the lens layer (`chat/tools/lenses.py`) dispatches on
+    `ActiveLens.kind` and treats them interchangeably — the abstraction is
+    demonstrably not coupled to travel time.
+
+    `resolve` returns `{marker_id: value}` in the provider's own units (minutes for
+    travel, metres for distance). Markers with no value (unreachable / unrouted /
+    no geometry) are simply absent from the dict."""
+
+    async def resolve(
+        self, markers: list[Marker], lens: ActiveLens
+    ) -> dict[str, float]: ...
 
 
 def marker_lens_for(lens: ActiveLens | None) -> MarkerLens:

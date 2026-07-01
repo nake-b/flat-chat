@@ -25,7 +25,7 @@ from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import ToolReturn
 
 from flat_chat.chat.session_state import SessionState
-from flat_chat.chat.state_emission import StateEmittingToolset
+from flat_chat.chat.tools import StateEmittingToolset
 
 
 class _FakeWrapped:

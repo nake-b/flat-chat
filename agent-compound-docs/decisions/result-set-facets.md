@@ -80,7 +80,7 @@ in `chat/agent.py` tells the agent to use it for whole-set summaries.
 
 `search/schemas.py` (models), `search/service.py` (`_facets`, 4-tuple return),
 `chat/session_state.py` + `chat/schemas.py` (`facets` field + response mirror),
-`chat/tools.py` (plumb), `chat/llm_context.py` (`<result_facets>` render),
+`chat/tools/core.py` (plumb), `chat/llm_context.py` (`<result_facets>` render),
 `chat/agent.py` (honesty line), `frontend/src/state/SessionState.ts` (TS types).
 
 Tests: `tests/integration/test_search_service.py` (executes the aggregates —

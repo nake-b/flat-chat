@@ -23,7 +23,7 @@ from sqlalchemy import Float, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import Marker
-from flat_chat.listings.lenses import DistanceLens
+from flat_chat.listings.lenses import ActiveLens, DistanceLens
 from flat_chat.listings.models import Listing, named_places
 from flat_chat.search.service import _parse_place_ref
 
@@ -37,15 +37,19 @@ class DistanceService:
         self.db = db
 
     async def resolve(
-        self, markers: list[Marker], lens: DistanceLens
+        self, markers: list[Marker], lens: ActiveLens
     ) -> dict[str, float]:
         """`{marker_id: metres}` straight-line to the lens anchor's geometry.
 
-        Distance is to the resolved SHAPE (correct for the Spree LINE and the
+        Implements the `LensValueProvider` Protocol (hence the `ActiveLens` param);
+        the lens layer only ever routes a `distance` lens here, so narrow to
+        `DistanceLens` up front. Distance is to the resolved SHAPE (correct for the
+        Spree LINE and the
         TU-campus POLYGON), matching the `near_place_ref` search filter. Markers
         with no gold `location`, non-UUID ids, or an unknown/garbage
         `near_place_ref` are simply absent from the dict. One query over the
         result-set ids."""
+        assert isinstance(lens, DistanceLens)
         if not markers or lens.near_place_ref is None:
             return {}
         parsed = _parse_place_ref(lens.near_place_ref)

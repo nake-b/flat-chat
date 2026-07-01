@@ -24,14 +24,9 @@ from __future__ import annotations
 from flat_chat.listings import thresholds
 from flat_chat.listings.context import Anchor, Marker
 from flat_chat.listings.geo import equirect_distance_m
-from flat_chat.listings.lenses import TravelTimeLens
-from flat_chat.routing.errors import RoutingError
+from flat_chat.listings.lenses import ActiveLens, TravelTimeLens
 from flat_chat.routing.motis import FeedWindow, MotisClient, ReachableStop
 from flat_chat.routing.osrm import OsrmClient
-
-# Re-exported so existing `from flat_chat.routing.service import RoutingError`
-# call sites (chat/, routing/__init__.py) keep working after the split.
-__all__ = ["RoutingError", "RoutingService"]
 
 # Degrees-per-metre approximations at Berlin's latitude for the bounding-box
 # pre-filter (cheap reject before the equirectangular distance).
@@ -53,13 +48,17 @@ class RoutingService:
         return await self._motis.feed_window()
 
     async def resolve(
-        self, markers: list[Marker], lens: TravelTimeLens
+        self, markers: list[Marker], lens: ActiveLens
     ) -> dict[str, float]:
         """Return `{marker_id: minutes}` from the anchor to each marker.
 
-        Unreachable / unrouted markers are simply absent from the dict. Raises
-        `RoutingError` if the engine is unreachable or the response is malformed.
-        Transit mode stamps `lens.schedule_stale` / `lens.schedule_as_of`."""
+        Implements the `LensValueProvider` Protocol (hence the `ActiveLens` param);
+        the lens layer only ever routes a `travel_time` lens here, so narrow to
+        `TravelTimeLens` up front. Unreachable / unrouted markers are simply absent
+        from the dict. Raises `RoutingError` if the engine is unreachable or the
+        response is malformed. Transit mode stamps `lens.schedule_stale` /
+        `lens.schedule_as_of`."""
+        assert isinstance(lens, TravelTimeLens)
         # Markers always carry coordinates (search drops null-coordinate rows),
         # but guard anyway so a bad row can't desync a positional response.
         usable = [m for m in markers if m.lat is not None and m.lng is not None]

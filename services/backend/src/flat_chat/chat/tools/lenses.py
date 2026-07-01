@@ -21,10 +21,15 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
-from flat_chat.chat.overlay_tools import _upsert_overlay
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.state_emission import StateEmittingToolset
-from flat_chat.listings.lenses import ActiveLens, DistanceLens, TravelTimeLens
+from flat_chat.chat.tools.emission import StateEmittingToolset
+from flat_chat.chat.tools.overlays import _upsert_overlay
+from flat_chat.listings.lenses import (
+    ActiveLens,
+    DistanceLens,
+    LensValueProvider,
+    TravelTimeLens,
+)
 from flat_chat.routing.errors import RoutingError
 from flat_chat.search.schemas import PREVIEW_N
 
@@ -88,9 +93,10 @@ def lens_protocol_instructions() -> str:
 # --- Provider registry + shared derivation ---------------------------------
 
 
-def _provider_for(ctx: RunContext[ChatDeps], kind: str):
-    """The lens value provider for a lens kind. Both expose the same
-    `resolve(markers, lens) -> {id: value}` shape, so `_apply_lens` is agnostic."""
+def _provider_for(ctx: RunContext[ChatDeps], kind: str) -> LensValueProvider:
+    """The lens value provider for a lens kind. Both satisfy the
+    `LensValueProvider` Protocol (`resolve(markers, lens) -> {id: value}`), so
+    `_apply_lens` treats them interchangeably."""
     if kind == "travel_time":
         return ctx.deps.routing_service
     if kind == "distance":
@@ -117,6 +123,8 @@ def _clear_lens(ctx: RunContext[ChatDeps]) -> None:
     Shared by the `clear_lens` tool, the frontend dismissal (honoured in
     `merge_incoming_state`), and `_apply_lens`'s no-lens branch."""
     state = ctx.deps.state
+    # Unconditional reset is safe: only ONE lens is ever active at a time, so
+    # dropping `active_lens` + the lens's own anchor overlay fully clears it.
     state.active_lens = None
     state.map_overlays = [o for o in state.map_overlays if o.origin != "lens"]
 
@@ -134,13 +142,8 @@ async def _refresh_result_set(ctx: RunContext[ChatDeps]) -> None:
     # Callers guard `search_params is None` before invoking (can't re-derive
     # without the query); assert narrows the Optional for the type checker.
     assert state.search_params is not None
-    markers, preview, total, facets = await ctx.deps.search_service.search(
-        state.search_params
-    )
-    state.result_markers = markers
-    state.preview_cards = preview
-    state.total_results = total
-    state.facets = facets
+    result = await ctx.deps.search_service.search(state.search_params)
+    state.apply_search_result(result)
 
 
 async def _draw_lens_anchor(ctx: RunContext[ChatDeps], near_place_ref: str) -> None:
@@ -157,6 +160,22 @@ async def _draw_lens_anchor(ctx: RunContext[ChatDeps], near_place_ref: str) -> N
     )
     if overlay is not None and all(o.id != overlay.id for o in state.map_overlays):
         _upsert_overlay(state, overlay)
+
+
+async def _activate_lens(
+    ctx: RunContext[ChatDeps], lens: ActiveLens, near_place_ref: str
+) -> None:
+    """Make `lens` the active lens on a freshly-rebuilt result set.
+
+    The shared prologue of both `apply_*_lens` tools: (1) rebuild the FULL result
+    set from the search filters so this apply is `(search) ∩ (this lens)`, never a
+    prior lens's leftovers; (2) store the lens; (3) draw its own `origin="lens"`
+    anchor overlay. Deliberately does NOT call `_apply_lens` — the caller does, so
+    each tool keeps its own provider-failure policy (travel-time catches
+    `RoutingError`; distance can't fail)."""
+    await _refresh_result_set(ctx)
+    ctx.deps.state.active_lens = lens
+    await _draw_lens_anchor(ctx, near_place_ref)
 
 
 async def _apply_lens(ctx: RunContext[ChatDeps]) -> None:
@@ -252,7 +271,8 @@ async def apply_travel_time_lens(
     user changes the destination/mode or it's cleared.
     """
     state = ctx.deps.state
-    if state.search_params is None or not state.result_markers:
+    has_active_result = state.search_params is not None and bool(state.result_markers)
+    if not has_active_result:
         return (
             "There's no active result set yet. Run search_apartments first, "
             "then I can add a travel-time lens to those listings."
@@ -265,23 +285,25 @@ async def apply_travel_time_lens(
             "first and pass one of the returned place_ref tokens."
         )
 
-    # Reset to the full search result BEFORE applying, so switching anchors (or
-    # re-applying) filters (search ∩ this lens), never a prior lens's leftovers.
-    await _refresh_result_set(ctx)
+    # "car" and "transit" are the only modes; anything else falls back to transit.
+    is_car = mode == "car"
+    lens_mode = "car" if is_car else "transit"
 
-    lens_mode = "car" if mode == "car" else "transit"
-    state.active_lens = TravelTimeLens(
-        anchor_label=anchor.label,
-        anchor_lat=anchor.lat,
-        anchor_lng=anchor.lon,
-        near_place_ref=near_place_ref,
-        mode=lens_mode,
-        max_minutes=max_minutes,
+    # `_activate_lens` rebuilds the full result set before applying, so switching
+    # anchors filters (search ∩ this lens), never a prior lens's leftovers, and
+    # draws the destination as the lens's OWN anchor overlay (origin="lens").
+    await _activate_lens(
+        ctx,
+        TravelTimeLens(
+            anchor_label=anchor.label,
+            anchor_lat=anchor.lat,
+            anchor_lng=anchor.lon,
+            near_place_ref=near_place_ref,
+            mode=lens_mode,
+            max_minutes=max_minutes,
+        ),
+        near_place_ref,
     )
-
-    # Draw the destination as the lens's OWN anchor overlay (origin="lens"), so
-    # clearing/switching removes exactly it and nothing the user pinned.
-    await _draw_lens_anchor(ctx, near_place_ref)
 
     try:
         await _apply_lens(ctx)
@@ -296,7 +318,7 @@ async def apply_travel_time_lens(
             "continue without the commute filter?"
         )
 
-    how = "driving" if lens_mode == "car" else "transit"
+    how = "driving" if is_car else "transit"
     # If the transit timetable has lapsed, the routing layer clamped the departure
     # into the last covered day and flagged it — tell the user the schedule's age.
     lens = state.active_lens
@@ -306,7 +328,8 @@ async def apply_travel_time_lens(
             f" Note: the transit timetable data only runs through "
             f"{lens.schedule_as_of}, so these times reflect that day's schedule."
         )
-    if max_minutes is not None:
+    has_cutoff = max_minutes is not None
+    if has_cutoff:
         return (
             f"Filtered to {state.total_results} listings within {max_minutes} "
             f"min {how} of {anchor.label}. The map is now coloured by travel time "
@@ -344,7 +367,8 @@ async def apply_distance_lens(
     or cleared.
     """
     state = ctx.deps.state
-    if state.search_params is None or not state.result_markers:
+    has_active_result = state.search_params is not None and bool(state.result_markers)
+    if not has_active_result:
         return (
             "There's no active result set yet. Run search_apartments first, "
             "then I can add a distance lens to those listings."
@@ -357,24 +381,25 @@ async def apply_distance_lens(
             "first and pass one of the returned place_ref tokens."
         )
 
-    # Reset to the full search result BEFORE applying (see apply_travel_time_lens).
-    await _refresh_result_set(ctx)
-
-    state.active_lens = DistanceLens(
-        anchor_label=anchor.label,
-        anchor_lat=anchor.lat,
-        anchor_lng=anchor.lon,
-        near_place_ref=near_place_ref,
-        max_km=max_km,
+    # Rebuild the full result set, store the lens, draw its anchor overlay
+    # (see apply_travel_time_lens for why the rebuild matters).
+    await _activate_lens(
+        ctx,
+        DistanceLens(
+            anchor_label=anchor.label,
+            anchor_lat=anchor.lat,
+            anchor_lng=anchor.lon,
+            near_place_ref=near_place_ref,
+            max_km=max_km,
+        ),
+        near_place_ref,
     )
-
-    # Draw the destination as the lens's own anchor overlay (origin="lens").
-    await _draw_lens_anchor(ctx, near_place_ref)
 
     # DistanceService is SQL (no fallible engine) — no RoutingError to catch.
     await _apply_lens(ctx)
 
-    if max_km is not None:
+    has_cutoff = max_km is not None
+    if has_cutoff:
         return (
             f"Filtered to {state.total_results} listings within {max_km} km "
             f"(straight-line) of {anchor.label}. The map is now coloured by "
@@ -412,7 +437,7 @@ async def clear_lens(ctx: RunContext[ChatDeps]) -> str:
 class LensCapability(AbstractCapability[ChatDeps]):
     """Map-lens tools (`apply_travel_time_lens`, `apply_distance_lens`,
     `clear_lens`) bundled as a capability. Wrapped in `StateEmittingToolset` so
-    lens mutations auto-emit a STATE_SNAPSHOT (see `state_emission.py`)."""
+    lens mutations auto-emit a STATE_SNAPSHOT (see `emission.py`)."""
 
     def get_toolset(self) -> AgentToolset[ChatDeps] | None:
         return StateEmittingToolset(toolset)

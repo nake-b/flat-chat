@@ -45,6 +45,10 @@ _FEED_WINDOW_TTL = 300.0
 # default 90). Requesting more is a 400, so clamp to it.
 _MOTIS_MAX_MINUTES = 90
 
+# MOTIS HTTP endpoints (appended to the instance `motis_url`).
+_METRICS_PATH = "/metrics"
+_ONE_TO_ALL_PATH = "/api/v1/one-to-all"
+
 
 # A loaded timetable window as (first, last) Berlin-local dates.
 FeedWindow = tuple[date, date]
@@ -189,7 +193,7 @@ class MotisClient:
             return cached[1]
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(f"{self.motis_url}/metrics")
+                resp = await client.get(f"{self.motis_url}{_METRICS_PATH}")
                 resp.raise_for_status()
                 window = _parse_metrics_window(resp.text)
         except httpx.HTTPError as exc:
@@ -215,7 +219,7 @@ class MotisClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.get(
-                    f"{self.motis_url}/api/v1/one-to-all",
+                    f"{self.motis_url}{_ONE_TO_ALL_PATH}",
                     params={
                         "one": one,
                         "transitModes": "TRANSIT",

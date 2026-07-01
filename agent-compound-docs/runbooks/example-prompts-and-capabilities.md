@@ -107,7 +107,7 @@ In `agent.py`:
   time (car / public transport) or straight-line distance to a named place,
   with optional max-minutes / max-km cutoffs. Travel-time carries an extra
   honesty caveat (depends on the routing service + loaded timetable), mirroring
-  the tool-side `<lens_protocol>` in `chat/lens_tools.py`. The `commute`
+  the tool-side `<lens_protocol>` in `chat/tools/lenses.py`. The `commute`
   starter prompt ("30 minutes by car to TU Berlin") maps to
   `apply_travel_time_lens`.
 

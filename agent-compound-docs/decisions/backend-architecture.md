@@ -49,7 +49,7 @@ src/flat_chat/
 ├── chat/
 │   ├── service.py            → Conversation orchestration
 │   ├── agent.py              → Agent definition, tool wiring
-│   ├── tools.py              → Bridges chat → search domain
+│   ├── tools/core.py              → Bridges chat → search domain
 │   ├── models.py
 │   └── schemas.py
 ├── search/

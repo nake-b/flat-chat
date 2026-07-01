@@ -52,7 +52,7 @@ async def resolve(markers: list[Marker], lens: ActiveLens) -> dict[str, float]
   `ST_Distance` against the place's geometry — no engine, so it never raises a
   routing error).
 
-`chat/lens_tools.py:_apply_lens` is the shared derivation: pick the provider by
+`chat/tools/lenses.py:_apply_lens` is the shared derivation: pick the provider by
 `lens.kind` from a tiny per-request registry (`_provider_for`), annotate each
 marker's `lens_value`, drop markers over the cutoff (in the provider's units —
 minutes for travel, `max_km × 1000` metres for distance), refill the preview to
@@ -66,7 +66,7 @@ search — the SQL result set is already valid).
 1. A union member in `listings/lenses.py` (`kind` + anchor + its cutoff field).
 2. A provider that returns `{marker_id: value}` (a service on `ChatDeps`).
 3. A branch in `lens_tools._provider_for` / `_cutoff` / `_descriptor`.
-4. A tool (`apply_<x>_lens`) in `chat/lens_tools.py` — validate the anchor via
+4. A tool (`apply_<x>_lens`) in `chat/tools/lenses.py` — validate the anchor via
    `PlaceService.anchor_point`, set `state.active_lens`, call `_apply_lens`.
 5. A `LENS_STYLES` entry in `state/lensStyles.ts` keyed by the descriptor `key`
    (ramp / domain / number format) + a `state/toolStatus.ts` status-pill entry.

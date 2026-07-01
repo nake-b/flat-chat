@@ -1,3 +1,11 @@
+"""CoreCapability — the core listing tools: search, open, page, locate_place.
+
+The backbone of the agent's tool surface (the other capabilities — overlays,
+lenses — decorate the result set this produces). Carries the `<tool_protocol>`
+prose + phrase map for these tools; the cross-capability invariants live in
+`backbone.py:TOOL_BACKBONE`.
+"""
+
 import logging
 from dataclasses import dataclass
 from datetime import date
@@ -6,11 +14,11 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
-from flat_chat.chat.lens_tools import reapply_lens_hook
 from flat_chat.chat.llm_context import LlmResultSetView
-from flat_chat.chat.overlay_tools import rebuild_search_overlays_hook
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.state_emission import StateEmittingToolset
+from flat_chat.chat.tools.emission import StateEmittingToolset
+from flat_chat.chat.tools.lenses import reapply_lens_hook
+from flat_chat.chat.tools.overlays import rebuild_search_overlays_hook
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
@@ -365,16 +373,14 @@ async def search_apartments(
     # Execute the search. SearchService drops null-coordinate listings and
     # returns markers (EVERY match, ≤ MARKER_CAP), the top-N preview cards,
     # the total, and whole-set facets (price/area ranges, neighbourhood counts).
-    markers, preview, total, facets = await ctx.deps.search_service.search(params)
+    result = await ctx.deps.search_service.search(params)
 
     # SessionState is the canonical in-memory snapshot. Both the LLM (via
     # build_dynamic_state_prompt) and the frontend (via the AG-UI state
     # stream) read from here. One representation, two consumers.
     ctx.deps.state.search_params = params
-    ctx.deps.state.total_results = total
-    ctx.deps.state.result_markers = markers
-    ctx.deps.state.preview_cards = preview
-    ctx.deps.state.facets = facets
+    ctx.deps.state.apply_search_result(result)
+    # A new search resets the user's focus (a lens re-derivation keeps it).
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 

@@ -26,6 +26,11 @@ _CHUNK = 90
 # is tens of milliseconds; this is a generous ceiling.
 _TIMEOUT = 20.0
 
+# OSRM `/table` endpoint (appended to the instance `osrm_url`). The path is a
+# prefix — coordinates are interpolated after it — followed by the query suffix.
+_TABLE_PATH = "/table/v1/driving"
+_TABLE_QUERY = "?sources=0&annotations=duration"
+
 
 def _chunked(seq: list[Marker], size: int) -> Iterator[list[Marker]]:
     for i in range(0, len(seq), size):
@@ -51,8 +56,8 @@ class OsrmClient:
                 for batch in _chunked(markers, _CHUNK):
                     coords = ";".join(f"{m.lng},{m.lat}" for m in batch)
                     url = (
-                        f"{self.osrm_url}/table/v1/driving/{origin};{coords}"
-                        "?sources=0&annotations=duration"
+                        f"{self.osrm_url}{_TABLE_PATH}/{origin};{coords}"
+                        f"{_TABLE_QUERY}"
                     )
                     resp = await client.get(url)
                     resp.raise_for_status()

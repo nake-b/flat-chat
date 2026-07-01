@@ -15,6 +15,7 @@ without?"), unlike the always-available SQL filters in `search/`.
 See `agent-compound-docs/decisions/travel-time-routing.md`.
 """
 
-from flat_chat.routing.service import RoutingError, RoutingService
+from flat_chat.routing.errors import RoutingError
+from flat_chat.routing.service import RoutingService
 
 __all__ = ["RoutingError", "RoutingService"]

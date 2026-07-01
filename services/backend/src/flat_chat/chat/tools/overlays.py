@@ -3,8 +3,16 @@
 Its own toolset + `<overlay_protocol>`, co-located so renaming an overlay tool is
 one edit. `search_apartments` (in CoreCapability) calls `rebuild_search_overlays_hook`
 after each search to redraw the geometry the search filters on. This module is the
-import SINK of the chat-tool trio — it imports nothing from `tools.py` or
-`lens_tools.py`, which is what keeps the three modules acyclic.
+import SINK of the chat-tool trio — it imports nothing from `core.py` or
+`lenses.py`, which is what keeps the three modules acyclic.
+
+Every overlay carries an `origin` that decides its lifecycle:
+  - `"pinned"` — the user/agent drew it via `show_on_map`; sticky across searches.
+  - `"search"` — a side effect of a `near_place_ref` / `transit.lines` filter;
+    rebuilt from the params on every search (so it tracks the active filter).
+  - `"lens"`   — a lens's anchor (drawn by `lenses.py`); removed when the lens is.
+Only `"search"` overlays are recomputed by `_rebuild_search_overlays`; the other
+two are preserved untouched.
 """
 
 from __future__ import annotations
@@ -16,7 +24,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.state_emission import StateEmittingToolset
+from flat_chat.chat.tools.emission import StateEmittingToolset
 
 toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 
@@ -93,7 +101,8 @@ async def show_on_map(
     """
     places = place_refs or []
     lines = transit_lines or []
-    if not places and not lines:
+    nothing_requested = not places and not lines
+    if nothing_requested:
         return (
             "Pass at least one place_ref (from locate_place) or transit_line "
             '(e.g. "U7") to draw something.'

@@ -7,7 +7,7 @@
 >   abstraction — see [`lens-layer.md`](lens-layer.md). `SessionState.travel_time_filter`
 >   → `active_lens: TravelTimeLens | DistanceLens` (discriminated union in the leaf
 >   `listings/lenses.py`); the shared `_apply_travel_lens` → generic
->   `chat/lens_tools.py:_apply_lens` driven by a provider registry. A second lens
+>   `chat/tools/lenses.py:_apply_lens` driven by a provider registry. A second lens
 >   (bird's-eye **distance**, PostGIS `ST_Distance`, no engine) proves the split.
 > - **Tool rename.** `apply_travel_time` → **`apply_travel_time_lens`** (+ new
 >   `apply_distance_lens`), moved into `LensCapability` — see

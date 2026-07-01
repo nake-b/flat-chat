@@ -8,7 +8,7 @@
 Pydantic AI v2 binds tools to the agent via `capabilities=[...]`. We started with
 one `ListingsCapability` wrapping every tool. As the surface grew (search, map
 overlays, and now two lenses + the planned single-listing distance/travel
-queries), one flat `tools.py` with one `<tool_protocol>` blob started to hurt.
+queries), one flat `tools/core.py` with one `<tool_protocol>` blob started to hurt.
 
 ## The de-risking fact
 
@@ -23,9 +23,9 @@ freely and reversibly.
 
 | Capability | Tools | When used | Loaded? |
 |---|---|---|---|
-| **CoreCapability** (`chat/tools.py`) | `search_apartments`, `open_listing`, `get_result_page`, `locate_place` | every conversation | always |
-| **MapOverlayCapability** (`chat/overlay_tools.py`) | `show_on_map`, `hide_on_map`, `clear_map_overlays` | orienting on the map | loaded |
-| **LensCapability** (`chat/lens_tools.py`) | `apply_travel_time_lens`, `apply_distance_lens`, `clear_lens` | mid-session, commute/distance | loaded |
+| **CoreCapability** (`chat/tools/core.py`) | `search_apartments`, `open_listing`, `get_result_page`, `locate_place` | every conversation | always |
+| **MapOverlayCapability** (`chat/tools/overlays.py`) | `show_on_map`, `hide_on_map`, `clear_map_overlays` | orienting on the map | loaded |
+| **LensCapability** (`chat/tools/lenses.py`) | `apply_travel_time_lens`, `apply_distance_lens`, `clear_lens` | mid-session, commute/distance | loaded |
 | **ListingProximityCapability** *(follow-up, [#44](https://github.com/nake-b/flat-chat/issues/44))* | `distance_to`, `travel_time_to` (single active listing) | late-session, evaluating one flat — often never | **deferred** |
 
 Each capability's `get_toolset()` wraps its own `FunctionToolset` in
@@ -49,7 +49,7 @@ decision — cohesion and defer-ability line up, a sign the boundary is right.
 ## Shared backbone
 
 Cross-capability invariants — the one-result-set model, 1-based indices, and the
-`place_ref` flow — live in `chat/prompts.py:TOOL_BACKBONE`, appended to the
+`place_ref` flow — live in `chat/tools/backbone.py:TOOL_BACKBONE`, appended to the
 agent's static `instructions=` (so they sit in the cached prefix). Each
 capability's own `<..._protocol>` then describes only its own tools. This is
 where "run `locate_place` first" is documented once, spanning capabilities.

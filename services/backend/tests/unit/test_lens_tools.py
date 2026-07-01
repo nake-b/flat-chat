@@ -12,17 +12,31 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from flat_chat.chat.lens_tools import (
+from flat_chat.chat.session_state import SessionState
+from flat_chat.chat.tools import (
     apply_distance_lens,
     apply_travel_time_lens,
     clear_lens,
+    search_apartments,
 )
-from flat_chat.chat.session_state import SessionState
-from flat_chat.chat.tools import search_apartments
 from flat_chat.listings.context import Anchor, ListingCard, Marker
-from flat_chat.listings.lenses import TravelTimeLens
+from flat_chat.listings.lenses import LensValueProvider, TravelTimeLens
 from flat_chat.routing.errors import RoutingError
+from flat_chat.routing.service import RoutingService
+from flat_chat.search.distance import DistanceService
 from flat_chat.search.schemas import SearchParams
+
+
+def test_lens_value_providers_conform_to_protocol() -> None:
+    """RoutingService and DistanceService implement the `LensValueProvider`
+    Protocol (A3): the lens layer dispatches on `ActiveLens.kind` and treats them
+    interchangeably. ty enforces the structural match statically; this guards the
+    async `resolve` surface even without the type checker."""
+    import inspect
+
+    assert hasattr(LensValueProvider, "resolve")
+    for cls in (RoutingService, DistanceService):
+        assert inspect.iscoroutinefunction(cls.resolve)
 
 
 class _StubRouting:

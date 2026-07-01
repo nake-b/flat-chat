@@ -39,7 +39,6 @@ from pydantic import (
     computed_field,
     field_serializer,
     field_validator,
-    model_validator,
 )
 
 from flat_chat.listings.context import (
@@ -49,7 +48,7 @@ from flat_chat.listings.context import (
 )
 from flat_chat.listings.lenses import ActiveLens, MarkerLens, marker_lens_for
 from flat_chat.listings.overlays import MapOverlay
-from flat_chat.search.schemas import ResultFacets, SearchParams
+from flat_chat.search.schemas import ResultFacets, SearchParams, SearchResult
 
 
 class SessionState(BaseModel):
@@ -114,6 +113,21 @@ class SessionState(BaseModel):
     on `kind`). Set by an `apply_*_lens` tool; consumed by the matching provider
     (`RoutingService.resolve` / `DistanceService.resolve`)."""
 
+    def apply_search_result(self, result: SearchResult) -> None:
+        """Load a fresh `SearchService.search()` result into the snapshot
+        (markers / preview / total / facets).
+
+        Does NOT touch `search_params` — the caller owns the query (a lens
+        re-derivation reuses the existing params; a new search sets them). Shared
+        by `search_apartments` and the lens layer's `_refresh_result_set` so the
+        four-field assignment lives in one place. Unpacks positionally (a
+        `SearchResult` is a NamedTuple) so a plain 4-tuple works too."""
+        markers, preview, total, facets = result
+        self.result_markers = markers
+        self.preview_cards = preview
+        self.total_results = total
+        self.facets = facets
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def marker_lens(self) -> MarkerLens:
@@ -123,20 +137,6 @@ class SessionState(BaseModel):
         field; ignored on input (the frontend can't set it). Default `price_warm`
         when no lens is active."""
         return marker_lens_for(self.active_lens)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_lens(cls, data: object) -> object:
-        """Back-compat: sessions persisted before the lens generalization carry a
-        `travel_time_filter` dict instead of `active_lens`. Remap it to the
-        travel-time variant of the union so an old session keeps its lens on
-        reload (symmetric with the columnar `"prices"` legacy key below). No-op
-        once `active_lens` is present or the field is absent."""
-        if isinstance(data, dict) and data.get("active_lens") is None:
-            legacy = data.get("travel_time_filter")
-            if isinstance(legacy, dict):
-                data = {**data, "active_lens": {**legacy, "kind": "travel_time"}}
-        return data
 
     @field_serializer("result_markers")
     def _serialize_markers(self, markers: list[Marker]) -> dict[str, list]:
