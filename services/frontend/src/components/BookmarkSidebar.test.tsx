@@ -110,9 +110,9 @@ describe("BookmarkSidebar", () => {
     // thousands separator.
     expect(screen.getByText("€1.450")).toBeTruthy();
     expect(screen.getByText("warm")).toBeTruthy();
-    // Meta line + rail-preferred transit with explicit "min walk".
+    // Full-word facts line + rail-preferred transit phrased as one unit.
     expect(screen.getByText("2 rooms · 64 m²")).toBeTruthy();
-    expect(screen.getByText("🚇 U7 · 8 min walk")).toBeTruthy();
+    expect(screen.getByText("8 min walk to 🚇 U7")).toBeTruthy();
   });
 
   it("falls back to 'Untitled' + 'Berlin' when the card lacks them", () => {

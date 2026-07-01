@@ -35,7 +35,7 @@ src/
     BookmarkSidebar.tsx, BookmarkSidebarItem.tsx → full-cover panel (replaces chat column) for per-user bookmarks: search-by-title + rich landscape detail rows (bigger than result cards; click to pan + open detail)
     BookmarkHeart.tsx → clickable heart button (red-filled when bookmarked, outline otherwise); heart matches property-search convention (see bookmark-affordance.md)
     AccountMenu.tsx → header account dropdown (email · Settings(soon) · Sign out); Escape + outside-click close, role=menu
-    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — ☰ conversations + home-with-heart bookmarks + AccountMenu),
+    ChatPane.tsx (two-row header: centered wordmark, then a utility bar — + new chat + ☰ conversations + home-with-heart bookmarks + AccountMenu; takes onNewChat prop),
                             MapPane.tsx (incl. OverlayLayer — agent geometries beneath the
                             pins: breathing fills, transit station dots + line badges, via one
                             prefers-reduced-motion-gated rAF loop), CardsPane.tsx, CardStrip.tsx, CardDetail.tsx

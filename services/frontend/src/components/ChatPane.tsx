@@ -5,7 +5,7 @@ import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import { useSidebarOpen } from "../hooks/useSidebarOpen";
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 
-export function ChatPane() {
+export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
   // One wildcard registration drives inline pills for every backend tool
   // call. The label per lifecycle phase lives in `state/toolStatus.ts`
   // (single source of UI copy). Adding a new tool = one entry there;
@@ -41,16 +41,37 @@ export function ChatPane() {
       <div className="flex items-center gap-1 border-b-2 border-red px-3 py-1.5">
         <button
           type="button"
+          onClick={onNewChat}
+          aria-label="New chat"
+          title="New chat"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
+        >
+          <svg
+            viewBox="0 0 20 20"
+            width="26"
+            height="26"
+            aria-hidden
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
+          >
+            <line x1="10" y1="4" x2="10" y2="16" />
+            <line x1="4" y1="10" x2="16" y2="10" />
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={toggleSidebar}
           aria-label="Open conversation list"
           aria-expanded={open}
           aria-controls="conversation-sidebar"
-          className="flex h-9 w-9 items-center justify-center text-ink-soft transition-colors hover:text-red"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
         >
           <svg
             viewBox="0 0 20 20"
-            width="24"
-            height="24"
+            width="26"
+            height="26"
             aria-hidden
             fill="none"
             stroke="currentColor"
@@ -68,15 +89,15 @@ export function ChatPane() {
           aria-label="Open bookmarks"
           aria-expanded={bookmarkOpen}
           aria-controls="bookmark-sidebar"
-          className="flex h-9 w-9 items-center justify-center text-ink-soft transition-colors hover:text-red"
+          className="flex h-10 w-10 items-center justify-center text-ink-soft transition-colors hover:text-red"
         >
           {/* Home with a heart inside — the bookmarks affordance, echoing the
               red save-heart on cards. House strokes follow currentColor so
               hover recolours them; the heart fill is fixed Berliner Rot. */}
           <svg
             viewBox="0 0 28 28"
-            width="24"
-            height="24"
+            width="26"
+            height="26"
             aria-hidden
             fill="none"
             stroke="currentColor"

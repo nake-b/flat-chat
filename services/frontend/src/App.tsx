@@ -95,7 +95,7 @@ function App({
     <>
       <div className="grid h-screen w-screen grid-cols-[2fr_3fr] overflow-hidden bg-paper">
         <aside className="relative overflow-hidden border-r border-paper-rule">
-          <ChatPane />
+          <ChatPane onNewChat={onNewConversation} />
           <BookmarkSidebar
             open={bookmarkOpen}
             items={bookmarkItems}

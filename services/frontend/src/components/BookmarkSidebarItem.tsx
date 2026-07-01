@@ -43,29 +43,45 @@ export function BookmarkSidebarItem({
     priceSub.push(`€${nf.format(Math.round(card.price_cold_eur))} kalt`);
   }
   if (card.nebenkosten_eur != null) {
-    priceSub.push(`€${nf.format(Math.round(card.nebenkosten_eur))} NK`);
+    priceSub.push(`€${nf.format(Math.round(card.nebenkosten_eur))} Nebenkosten`);
   }
 
-  // rooms · bedrooms · m²
-  const meta: string[] = [];
+  // Full-word facts line — uses the panel's horizontal width instead of a wall
+  // of abbreviated chips. rooms · bedrooms · size · floor · availability.
+  const facts: string[] = [];
   if (card.rooms != null) {
-    meta.push(`${card.rooms} ${card.rooms === 1 ? "room" : "rooms"}`);
+    facts.push(`${card.rooms} ${card.rooms === 1 ? "room" : "rooms"}`);
   }
-  if (card.bedrooms != null) meta.push(`${card.bedrooms} bd`);
-  if (card.area_sqm != null) meta.push(`${Math.round(card.area_sqm)} m²`);
+  if (card.bedrooms != null) {
+    facts.push(`${card.bedrooms} ${card.bedrooms === 1 ? "bedroom" : "bedrooms"}`);
+  }
+  if (card.area_sqm != null) facts.push(`${Math.round(card.area_sqm)} m²`);
+  if (card.floor != null) {
+    facts.push(
+      card.floors_total != null
+        ? `floor ${card.floor} of ${card.floors_total}`
+        : `floor ${card.floor}`,
+    );
+  }
+  if (card.available_from != null) {
+    // available_from can arrive as a full ISO timestamp; show just the date.
+    facts.push(`available ${card.available_from.slice(0, 10)}`);
+  }
 
   const transit =
     card.nearest_transit_line != null && card.walk_min_to_transit != null
       ? formatTransitDetailed(card.nearest_transit_line, card.walk_min_to_transit)
       : card.nearest_transit_line;
 
-  // Chip row — richer than the result card (this is the detail view). Cap at 8
-  // so a heavily-tagged listing stays scannable.
+  // Chips are now only for the qualitative/boolean features (facts moved to the
+  // text line above), so they stay on one or two rows rather than a wall.
   const chips: { key: string; label: string; wbs?: boolean }[] = [];
-  if (card.wbs_required === true) chips.push({ key: "wbs", label: "WBS", wbs: true });
-  if (card.inside_ring === true) chips.push({ key: "ring", label: "⭕ inside ring" });
+  if (card.wbs_required === true) {
+    chips.push({ key: "wbs", label: "WBS required", wbs: true });
+  }
+  if (card.inside_ring === true) chips.push({ key: "ring", label: "⭕ inside the ring" });
   if (card.nearest_park_m != null) {
-    chips.push({ key: "park", label: `🌳 ${card.nearest_park_m}m` });
+    chips.push({ key: "park", label: `🌳 park ${card.nearest_park_m} m` });
   }
   if (card.noise_label != null) {
     chips.push({ key: "noise", label: `🔉 ${card.noise_label}` });
@@ -73,26 +89,12 @@ export function BookmarkSidebarItem({
   if (card.density_label != null) {
     chips.push({ key: "density", label: `🏙 ${card.density_label}` });
   }
-  if (card.floor != null) {
-    chips.push({
-      key: "floor",
-      label:
-        card.floors_total != null
-          ? `Floor ${card.floor}/${card.floors_total}`
-          : `Floor ${card.floor}`,
-    });
-  }
-  if (card.is_furnished === true) chips.push({ key: "furn", label: "Furnished" });
-  if (card.has_balcony === true) chips.push({ key: "balc", label: "Balkon" });
-  if (card.has_kitchen === true) chips.push({ key: "kitchen", label: "Küche" });
-  if (card.has_elevator === true) chips.push({ key: "elev", label: "Aufzug" });
-  if (card.has_garden === true) chips.push({ key: "garden", label: "Garten" });
-  if (card.available_from != null) {
-    // available_from can arrive as a full ISO timestamp; show just the
-    // YYYY-MM-DD date portion.
-    chips.push({ key: "avail", label: `ab ${card.available_from.slice(0, 10)}` });
-  }
-  const shownChips = chips.slice(0, 8);
+  if (card.is_furnished === true) chips.push({ key: "furn", label: "furnished" });
+  if (card.has_balcony === true) chips.push({ key: "balc", label: "balcony" });
+  if (card.has_kitchen === true) chips.push({ key: "kitchen", label: "fitted kitchen" });
+  if (card.has_elevator === true) chips.push({ key: "elev", label: "elevator" });
+  if (card.has_garden === true) chips.push({ key: "garden", label: "garden" });
+  const shownChips = chips;
 
   return (
     <div className={"group relative border-l-2 transition-colors " + wrapperClasses}>
@@ -151,13 +153,13 @@ export function BookmarkSidebarItem({
             </div>
           ) : null}
 
-          {meta.length > 0 ? (
-            <div className="mt-0.5 font-mono text-[11px] text-ink-ghost">
-              {meta.join(" · ")}
+          {facts.length > 0 ? (
+            <div className="mt-1 font-mono text-[11px] text-ink-ghost">
+              {facts.join(" · ")}
             </div>
           ) : null}
           {transit ? (
-            <div className="mt-0.5 truncate font-mono text-[11px] text-ink-ghost">
+            <div className="mt-0.5 truncate font-mono text-[11px] text-ink-soft">
               {transit}
             </div>
           ) : null}
