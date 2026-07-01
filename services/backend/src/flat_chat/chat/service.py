@@ -7,6 +7,7 @@ from typing import Any
 from ag_ui.core import (
     BaseEvent,
     EventType,
+    RunErrorEvent,
     RunFinishedEvent,
     TextMessageStartEvent,
     ToolCallResultEvent,
@@ -475,8 +476,26 @@ async def _with_session_and_lock(
     both the lock and `using_session(...)` must live inside the generator —
     acquiring them at the call site would release before any events flow.
     Wrapping the generator keeps both active until the stream closes.
+
+    Also the last line of defence against a mid-run failure. If the agent run
+    raises (e.g. the LLM provider errors after its own retries are exhausted),
+    the exception would otherwise propagate into Starlette's SSE writer and the
+    stream would just die — no run-finished, no error, a frozen "thinking" pill.
+    We catch it, log it in full (this is where the provider exception class is
+    visible), and emit a terminal `RUN_ERROR` so the frontend resolves the pill
+    and can tell the user to retry, instead of hanging forever.
     """
     async with lock:
         with using_session(session_id):
-            async for event in stream:
-                yield event
+            try:
+                async for event in stream:
+                    yield event
+            except Exception:
+                logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=(
+                        "Sorry — I hit a problem reaching the model. "
+                        "Please try that again."
+                    ),
+                )

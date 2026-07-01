@@ -18,6 +18,7 @@ import {
 import { useHover } from "./hooks/useHover";
 import { useSidebarOpen } from "./hooks/useSidebarOpen";
 import { useRecovery } from "./state/recovery";
+import { useRunError } from "./state/runError";
 import "./index.css";
 
 // Bootstrap: resolve the conversation thread, then mount CopilotKit pointing at
@@ -111,6 +112,22 @@ function Bootstrap() {
         : null,
     [conversationId],
   );
+
+  // Surface a terminal RUN_ERROR (emitted when an agent run fails mid-stream)
+  // as a retryable banner. CopilotKit 1.10 doesn't render RUN_ERROR itself, so
+  // we tap the agent's subscriber API directly: set the message on error, and
+  // clear it when the next run starts (a retry or any new turn dismisses it).
+  useEffect(() => {
+    if (!agent) return;
+    const sub = agent.subscribe({
+      onRunStartedEvent: () => useRunError.getState().clear(),
+      onRunErrorEvent: ({ event }) =>
+        useRunError
+          .getState()
+          .setError(event.message || "Something went wrong. Please try again."),
+    });
+    return () => sub.unsubscribe();
+  }, [agent]);
 
   // CopilotKit injects a floating dev-console / promo widget as a
   // <cpk-web-inspector> custom element with a closed shadow root. Hide the host
