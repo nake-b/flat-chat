@@ -17,34 +17,24 @@ _CACHE_SETTINGS = AnthropicModelSettings(
 )
 
 
-def build_anthropic_model(settings: Settings) -> Model:
-    """Build an Anthropic-direct chat model with prompt caching enabled.
+def build_anthropic_model(
+    settings: Settings, model_id: str, *, cache: bool = True
+) -> Model:
+    """Build an Anthropic-direct chat model.
 
-    Owns its own validation — the orchestrator only checks for key presence.
+    `cache=True` (the chat default) attaches the prompt-caching breakpoints;
+    `cache=False` (titling) omits them — a single ~50-token call per
+    conversation would never pay back the cache. Owns its own validation: the
+    orchestrator only checks for key presence, so an empty `model_id` raises
+    here with a clear message.
     """
-    if not settings.anthropic_model:
+    if not model_id:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is set but ANTHROPIC_MODEL is empty. "
-            "Set a model id (e.g. 'claude-sonnet-4-6')."
+            "ANTHROPIC_API_KEY is set but the requested model id is empty "
+            "(check ANTHROPIC_MODEL / ANTHROPIC_TITLE_MODEL in .env)."
         )
     return AnthropicModel(
-        settings.anthropic_model,
+        model_id,
         provider=AnthropicProvider(api_key=settings.anthropic_api_key),
-        settings=_CACHE_SETTINGS,
-    )
-
-
-def build_anthropic_title_model(settings: Settings) -> Model:
-    """Build an Anthropic-direct model for one-shot conversation titling.
-
-    No cache breakpoints — it's a single ~50-token call per conversation, the
-    cache would never pay back. Cheaper/faster default model (Haiku).
-    """
-    if not settings.anthropic_title_model:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is set but ANTHROPIC_TITLE_MODEL is empty."
-        )
-    return AnthropicModel(
-        settings.anthropic_title_model,
-        provider=AnthropicProvider(api_key=settings.anthropic_api_key),
+        settings=_CACHE_SETTINGS if cache else None,
     )

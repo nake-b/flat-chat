@@ -13,11 +13,11 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from flat_chat.chat.agent import agent
-from flat_chat.chat.providers import build_chat_model
+from flat_chat.chat.providers import build_chat_model, build_title_model
 from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.title_gen import generate_title, is_first_completed_turn
+from flat_chat.chat.title_gen import TitleGenerationService, is_first_completed_turn
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
@@ -30,6 +30,12 @@ except ImportError:  # pragma: no cover — observability is optional
     from contextlib import nullcontext as using_session  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# Strong references to fire-and-forget background tasks (title generation).
+# `asyncio.create_task` returns a task the event loop only weakly references, so
+# without holding it here the task can be garbage-collected mid-execution. Each
+# task removes itself via `add_done_callback(_background_tasks.discard)`.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 class InvalidAgentRequestError(Exception):
@@ -221,11 +227,16 @@ class ChatService:
             if session.title is None and is_first_completed_turn(
                 session.message_history
             ):
-                asyncio.create_task(
+                task = asyncio.create_task(
                     _generate_and_persist_title(
                         self.store, session.id, session.message_history
                     )
                 )
+                # Hold a strong reference until the task finishes — the loop
+                # only weakly references it, so without this it could be GC'd
+                # mid-run and the conversation would stay "Untitled".
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
         try:
             model = build_chat_model()
@@ -292,14 +303,20 @@ async def _generate_and_persist_title(
     """Background task: generate a title from the first turn, persist if NULL.
 
     Catches all exceptions — the title is cosmetic and a failure here must
-    never propagate into the user's request loop. The `session_id` ContextVar
-    bound in `dispatch_agent_request` does NOT propagate into tasks spawned
-    via `create_task` in newer Python versions, but the SQL hook in
-    `core/database.py` reads it via `.get("")` which simply omits the SQL
-    comment — no error.
+    never propagate into the user's request loop. `asyncio.create_task` runs
+    the coroutine in a COPY of the current context, so the `session_id`
+    ContextVar bound in `dispatch_agent_request` DOES propagate (a snapshot
+    taken at task-creation time) and the SQL hook in `core/database.py` tags
+    this task's statements with the same session. Either way it reads via
+    `.get("")`, so a missing value would just omit the SQL comment — no error.
     """
     try:
-        title = await generate_title(history)
+        try:
+            model = build_title_model()
+        except RuntimeError as exc:
+            logger.warning("Title model unavailable: %s", exc)
+            return
+        title = await TitleGenerationService(model).generate(history)
         if title is None:
             return
         updated = await store.set_title_if_unset(session_id, title)

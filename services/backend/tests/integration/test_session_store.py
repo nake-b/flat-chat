@@ -172,7 +172,7 @@ def test_state_snapshot_overwrites_not_appends(async_db_url):
     assert got.state.total_results == 99
 
 
-def test_list_by_user_excludes_empty_conversations(async_db_url):
+def test_list_conversation_summaries_excludes_empty_conversations(async_db_url):
     """Store-layer guard for the EXISTS filter — paired with the HTTP-level test."""
 
     async def body(store):
@@ -180,7 +180,7 @@ def test_list_by_user_excludes_empty_conversations(async_db_url):
         with_msg = await store.create(USER)
         with_msg.message_history = [_user("hello"), _assistant("hi")]
         await store.save(with_msg)
-        return empty.id, with_msg.id, await store.list_by_user(USER)
+        return empty.id, with_msg.id, await store.list_conversation_summaries(USER)
 
     empty_id, with_msg_id, rows = drive(async_db_url, body)
     ids = [row.id for row in rows]

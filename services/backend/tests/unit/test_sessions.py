@@ -120,7 +120,7 @@ def test_save_replaces_session_in_store():
     assert asyncio.run(store.get(session.id)) is session
 
 
-def test_list_by_user_filters_empty_and_scopes():
+def test_list_conversation_summaries_filters_empty_and_scopes():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     store = InMemorySessionStore()
@@ -135,7 +135,7 @@ def test_list_by_user_filters_empty_and_scopes():
     other.message_history = [ModelRequest(parts=[UserPromptPart(content="hey")])]
     asyncio.run(store.save(other))
 
-    rows = asyncio.run(store.list_by_user(USER))
+    rows = asyncio.run(store.list_conversation_summaries(USER))
     ids = [r.id for r in rows]
     assert with_msg.id in ids
     assert empty.id not in ids

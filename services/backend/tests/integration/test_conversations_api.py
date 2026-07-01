@@ -159,9 +159,9 @@ def test_list_empty_returns_empty_array(async_db_url):
 def test_list_excludes_empty_conversations(async_db_url):
     """A conversation with zero messages does NOT appear in the sidebar list.
 
-    Guards the EXISTS subquery in `DbSessionStore.list_by_user` from regressing
-    to "all conversations" — a "+ New chat" click that never sent a message
-    must stay invisible.
+    Guards the EXISTS subquery in `DbSessionStore.list_conversation_summaries`
+    from regressing to "all conversations" — a "+ New chat" click that never
+    sent a message must stay invisible.
     """
 
     async def body(client, store):

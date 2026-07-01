@@ -49,7 +49,9 @@ class SessionStore(Protocol):
 
     async def save(self, session: ChatSession) -> None: ...
 
-    async def list_by_user(self, user_id: str) -> list[ConversationSummary]:
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
         """Return the user's conversations that have at least one message.
 
         Powers the sidebar list endpoint (`GET /api/conversations`). Empty
@@ -119,7 +121,9 @@ class InMemorySessionStore:
         # The call is kept on the Protocol so DB-backed impls have a hook.
         self._sessions[session.id] = session
 
-    async def list_by_user(self, user_id: str) -> list[ConversationSummary]:
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
         # No `updated_at` on in-memory `ChatSession` — `created_at` is fine
         # for tests, which don't exercise re-ordering precisely.
         rows = [
@@ -320,7 +324,9 @@ class DbSessionStore:
                 )
             )
 
-    async def list_by_user(self, user_id: str) -> list[ConversationSummary]:
+    async def list_conversation_summaries(
+        self, user_id: str
+    ) -> list[ConversationSummary]:
         user_uuid = UUID(user_id)
         # EXISTS correlated subquery for the "has at least one message" filter:
         # short-circuits on the first matching message, composes with

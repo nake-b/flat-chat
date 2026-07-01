@@ -6,14 +6,16 @@ go through these `Depends(...)` factories so the request scope owns the
 session lifecycle.
 """
 
-from fastapi import Depends
+import uuid
+
+from fastapi import Depends, HTTPException, status
 from pydantic_ai import Embedder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.chat.sessions import DbSessionStore, SessionStore
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
-from flat_chat.listings.bookmarks_service import BookmarkService
+from flat_chat.listings.bookmarks import BookmarkService
 from flat_chat.listings.service import ListingService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
@@ -44,6 +46,22 @@ async def get_user_id(user: User = Depends(current_active_user)) -> str:
     to run as an arbitrary user without minting a real cookie.
     """
     return str(user.id)
+
+
+def valid_listing_id(listing_id: str) -> uuid.UUID:
+    """Validate a `{listing_id}` path param as a UUID, 422 on malformed.
+
+    Shared by the listing and bookmark routes so a malformed id gets the same
+    422 everywhere (malformed ≠ not-found). Returns the parsed `UUID`; the
+    downstream services accept `str | UUID`.
+    """
+    try:
+        return uuid.UUID(listing_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="invalid listing id",
+        ) from exc
 
 
 def get_listing_service(

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from flat_chat.core.database import get_async_db
 from flat_chat.core.dependencies import get_user_id
-from flat_chat.listings.bookmarks_models import Bookmark
+from flat_chat.listings.bookmarks import Bookmark
 from flat_chat.listings.models import Listing
 from flat_chat.main import app
 from flat_chat.users.models import User

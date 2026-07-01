@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from flat_chat.listings.bookmarks_models import Bookmark
+from flat_chat.listings.bookmarks.models import Bookmark
 from flat_chat.listings.context import ListingCard
 from flat_chat.listings.service import ListingService
 
@@ -32,15 +32,18 @@ class BookmarkService:
         self.db = db
         self.listing_service = listing_service
 
-    async def add(self, user_id: str, listing_id: str) -> None:
+    async def add(self, user_id: str, listing_id: str | uuid.UUID) -> None:
         """Upsert a bookmark. Idempotent — re-adding is a no-op.
 
         The caller is always an authenticated user (the route resolves
         `get_user_id` → `current_active_user`), so the `app.users` row already
         exists and the FK is satisfied — no user upsert needed here.
+
+        `listing_id` accepts a str or UUID (the route passes the pre-validated
+        `UUID` from `valid_listing_id`); mirrors `ListingService`'s shape.
         """
         user_uuid = uuid.UUID(user_id)
-        listing_uuid = uuid.UUID(listing_id)
+        listing_uuid = uuid.UUID(str(listing_id))
         await self.db.execute(
             pg_insert(Bookmark)
             .values(user_id=user_uuid, listing_id=listing_uuid)
@@ -48,14 +51,14 @@ class BookmarkService:
         )
         await self.db.commit()
 
-    async def remove(self, user_id: str, listing_id: str) -> None:
+    async def remove(self, user_id: str, listing_id: str | uuid.UUID) -> None:
         """Delete a bookmark. Idempotent — a no-op if the row didn't exist.
 
         The route is 204 either way; the frontend's optimistic UI shouldn't
-        see 404 noise on a double-delete.
+        see 404 noise on a double-delete. `listing_id` accepts a str or UUID.
         """
         user_uuid = uuid.UUID(user_id)
-        listing_uuid = uuid.UUID(listing_id)
+        listing_uuid = uuid.UUID(str(listing_id))
         await self.db.execute(
             delete(Bookmark)
             .where(Bookmark.user_id == user_uuid)

@@ -31,8 +31,11 @@ src/flat_chat/
                           models.py       app.* ORMs: Conversation, Message, SessionStateRow
                           sessions.py     SessionStore Protocol + InMemory + DbSessionStore
                           service.py      ChatService — dispatches AG-UI run, history-authoritative
-                          title_gen.py    Background sidebar-title LLM call (fired after first turn)
-                          providers/      Provider dispatch (Anthropic / Azure) — chat + title models
+                          title_gen.py    TitleGenerationService(model) + pure title helpers
+                                          (fired as a background task after the first turn)
+                          providers/      Provider dispatch (Anthropic / Azure) — one
+                                          parameterized builder per provider serves both
+                                          chat + title (build_chat_model / build_title_model)
   users/               → Identity domain (app.* owned).
                           models.py       User ORM (fastapi-users columns)
                           auth.py         fastapi-users wiring (UserManager,
@@ -51,7 +54,6 @@ src/flat_chat/
   listings/            → NEW. Shared listing-domain primitives.
                           models.py            Listing + ListingGeoContext + ListingNearby* + named_places
                                                + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
-                          bookmarks_models.py  Bookmark ORM (app schema — composite PK, CASCADE FKs)
                           types.py             Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
                           context.py           ListingDetail + ListingCard + nested dataclasses
                           overlays.py          MapOverlay + OverlayPoint + OVERLAY_* consts
@@ -60,7 +62,9 @@ src/flat_chat/
                           labels.py            bucket_*, walk_minutes, encode_modes, ...
                           thresholds.py        Single source of truth for numeric constants
                           service.py           ListingService — async get_detail(id) / get_cards(ids)
-                          bookmarks_service.py BookmarkService — add/remove/list_ids/list_cards
+                          bookmarks/           Bookmark subpackage (app schema)
+                                               models.py   Bookmark ORM (composite PK, CASCADE FKs)
+                                               service.py  BookmarkService — add/remove/list_ids/list_cards
 ```
 
 ## Layering rules
@@ -303,9 +307,12 @@ When adding a new search filter, add a test in the same change.
   placeholder). Logto is the
   documented future migration; Authlib (social) deferred. See
   [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
-- Bookmarks shipped — per-user saved listings via `listings/bookmarks_service.py`
-  + `api/bookmarks.py`. HTTP-only (idempotent POST/DELETE, GET /ids for fast star
-  hydration, GET / for tier-2 cards). Migration `0002_app_bookmarks` carries the
+- Bookmarks shipped — per-user saved listings via the `listings/bookmarks/`
+  subpackage (`models.py` + `service.py`) + `api/bookmarks.py`. HTTP-only
+  (idempotent POST/DELETE, GET /ids for fast star hydration, GET / for tier-2
+  cards). Malformed `{listing_id}` → 422 via the shared `valid_listing_id`
+  dependency (also applied to `GET /api/listings/{id}`). Migration
+  `0002_app_bookmarks` carries the
   composite-PK join table with CASCADE on both FKs (including the cross-schema FK
   to `world.listings.id`, so a delisting sweeps any bookmarks pointing at it).
 - Refinement cache deferred (see `session-state-design.md` — if

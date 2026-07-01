@@ -14,23 +14,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
-from flat_chat.core.dependencies import get_bookmark_service, get_user_id
-from flat_chat.listings.bookmarks_service import BookmarkService
+from flat_chat.core.dependencies import (
+    get_bookmark_service,
+    get_user_id,
+    valid_listing_id,
+)
+from flat_chat.listings.bookmarks import BookmarkService
 from flat_chat.listings.context import ListingCard
 
 router = APIRouter()
-
-
-def _parse_listing_id(raw: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(raw)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="invalid listing id",
-        ) from exc
 
 
 # Static paths must precede the parametric `/{listing_id}` ones — FastAPI matches
@@ -62,23 +56,21 @@ async def list_bookmarks(
 
 @router.post("/{listing_id}", status_code=status.HTTP_200_OK)
 async def add_bookmark(
-    listing_id: str,
+    listing_id: uuid.UUID = Depends(valid_listing_id),
     user_id: str = Depends(get_user_id),
     service: BookmarkService = Depends(get_bookmark_service),
 ) -> dict[str, str]:
     """Bookmark a listing. Idempotent — re-adding is 200, not 409."""
-    _parse_listing_id(listing_id)
     await service.add(user_id, listing_id)
     return {"status": "ok"}
 
 
 @router.delete("/{listing_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_bookmark(
-    listing_id: str,
+    listing_id: uuid.UUID = Depends(valid_listing_id),
     user_id: str = Depends(get_user_id),
     service: BookmarkService = Depends(get_bookmark_service),
 ) -> Response:
     """Remove a bookmark. 204 either way — idempotent for optimistic UI."""
-    _parse_listing_id(listing_id)
     await service.remove(user_id, listing_id)
     return Response(status_code=204)

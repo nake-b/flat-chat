@@ -21,8 +21,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-
-from flat_chat.chat.providers import build_title_model
+from pydantic_ai.models import Model
 
 logger = logging.getLogger(__name__)
 
@@ -133,26 +132,34 @@ def clean_title(raw: str | None) -> str | None:
     return text[:_TITLE_MAX_CHARS]
 
 
-async def generate_title(history: list[ModelMessage]) -> str | None:
-    """Run the one-shot title LLM call against the first user/assistant pair.
+class TitleGenerationService:
+    """Generates a sidebar title from a conversation's first turn.
 
-    Returns the cleaned title, or None if the call errored, the history had
-    no usable first exchange, or the cleaned output was empty. Callers MUST
-    decide what to do with None (typically: leave the DB title NULL).
+    Takes the (cheap/fast) `model` in the constructor — matching the DI style of
+    `SearchService` / `ListingService` / `BookmarkService`. The caller owns
+    provider selection (`build_title_model()` in `providers/`), which keeps this
+    service decoupled from the provider seam: tests inject a `TestModel` directly
+    instead of monkeypatching the module-level `lru_cache`.
     """
-    exchange = _extract_first_exchange(history)
-    if exchange is None:
-        return None
-    user_text, assistant_text = exchange
-    prompt = f"USER:\n{user_text}\n\nASSISTANT:\n{assistant_text}"
-    try:
-        model = build_title_model()
-    except RuntimeError as exc:
-        logger.warning("Title model unavailable: %s", exc)
-        return None
-    try:
-        result = await _title_agent.run(prompt, model=model)
-    except Exception:
-        logger.exception("Title generation call failed")
-        return None
-    return clean_title(result.output)
+
+    def __init__(self, model: Model) -> None:
+        self._model = model
+
+    async def generate(self, history: list[ModelMessage]) -> str | None:
+        """Run the one-shot title LLM call against the first user/assistant pair.
+
+        Returns the cleaned title, or None if the call errored, the history had
+        no usable first exchange, or the cleaned output was empty. Callers MUST
+        decide what to do with None (typically: leave the DB title NULL).
+        """
+        exchange = _extract_first_exchange(history)
+        if exchange is None:
+            return None
+        user_text, assistant_text = exchange
+        prompt = f"USER:\n{user_text}\n\nASSISTANT:\n{assistant_text}"
+        try:
+            result = await _title_agent.run(prompt, model=self._model)
+        except Exception:
+            logger.exception("Title generation call failed")
+            return None
+        return clean_title(result.output)

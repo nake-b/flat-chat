@@ -123,9 +123,10 @@ def _single_text_model(text: str) -> FunctionModel:
 
 @pytest.fixture
 def fake_title_model(monkeypatch):
-    """Pin `build_title_model` to a TestModel so `_title_agent.run` works."""
+    """Pin `build_title_model` (imported into `service`) to a TestModel so the
+    `TitleGenerationService` the hook constructs runs offline."""
     monkeypatch.setattr(
-        title_gen_mod,
+        service_mod,
         "build_title_model",
         lambda: TestModel(custom_output_text="Kreuzberg 2-room search"),
     )
@@ -153,13 +154,13 @@ def test_title_not_regenerated_on_second_turn(fake_title_model, monkeypatch):
     """Second turn must NOT fire the title model again (idempotence)."""
     call_counter = {"n": 0}
 
-    original = title_gen_mod.generate_title
+    original = title_gen_mod.TitleGenerationService.generate
 
-    async def spy(history):
+    async def spy(self, history):
         call_counter["n"] += 1
-        return await original(history)
+        return await original(self, history)
 
-    monkeypatch.setattr(service_mod, "generate_title", spy)
+    monkeypatch.setattr(title_gen_mod.TitleGenerationService, "generate", spy)
 
     async def go():
         store = InMemorySessionStore()
@@ -196,9 +197,10 @@ def test_title_failure_does_not_break_persistence(monkeypatch):
     def boom():
         raise RuntimeError("provider down")
 
-    # Failure source: provider construction. (Equivalent: a model that raises
-    # mid-call; both paths land in the `try/except` inside `generate_title`.)
-    monkeypatch.setattr(title_gen_mod, "build_title_model", boom)
+    # Failure source: provider construction, caught in `_generate_and_persist_title`.
+    # (Equivalent: a model that raises mid-call, caught inside
+    # `TitleGenerationService.generate`.)
+    monkeypatch.setattr(service_mod, "build_title_model", boom)
 
     async def go():
         store = InMemorySessionStore()

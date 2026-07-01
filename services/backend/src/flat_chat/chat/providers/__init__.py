@@ -49,18 +49,13 @@ Four layers, each with exactly one job:
 """
 
 import logging
+from collections.abc import Callable
 from functools import lru_cache
 
 from pydantic_ai.models import Model
 
-from flat_chat.chat.providers.anthropic import (
-    build_anthropic_model,
-    build_anthropic_title_model,
-)
-from flat_chat.chat.providers.azure import (
-    build_azure_model,
-    build_azure_title_model,
-)
+from flat_chat.chat.providers.anthropic import build_anthropic_model
+from flat_chat.chat.providers.azure import build_azure_model
 from flat_chat.core.config import settings
 
 __all__ = ["build_chat_model", "build_title_model"]
@@ -68,27 +63,45 @@ __all__ = ["build_chat_model", "build_title_model"]
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def build_chat_model() -> Model:
-    # Anthropic wins when both are set — its native prompt caching is the
-    # reason this provider exists in the first place. To force Azure during
-    # local dev, unset ANTHROPIC_API_KEY in your .env.
+def _select(
+    *,
+    anthropic: Callable[[], Model],
+    azure: Callable[[], Model],
+) -> Model:
+    """Pick a provider by key presence and build via the supplied thunk.
+
+    Anthropic wins when both keys are set — its native prompt caching is the
+    reason that provider exists at all. To force Azure during local dev, unset
+    ANTHROPIC_API_KEY in your .env. The thunks defer the actual (model-id /
+    deployment-specific) construction so this helper stays provider-agnostic.
+    """
     if settings.anthropic_api_key:
-        logger.info(
-            "LLM provider: anthropic-direct (model=%s)", settings.anthropic_model
-        )
-        return build_anthropic_model(settings)
+        return anthropic()
     if settings.azure_openai_api_key:
-        logger.info(
-            "LLM provider: azure-openai (deployment=%s)",
-            settings.azure_openai_deployment,
-        )
-        return build_azure_model(settings)
+        return azure()
     raise RuntimeError(
         "No LLM provider configured. Set ANTHROPIC_API_KEY or "
         "AZURE_OPENAI_API_KEY (with AZURE_OPENAI_ENDPOINT, "
         "AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION) in .env."
     )
+
+
+@lru_cache(maxsize=1)
+def build_chat_model() -> Model:
+    def anthropic() -> Model:
+        logger.info(
+            "LLM provider: anthropic-direct (model=%s)", settings.anthropic_model
+        )
+        return build_anthropic_model(settings, settings.anthropic_model, cache=True)
+
+    def azure() -> Model:
+        logger.info(
+            "LLM provider: azure-openai (deployment=%s)",
+            settings.azure_openai_deployment,
+        )
+        return build_azure_model(settings, settings.azure_openai_deployment)
+
+    return _select(anthropic=anthropic, azure=azure)
 
 
 @lru_cache(maxsize=1)
@@ -98,13 +111,15 @@ def build_title_model() -> Model:
     Shares provider selection with `build_chat_model` (Anthropic wins when both
     keys are set), but uses a different model id and no prompt-caching
     breakpoints — titling is a single ~50-token call per conversation and the
-    cache would never pay back.
+    cache would never pay back. Azure falls back to the chat deployment when no
+    dedicated title deployment is configured.
     """
-    if settings.anthropic_api_key:
-        return build_anthropic_title_model(settings)
-    if settings.azure_openai_api_key:
-        return build_azure_title_model(settings)
-    raise RuntimeError(
-        "No LLM provider configured. Set ANTHROPIC_API_KEY or "
-        "AZURE_OPENAI_API_KEY in .env."
+    return _select(
+        anthropic=lambda: build_anthropic_model(
+            settings, settings.anthropic_title_model, cache=False
+        ),
+        azure=lambda: build_azure_model(
+            settings,
+            settings.azure_openai_title_deployment or settings.azure_openai_deployment,
+        ),
     )

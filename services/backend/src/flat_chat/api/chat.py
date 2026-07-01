@@ -38,7 +38,7 @@ async def list_conversations(
     filtered out). Newest-first by `updated_at`. Empty list when the user has
     no rows — never 404.
     """
-    return await store.list_by_user(user_id)
+    return await store.list_conversation_summaries(user_id)
 
 
 async def _load_owned(

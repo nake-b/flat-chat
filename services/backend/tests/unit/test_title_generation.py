@@ -1,17 +1,17 @@
 """Unit tests for `chat/title_gen.py` post-processing and first-turn detection.
 
-The LLM call itself is mocked via `_title_agent.override(model=TestModel(...))`
-so these tests don't need an API key, network, or DB. They guard the parts of
-the title pipeline that are pure-python and would silently corrupt the sidebar
-if they regressed: the quote/punctuation stripping, the first-turn predicate,
-and the failure-returns-None behaviour.
+`TitleGenerationService` takes the model in its constructor, so the LLM call is
+mocked by passing a `TestModel(...)` directly — no API key, network, or DB, and
+no monkeypatching of the provider seam. These tests guard the parts of the title
+pipeline that are pure-python and would silently corrupt the sidebar if they
+regressed: the quote/punctuation stripping, the first-turn predicate, and the
+failure-returns-None behaviour.
 """
 
 from __future__ import annotations
 
 import asyncio
 
-import pytest
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -25,26 +25,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from flat_chat.chat import title_gen
 from flat_chat.chat.title_gen import (
+    TitleGenerationService,
     _extract_first_exchange,
     clean_title,
-    generate_title,
     is_first_completed_turn,
 )
-
-
-@pytest.fixture
-def fake_title_model(monkeypatch):
-    """`build_title_model()` requires an API key; tests bypass it via override.
-
-    We need `build_title_model()` to return SOMETHING (anything truthy is fine —
-    `_title_agent.override(model=...)` wins over the run-time `model=` arg) so
-    `generate_title()` doesn't bail at the build step.
-    """
-    fake = TestModel(custom_output_text="placeholder")
-    monkeypatch.setattr(title_gen, "build_title_model", lambda: fake)
-    return fake
 
 
 def _user(content: str) -> ModelRequest:
@@ -133,37 +119,24 @@ def test_extract_first_exchange_returns_none_when_incomplete():
     assert _extract_first_exchange([_user("hi")]) is None
 
 
-def test_generate_title_runs_model_and_cleans_output(fake_title_model):
+def test_generate_runs_model_and_cleans_output():
     history = [_user("Find 2 rooms in Kreuzberg under 1500"), _assistant("Sure.")]
-    with title_gen._title_agent.override(
-        model=TestModel(custom_output_text='"Kreuzberg 2-room search".')
-    ):
-        result = asyncio.run(generate_title(history))
+    service = TitleGenerationService(
+        TestModel(custom_output_text='"Kreuzberg 2-room search".')
+    )
+    result = asyncio.run(service.generate(history))
     assert result == "Kreuzberg 2-room search"
 
 
-def test_generate_title_returns_none_on_empty_model_output(fake_title_model):
+def test_generate_returns_none_on_empty_model_output():
     history = [_user("Find a flat"), _assistant("Sure.")]
-    with title_gen._title_agent.override(model=TestModel(custom_output_text="   ")):
-        result = asyncio.run(generate_title(history))
+    service = TitleGenerationService(TestModel(custom_output_text="   "))
+    result = asyncio.run(service.generate(history))
     assert result is None
 
 
-def test_generate_title_returns_none_when_history_has_no_first_exchange(
-    fake_title_model,
-):
-    """Defensive: a stray call with empty history must not crash."""
-    with title_gen._title_agent.override(model=TestModel(custom_output_text="x")):
-        result = asyncio.run(generate_title([]))
+def test_generate_returns_none_when_history_has_no_first_exchange():
+    """Defensive: a stray call with empty history must not crash (nor hit the model)."""
+    service = TitleGenerationService(TestModel(custom_output_text="x"))
+    result = asyncio.run(service.generate([]))
     assert result is None
-
-
-def test_generate_title_returns_none_when_model_unavailable(monkeypatch):
-    """No API key configured → `build_title_model()` raises → returns None."""
-
-    def boom():
-        raise RuntimeError("no provider configured")
-
-    monkeypatch.setattr(title_gen, "build_title_model", boom)
-    history = [_user("hi"), _assistant("hello")]
-    assert asyncio.run(generate_title(history)) is None
