@@ -94,13 +94,22 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
   },
 
   apply_travel_time: {
-    executing: (a: { destination?: string; mode?: string }) => {
+    executing: (a: { mode?: string }) => {
       const how = a?.mode === "car" ? "driving" : "transit";
-      return a?.destination
-        ? `Computing ${how} time to ${a.destination}`
-        : `Computing ${how} times`;
+      return `Computing ${how} times`;
     },
-    complete: (_a, result) => firstLine(result) || "Travel times ready.",
+    // SHORT label (the place name isn't in the args — near_place_ref is an opaque
+    // token — so read the human label off the lens the tool just set). Echoing
+    // the full prose result here made the pill wrap into a misaligned block.
+    complete: (_a, _r, state: { marker_lens?: { label?: string } } | null) => {
+      const label = state?.marker_lens?.label;
+      return label ? `Map coloured · ${label}` : "Travel times applied";
+    },
+  },
+
+  clear_lens: {
+    executing: () => "Removing lens",
+    complete: () => "Lens removed",
   },
 };
 

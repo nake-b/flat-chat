@@ -24,14 +24,15 @@ time = min over nearby stops of `(anchor→stop minutes) + walk(stop→listing)`
 Only stops within `_WALK_CAP_M` of the listing count; listings with no
 reachable stop in range are absent (rendered "no data" / dropped under a
 cutoff). Returned values are **minutes** (rounded); callers compare against
-`max_minutes` and write them onto `Marker.channel_value`.
+`max_minutes` and write them onto `Marker.lens_value`.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta
+import time
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -43,22 +44,160 @@ logger = logging.getLogger(__name__)
 _BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 
-def _commute_departure() -> str:
-    """Departure time for a transit commute query: the NEXT weekday 08:00 in
-    Berlin local time, as ISO 8601.
+# --- Transit feed freshness -------------------------------------------------
+# MOTIS loads a finite VBB timetable window (built by prep-routing.sh) and
+# exposes its bounds on the Prometheus `/metrics` endpoint. These two gauges
+# are the authoritative "which dates do we have data for" — no GTFS calendar
+# parsing, no DB table. We read them so the transit departure is CLAMPED into a
+# day the feed actually covers (a stale feed otherwise yields ~0 reachable
+# stops → all-grey pins) and so we can LABEL results "schedule as of <date>".
+
+_METRIC_FIRST_DAY = "nigiri_timetable_first_day_timestamp_seconds"
+_METRIC_LAST_DAY = "nigiri_timetable_last_day_timestamp_seconds"
+
+# The window only changes on a MOTIS re-import; refetching every request would
+# add a /metrics round-trip per commute query for no benefit. Cache successful
+# reads for this long. Failures are NOT cached, so recovery is immediate.
+_FEED_WINDOW_TTL = 300.0
+_feed_window_cache: tuple[float, tuple[date, date]] | None = None
+
+
+def _reset_feed_window_cache() -> None:
+    """Test hook — drop the module-level feed-window TTL cache so a test's
+    monkeypatched `/metrics` response isn't shadowed by a prior test's read."""
+    global _feed_window_cache
+    _feed_window_cache = None
+
+
+def _parse_metrics_window(body: str) -> tuple[date, date] | None:
+    """Parse the loaded-timetable window from MOTIS Prometheus `/metrics`.
+
+    Reads the two gauges MOTIS emits for the nigiri timetable:
+        nigiri_timetable_first_day_timestamp_seconds{tag="vbb"} <unix_seconds>
+        nigiri_timetable_last_day_timestamp_seconds{tag="vbb"}  <unix_seconds>
+    Returns `(first, last)` as Berlin-local dates, or `None` if either gauge is
+    absent (older MOTIS / no timetable loaded)."""
+    first: float | None = None
+    last: float | None = None
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, value = line.rpartition(" ")
+        if not value:
+            continue
+        metric = name.split("{", 1)[0].strip()
+        try:
+            ts = float(value)
+        except ValueError:
+            continue
+        if metric == _METRIC_FIRST_DAY:
+            first = ts
+        elif metric == _METRIC_LAST_DAY:
+            last = ts
+    if first is None or last is None:
+        return None
+    return (
+        datetime.fromtimestamp(first, _BERLIN_TZ).date(),
+        datetime.fromtimestamp(last, _BERLIN_TZ).date(),
+    )
+
+
+async def fetch_transit_feed_window(motis_url: str) -> tuple[date, date] | None:
+    """The (first, last) loaded-timetable dates from MOTIS `/metrics`.
+
+    Returns `None` when MOTIS is unreachable or the gauges are absent — callers
+    then fall back to the plain next-weekday departure (never crash). Successful
+    reads are cached for `_FEED_WINDOW_TTL` seconds; failures are not cached."""
+    global _feed_window_cache
+    now = time.monotonic()
+    cached = _feed_window_cache
+    if cached is not None and now - cached[0] < _FEED_WINDOW_TTL:
+        return cached[1]
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(f"{motis_url.rstrip('/')}/metrics")
+            resp.raise_for_status()
+            window = _parse_metrics_window(resp.text)
+    except httpx.HTTPError as exc:
+        logger.warning("MOTIS /metrics unreachable — feed window unknown: %s", exc)
+        return None
+    if window is not None:
+        _feed_window_cache = (now, window)
+    return window
+
+
+def feed_window_stale(window: tuple[date, date] | None) -> bool:
+    """True when the loaded feed window has already lapsed (today is past its
+    last day). `None` (window unknown) is treated as not-stale — we can't claim
+    staleness without knowing the window."""
+    if window is None:
+        return False
+    return datetime.now(_BERLIN_TZ).date() > window[1]
+
+
+def _roll_to_weekday(d: date, *, forward: bool) -> date:
+    """Nudge `d` to the nearest weekday (Mon–Fri), stepping forward or back."""
+    step = timedelta(days=1 if forward else -1)
+    while d.weekday() >= 5:  # Sat=5, Sun=6
+        d += step
+    return d
+
+
+def _commute_departure(
+    window: tuple[date, date] | None = None,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, bool, str | None]:
+    """Departure for a transit commute query, clamped into the loaded feed.
 
     A "commute" lens means a typical workday trip, not literally now — querying
-    at 02:00 on a Sunday would return night/weekend service and make most
-    listings look unreachable. Pinning to the next weekday morning gives
-    comparable, representative times whenever the user runs the search.
-    """
-    now = datetime.now(_BERLIN_TZ)
+    at 02:00 on a Sunday returns night/weekend service and makes most listings
+    look unreachable. So the base pick is the NEXT weekday 08:00 Berlin.
+
+    When a feed `window` is known and that date falls outside it, clamp into the
+    window (roll to its last weekday when the feed has lapsed, to its first
+    weekday when the window is entirely future) so MOTIS still returns real
+    reachability instead of an empty isochrone.
+
+    Returns `(iso_departure, stale, as_of_date)`:
+      - `stale` is True only when the feed has lapsed (today > last day),
+      - `as_of_date` is the ISO date actually used when we had to clamp, else
+        `None` (in-window / no window → the departure is current).
+    `now` is injectable for deterministic tests."""
+    now = now or datetime.now(_BERLIN_TZ)
     dep = now.replace(hour=8, minute=0, second=0, microsecond=0)
     if dep <= now:
         dep += timedelta(days=1)
-    while dep.weekday() >= 5:  # Sat=5, Sun=6 → roll to Monday
+    while dep.weekday() >= 5:  # roll to Monday
         dep += timedelta(days=1)
-    return dep.isoformat()
+
+    if window is None:
+        return dep.isoformat(), False, None
+
+    first, last = window
+    if first <= dep.date() <= last:
+        return dep.isoformat(), False, None
+
+    # Outside the window — clamp to a valid in-window weekday.
+    if dep.date() > last:  # feed lapsed
+        # The gauge's last day is typically a partial/dead boundary — a GTFS
+        # feed's final calendar day often has little to no service (verified:
+        # the last day returned ~0 reachable stops while the day before was
+        # fully served). Back off one day before rolling to a weekday so we
+        # land on a fully-served day rather than the empty edge.
+        target = _roll_to_weekday(last - timedelta(days=1), forward=False)
+        if target < first:
+            target = first
+        stale = True
+    else:  # window entirely in the future
+        target = _roll_to_weekday(first, forward=True)
+        if target > last:
+            target = last
+        stale = False
+
+    clamped = datetime(target.year, target.month, target.day, 8, 0, tzinfo=_BERLIN_TZ)
+    return clamped.isoformat(), stale, target.isoformat()
 
 # Destinations per OSRM request. Keeps the GET URL bounded (each coord is
 # ~20 chars) and stays under OSRM's table-size limit even if it's left at the
@@ -109,6 +248,12 @@ class RoutingService:
     def __init__(self, *, osrm_url: str, motis_url: str):
         self.osrm_url = osrm_url.rstrip("/")
         self.motis_url = motis_url.rstrip("/")
+
+    async def feed_window(self) -> tuple[date, date] | None:
+        """The (first, last) loaded transit-timetable dates, or None if unknown.
+        Thin wrapper over the module-level cached `/metrics` read so the tool +
+        health endpoint share one source of truth (and one cache)."""
+        return await fetch_transit_feed_window(self.motis_url)
 
     async def resolve(
         self, markers: list[Marker], filt: TravelTimeFilter
@@ -166,9 +311,15 @@ class RoutingService:
         # one-to-all: transit minutes from the anchor to EVERY reachable stop.
         one = f"{filt.anchor_lat},{filt.anchor_lng}"  # one-to-all is lat,lon
         # A representative weekday-morning departure (not "now") so commute
-        # times don't collapse to night/weekend service. The budget bounds the
-        # isochrone — clamp to the server's hard cap.
-        depart = _commute_departure()
+        # times don't collapse to night/weekend service — CLAMPED into the
+        # loaded feed window (a lapsed feed otherwise returns ~0 reachable stops
+        # → all-grey pins). Record the schedule "as of" date on the filter so
+        # the tool can tell the user when the timetable is stale. Car (OSRM) is
+        # date-independent, so this only applies to transit.
+        window = await self.feed_window()
+        depart, stale, as_of = _commute_departure(window)
+        filt.schedule_stale = stale
+        filt.schedule_as_of = as_of
         budget = int(filt.max_minutes or _MOTIS_MAX_MINUTES)
         max_minutes = max(1, min(budget, _MOTIS_MAX_MINUTES))
         try:

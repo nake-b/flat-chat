@@ -66,7 +66,7 @@ def _card(idx: int, **overrides) -> ListingCard:
 
 
 def _marker(idx: int) -> Marker:
-    return Marker(id=f"id-{idx}", lat=52.5, lng=13.4, channel_value=1000.0 + idx)
+    return Marker(id=f"id-{idx}", lat=52.5, lng=13.4, lens_value=1000.0 + idx)
 
 
 def _state(

@@ -137,12 +137,12 @@ class Marker(BaseModel):
     """One map marker — tier-1. lat/lng are required (search drops
     null-coordinate listings before projecting).
 
-    `channel_value` is the ONE active visualization scalar for this marker —
-    whatever `SessionState.marker_channel` currently names. By default that is
-    the warm rent (the `price_warm` channel); after `apply_travel_time` it is
-    the commute time in minutes (the `commute_min` channel). The map colours
-    pins by this value against a per-channel ramp owned by the frontend
-    (`state/channelStyles.ts`); identity lives once in `marker_channel`, never
+    `lens_value` is the ONE active visualization scalar for this marker —
+    whatever `SessionState.marker_lens` currently names. By default that is
+    the warm rent (the `price_warm` lens); after `apply_travel_time` it is
+    the commute time in minutes (the `commute_min` lens). The map colours
+    pins by this value against a per-lens ramp owned by the frontend
+    (`state/lensStyles.ts`); identity lives once in `marker_lens`, never
     repeated per marker. May be null (e.g. a listing with no price, or
     unreachable in the active travel lens) → rendered in a neutral "no data"
     colour."""
@@ -150,18 +150,18 @@ class Marker(BaseModel):
     id: str
     lat: float
     lng: float
-    channel_value: float | None = None
+    lens_value: float | None = None
 
 
-class MarkerChannel(BaseModel):
-    """Names the single scalar every `Marker.channel_value` currently carries —
-    the active map visualization channel. Lives once in `SessionState`, not per
+class MarkerLens(BaseModel):
+    """Names the single scalar every `Marker.lens_value` currently carries —
+    the active map visualization lens. Lives once in `SessionState`, not per
     marker. The backend sets SEMANTICS (`key` + human `label`); the frontend
     owns APPEARANCE (colour ramp / domain / number format) keyed off `key` in
-    `state/channelStyles.ts` — same semantics/appearance split as `MapOverlay`.
+    `state/lensStyles.ts` — same semantics/appearance split as `MapOverlay`.
 
     Default `price_warm` → the frontend renders the plain pin (today's look, no
-    heatmap); `commute_min` → a travel-time ramp. Adding a future channel (e.g.
+    heatmap); `commute_min` → a travel-time ramp. Adding a future lens (e.g.
     a noise heatmap) is one registry entry + the backend populating that scalar,
     nothing structural."""
 
@@ -176,16 +176,25 @@ class TravelTimeFilter(BaseModel):
     from SQL and would otherwise drop the lens). `RoutingService.resolve`
     consumes it to compute per-listing travel time.
 
-    `anchor_label` is the human name ("TU Berlin") used for the channel label
+    `anchor_label` is the human name ("TU Berlin") used for the lens label
     and any isochrone overlay; `anchor_lat`/`anchor_lng` are the resolved
     coordinates. `max_minutes` set → hard filter (drop listings over the limit);
-    None → annotate + colour only (no filtering)."""
+    None → annotate + colour only (no filtering).
+
+    `schedule_as_of` / `schedule_stale` describe the TRANSIT timetable the
+    result was computed against. MOTIS loads a finite VBB feed window; when it
+    has lapsed the routing layer clamps the departure to the last covered day
+    and sets `schedule_stale=True` + `schedule_as_of=<that date>` so the UI /
+    agent can say "schedule as of <date>". Both stay defaulted for car mode
+    (driving is date-independent) and for an in-window transit feed."""
 
     anchor_label: str
     anchor_lat: float
     anchor_lng: float
     mode: Literal["transit", "car"]
     max_minutes: int | None = None
+    schedule_as_of: str | None = None
+    schedule_stale: bool = False
 
 
 # ---------------------------------------------------------------------------

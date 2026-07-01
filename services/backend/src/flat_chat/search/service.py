@@ -196,9 +196,9 @@ class SearchService:
                 id=str(r.id),
                 lat=r.latitude,
                 lng=r.longitude,
-                # Default channel is `price_warm`; a travel lens later swaps
+                # Default lens is `price_warm`; a travel lens later swaps
                 # this column for commute minutes via the shared re-derivation.
-                channel_value=r.warm_rent_eur,
+                lens_value=r.warm_rent_eur,
             )
             for r in marker_rows
         ]

@@ -146,7 +146,7 @@ _USER = "00000000-0000-0000-0000-000000000001"
 
 class _MockSearch:
     async def search(self, params):
-        markers = [Marker(id="x1", lat=52.5, lng=13.4, channel_value=1000.0)]
+        markers = [Marker(id="x1", lat=52.5, lng=13.4, lens_value=1000.0)]
         preview = [ListingCard(id="x1", title="Apt", lat=52.5, lng=13.4)]
         # (markers, preview, total, facets) — facets added by the result-set
         # facets feature; this test doesn't assert on them.

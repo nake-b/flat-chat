@@ -61,5 +61,17 @@ echo "==> MOTIS: import"
 rm -rf "$MOTIS_DIR/data"
 docker run --rm -v "$MOTIS_DIR:/work" -w /work "$MOTIS_IMAGE" /motis import
 
-echo "==> Done. Start the engines with:"
-echo "    docker compose --profile routing up -d osrm motis"
+# Re-running this script refreshes the loaded timetable window: `first_day:
+# TODAY` starts it at today and the freshly-downloaded VBB feed extends the
+# horizon (the feed carries a short service calendar, so the window needs
+# regular re-import to stay current). The backend reads the loaded window from
+# MOTIS `/metrics` and clamps + labels transit departures accordingly (see
+# agent-compound-docs/decisions/travel-time-routing.md §Freshness).
+echo "==> Restarting the routing engines to load the fresh graphs"
+if docker compose --profile routing up -d --no-deps --force-recreate osrm motis; then
+  echo "==> Done. Verify the loaded transit feed window:"
+  echo "    curl -s localhost:18080/metrics | grep nigiri_timetable_.*_day"
+else
+  echo "==> Import done, but the compose restart failed — start manually:"
+  echo "    docker compose --profile routing up -d --force-recreate osrm motis"
+fi

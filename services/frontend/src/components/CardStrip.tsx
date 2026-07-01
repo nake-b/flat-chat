@@ -6,10 +6,10 @@ import { useCardCache } from "../state/cardCache";
 import {
   decodeMarkers,
   type ListingCard,
-  type MarkerChannel,
+  type MarkerLens,
   type MarkerPoint,
 } from "../state/SessionState";
-import { channelStyle } from "../state/channelStyles";
+import { lensStyle } from "../state/lensStyles";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -251,6 +251,8 @@ export function CardStrip() {
                     apt={card}
                     index={idx + 1}
                     hovered={hoverId === m.id}
+                    lens={state?.marker_lens ?? null}
+                    lensValue={m.lens_value}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
                     onClick={() => {
                       void activate(m.id);
@@ -259,7 +261,7 @@ export function CardStrip() {
                 ) : (
                   <SkeletonCard
                     marker={m}
-                    channel={state?.marker_channel ?? null}
+                    lens={state?.marker_lens ?? null}
                     index={idx + 1}
                     hovered={hoverId === m.id}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
@@ -316,17 +318,27 @@ function ApartmentCard({
   apt,
   index,
   hovered,
+  lens,
+  lensValue,
   onClick,
   onHoverChange,
 }: {
   apt: ListingCard;
   index: number;
   hovered: boolean;
+  lens: MarkerLens | null;
+  lensValue: number | null;
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
   const isBlank =
     apt.title == null && apt.address == null && apt.price_warm_eur == null;
+  // Under an active heatmap lens (e.g. commute), surface its value as a vibrant
+  // badge — the thing the user is actually evaluating. Default (price) lens has
+  // no style → no badge (the warm-rent figure below already carries price).
+  const lensStyleSpec = lensStyle(lens);
+  const lensBadge =
+    lensStyleSpec && lensValue != null ? lensStyleSpec.format(lensValue) : null;
   return (
     <button
       type="button"
@@ -360,6 +372,11 @@ function ApartmentCard({
               <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
                 {apt.district ?? "Berlin"}
               </span>
+              {lensBadge ? (
+                <span className="ml-auto rounded-full bg-red px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white">
+                  {lensBadge}
+                </span>
+              ) : null}
             </div>
             <div className="line-clamp-2 font-sans text-[13px] font-medium leading-snug tracking-tight text-ink">
               {apt.title ?? "(untitled)"}
@@ -406,24 +423,24 @@ function ApartmentCard({
 // Carries hover wiring so map ↔ strip highlight still works pre-hydration.
 function SkeletonCard({
   marker,
-  channel,
+  lens,
   index,
   hovered,
   onClick,
   onHoverChange,
 }: {
   marker: MarkerPoint;
-  channel: MarkerChannel | null;
+  lens: MarkerLens | null;
   index: number;
   hovered: boolean;
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
-  // Show the active channel's scalar as the instant anchor: warm rent (€) under
-  // the default channel, or the channel's own format (e.g. "32 min") under a
+  // Show the active lens's scalar as the instant anchor: warm rent (€) under
+  // the default lens, or the lens's own format (e.g. "32 min") under a
   // travel lens. The full card hydrates the rest tier-2.
-  const style = channelStyle(channel);
-  const value = marker.channel_value;
+  const style = lensStyle(lens);
+  const value = marker.lens_value;
   const valueLabel = style ? style.legendTitle : "warm";
   const valueText =
     value != null

@@ -235,6 +235,9 @@ node_modules/
 data/scraped/
 # Protomaps tile extracts live alongside their README; only the README is tracked.
 data/tiles/*.pmtiles
+# Routing graphs built by scripts/prep-routing.sh (OSM/OSRM/MOTIS, ~900MB) —
+# generated artifacts, never checked in.
+data/routing/
 flat_chat_dump_*.pgdump
 
 # Local-only throwaway stack override (not part of the PR)

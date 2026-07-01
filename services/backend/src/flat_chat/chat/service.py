@@ -17,6 +17,7 @@ from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.core.observability import run_id_var, session_id_var
+from flat_chat.listings.context import MarkerLens
 from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
 from flat_chat.search.places import PlaceService
@@ -323,6 +324,15 @@ def merge_incoming_state(
     # shows. Only shrinks the set — never adds.
     visible_ids = {o.id for o in incoming.map_overlays}
     merged.map_overlays = [o for o in merged.map_overlays if o.id in visible_ids]
+
+    # Lens dismissal (the × on the lens legend): the frontend may only CLEAR the
+    # active lens, never set one. If the persisted state had a travel lens and
+    # the incoming envelope has dropped it, honour the clear — recolour-only, the
+    # result set is kept (same shrink-only authority as overlays). Setting a lens
+    # stays agent-only (`apply_travel_time`), so we never copy an incoming lens.
+    if persisted.travel_time_filter is not None and incoming.travel_time_filter is None:
+        merged.travel_time_filter = None
+        merged.marker_lens = MarkerLens()
 
     return merged
 

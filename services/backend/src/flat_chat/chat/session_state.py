@@ -12,7 +12,7 @@ JSON-Patch deltas; tools emit a fresh snapshot per mutation (see
 
 Three tiers, co-located:
   - `result_markers` — tier-1, EVERY match (≤ MARKER_CAP), thin
-    {id,lat,lng,channel_value}. The map plots these; the count is its length.
+    {id,lat,lng,lens_value}. The map plots these; the count is its length.
   - `preview_cards` — tier-2, the top-N full cards kept hot for the LLM and
     the card strip's first paint. The rest hydrate on demand by id via
     `GET /api/listings?ids=…&view=card`.
@@ -39,7 +39,7 @@ from flat_chat.listings.context import (
     ListingCard,
     ListingDetail,
     Marker,
-    MarkerChannel,
+    MarkerLens,
     TravelTimeFilter,
 )
 from flat_chat.listings.overlays import MapOverlay
@@ -98,12 +98,12 @@ class SessionState(BaseModel):
     """Geometries currently drawn on the map. GeoJSON rides as-is (no columnar
     packing); kept small via server-side simplification at resolution time."""
 
-    # The active map visualization channel — names the single scalar each
-    # `Marker.channel_value` carries (default = warm rent). `apply_travel_time`
-    # flips this to the commute channel; the frontend colours pins accordingly.
-    marker_channel: MarkerChannel = Field(default_factory=MarkerChannel)
-    """What `result_markers[*].channel_value` means right now. One descriptor
-    for the whole set (never per marker). See `listings.context.MarkerChannel`."""
+    # The active map visualization lens — names the single scalar each
+    # `Marker.lens_value` carries (default = warm rent). `apply_travel_time`
+    # flips this to the commute lens; the frontend colours pins accordingly.
+    marker_lens: MarkerLens = Field(default_factory=MarkerLens)
+    """What `result_markers[*].lens_value` means right now. One descriptor
+    for the whole set (never per marker). See `listings.context.MarkerLens`."""
 
     # Active travel-time lens, if any. Selection-slice input re-applied by the
     # shared marker derivation so the commute filter survives a follow-up
@@ -124,9 +124,9 @@ class SessionState(BaseModel):
             "ids": [m.id for m in markers],
             "lats": [round(m.lat, 5) for m in markers],
             "lngs": [round(m.lng, 5) for m in markers],
-            # The single active-channel scalar (warm rent by default, commute
-            # minutes under a travel lens). `marker_channel` names it.
-            "values": [m.channel_value for m in markers],
+            # The single active-lens scalar (warm rent by default, commute
+            # minutes under a travel lens). `marker_lens` names it.
+            "values": [m.lens_value for m in markers],
         }
 
     @field_validator("result_markers", mode="before")
@@ -152,9 +152,9 @@ class SessionState(BaseModel):
             n = len(ids)
             lats = columns.get("lats") or []
             lngs = columns.get("lngs") or []
-            # The channel-value column is legitimately absent on old/empty
+            # The lens-value column is legitimately absent on old/empty
             # envelopes; default it to all-None. Accept the legacy "prices" key
-            # so snapshots persisted before the channel generalization still
+            # so snapshots persisted before the lens generalization still
             # decode. Any present column, though, must match `ids`.
             values = columns.get("values")
             if values is None:
@@ -168,7 +168,7 @@ class SessionState(BaseModel):
                     f"values={len(values)})"
                 )
             return [
-                {"id": i, "lat": la, "lng": lo, "channel_value": v}
+                {"id": i, "lat": la, "lng": lo, "lens_value": v}
                 for i, la, lo, v in zip(ids, lats, lngs, values, strict=True)
             ]
         return value

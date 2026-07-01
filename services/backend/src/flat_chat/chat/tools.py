@@ -10,7 +10,7 @@ from pydantic_ai.toolsets import AgentToolset
 from flat_chat.chat.llm_context import LlmResultSetView
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.state_emission import StateEmittingToolset
-from flat_chat.listings.context import MarkerChannel, TravelTimeFilter
+from flat_chat.listings.context import MarkerLens, TravelTimeFilter
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
@@ -73,6 +73,9 @@ Tools:
     several at once. A line that's still an active search filter redraws next
     search — drop the filter instead to keep it off.
   - `clear_map_overlays()` — wipe ALL drawn geometries ("clear the map").
+  - `clear_lens()` — remove the active commute lens, recolouring the map back to
+    default pins ("remove the commute colouring", "back to normal"). Recolour
+    only — listings a cutoff dropped come back only on a new search.
 
 Drawing geometries on the map. Two ways a geometry appears:
   1. AUTOMATICALLY — a `search_apartments` call that uses `near_place_ref` or
@@ -108,7 +111,8 @@ specific place ("near my work at TU Berlin", "≤30 min by U-Bahn from Alex",
 Decide filter vs. annotate by the user's words: a stated limit ("under 30 min")
 → pass `max_minutes`; "I care about the commute" / "show me how far" → omit it
 (colour + annotate only, nothing dropped). Default `mode` is transit; use "car"
-for "drive"/"by car". The lens sticks across later searches until changed.
+for "drive"/"by car". The lens sticks across later searches until changed or
+removed with `clear_lens()` (the user can also dismiss it in the UI).
 
 After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight
 of what stands out (transit, noise, neighbourhood character) — the detail
@@ -175,6 +179,9 @@ filters for `search_apartments`:
     me the commute" / "how far
     is each from …"             → locate_place(…) → apply_travel_time(
                                   near_place_ref=…, mode="transit")  # no cutoff
+  - "remove the commute lens" /
+    "stop colouring by travel
+    time" / "back to normal"    → clear_lens()
 </phrase_map>
 """
 
@@ -433,7 +440,7 @@ async def search_apartments(
 
     # Re-apply the active commute lens (if any) so a refinement keeps the travel
     # filter/heatmap instead of silently reverting to price. No-op when no lens
-    # is set (just leaves markers on the default price channel).
+    # is set (just leaves markers on the default price lens).
     await _apply_travel_lens(ctx)
 
     # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
@@ -503,7 +510,7 @@ async def apply_travel_time(
         # Routing is a fallible external dependency: drop the lens and tell the
         # agent so it can offer to proceed without travel time.
         state.travel_time_filter = None
-        state.marker_channel = MarkerChannel()
+        state.marker_lens = MarkerLens()
         logger.warning("apply_travel_time failed: %s", exc)
         return (
             f"I couldn't reach the {mode} routing service to compute travel "
@@ -512,20 +519,45 @@ async def apply_travel_time(
         )
 
     how = "driving" if mode == "car" else "transit"
+    # If the transit timetable has lapsed, `_motis` clamped the departure into
+    # the last covered day and flagged it — tell the user the schedule's age so
+    # they don't take the minutes as live.
+    filt = state.travel_time_filter
+    stale_note = ""
+    if filt is not None and filt.schedule_stale and filt.schedule_as_of:
+        stale_note = (
+            f" Note: the transit timetable data only runs through "
+            f"{filt.schedule_as_of}, so these times reflect that day's schedule."
+        )
     if max_minutes is not None:
         return (
             f"Filtered to {state.total_results} listings within {max_minutes} "
             f"min {how} of {label}. The map is now coloured by travel time "
-            "(bold red = closer, faded = farther)."
+            f"(bold red = closer, faded = farther).{stale_note}"
         )
     return (
         f"Coloured the map by {how} time to {label} (bold red = closer, faded "
         f"= farther). All {state.total_results} listings are still shown."
+        f"{stale_note}"
     )
 
 
+def _clear_lens(ctx: RunContext[ChatDeps]) -> None:
+    """Reset to the default price view: drop the travel filter and revert
+    `marker_lens` to `price_warm`.
+
+    Recolour-only — the result set (including any listings a minutes cutoff
+    dropped) is left as-is; a new search restores it. Shared by the `clear_lens`
+    tool, the frontend dismissal (honoured in `merge_incoming_state`), and
+    `_apply_travel_lens`'s no-filter branch."""
+    state = ctx.deps.state
+    state.travel_time_filter = None
+    if state.marker_lens.key != "price_warm":
+        state.marker_lens = MarkerLens()
+
+
 async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
-    """Derive `channel_value` + `marker_channel` from the active travel lens.
+    """Derive `lens_value` + `marker_lens` from the active travel lens.
 
     Shared by `search_apartments` (re-apply after a refinement) and
     `apply_travel_time` (apply on demand). Stateless w.r.t. ordering: keeps the
@@ -533,13 +565,12 @@ async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
     when `max_minutes` is set — dropping the ones over the cutoff. Filtering
     preserves order, so `preview_cards` stays a true prefix of `result_markers`.
 
-    No lens → resets to the default `price_warm` channel (markers keep the price
+    No lens → resets to the default `price_warm` lens (markers keep the price
     value search already wrote). Raises `RoutingError` on engine failure."""
     state = ctx.deps.state
     filt = state.travel_time_filter
     if filt is None:
-        if state.marker_channel.key != "price_warm":
-            state.marker_channel = MarkerChannel()
+        _clear_lens(ctx)
         return
 
     minutes_by_id = await ctx.deps.routing_service.resolve(state.result_markers, filt)
@@ -551,14 +582,36 @@ async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
             minutes is None or minutes > filt.max_minutes
         ):
             continue  # over the cutoff (or unreachable) → drop
-        new_markers.append(m.model_copy(update={"channel_value": minutes}))
+        new_markers.append(m.model_copy(update={"lens_value": minutes}))
 
     surviving = {m.id for m in new_markers}
     state.result_markers = new_markers
     state.total_results = len(new_markers)
     state.preview_cards = [c for c in state.preview_cards if c.id in surviving]
-    state.marker_channel = MarkerChannel(
+    state.marker_lens = MarkerLens(
         key="commute_min", label=f"min to {filt.anchor_label}"
+    )
+
+
+@toolset.tool
+async def clear_lens(ctx: RunContext[ChatDeps]) -> str:
+    """Remove the active travel-time (commute) lens — recolour the map back to
+    the default pins.
+
+    Use when the user wants to drop the commute colouring ("remove the commute
+    lens", "stop colouring by travel time", "back to normal pins"). Recolour
+    ONLY: the current listings are unchanged — if a minutes cutoff had filtered
+    the set, run a search to bring the hidden listings back. The user can also
+    dismiss the lens directly in the UI (the × on the lens legend); either way
+    it stays gone until a new `apply_travel_time`.
+    """
+    state = ctx.deps.state
+    if state.travel_time_filter is None and state.marker_lens.key == "price_warm":
+        return "There's no travel-time lens active right now."
+    _clear_lens(ctx)
+    return (
+        "Removed the travel-time lens — pins are back to default. The current "
+        "listings are unchanged."
     )
 
 

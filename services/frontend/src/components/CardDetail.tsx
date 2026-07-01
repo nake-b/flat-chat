@@ -1,10 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useSessionState } from "../hooks/useSessionState";
 import {
+  decodeMarkers,
   type ListingDetail,
   type ListingCard,
 } from "../state/SessionState";
+import { lensStyle } from "../state/lensStyles";
 
 // The subset of fields the detail body reads — present on BOTH ListingCard
 // and ListingDetail. We render from `active_listing_detail ?? apt` so the
@@ -108,6 +110,24 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
   const source: ListingDetail | ListingCard | null = detail ?? apt ?? null;
   const view: DetailView | null = source ? toDetailView(source) : null;
 
+  // Active lens value for THIS listing (e.g. commute minutes), looked up by id
+  // from the markers — the only tier carrying `lens_value`. Shown as a stat only
+  // under a heatmap lens; the mode word comes from the active travel filter.
+  const lens = state?.marker_lens;
+  const lensStyleSpec = lensStyle(lens);
+  const lensValue = useMemo(() => {
+    if (!lensStyleSpec || activeId == null) return null;
+    const m = decodeMarkers(state?.result_markers).find((mk) => mk.id === activeId);
+    return m?.lens_value ?? null;
+  }, [lensStyleSpec, activeId, state?.result_markers]);
+  const lensStat =
+    lensStyleSpec && lensValue != null
+      ? {
+          label: state?.travel_time_filter?.mode === "car" ? "Drive" : "Transit",
+          value: lensStyleSpec.format(lensValue),
+        }
+      : null;
+
   const close = () => {
     void activate(null);
   };
@@ -194,6 +214,9 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           rarely has kaution, klein rarely has bedrooms). flex-1 basis-0
           shares row width equally among present cells. */}
       <div className="flex flex-wrap">
+        {lensStat && (
+          <Stat label={lensStat.label} value={lensStat.value} accent />
+        )}
         {view.price_warm_eur != null && (
           <Stat label="Warm rent" value={formatEuro(view.price_warm_eur)} accent />
         )}

@@ -57,8 +57,8 @@ def test_populated_state_validates_and_preserves_columnar_markers():
     state = SessionState(
         total_results=2,
         result_markers=[
-            Marker(id="a", lat=52.5, lng=13.4, channel_value=1200.0),
-            Marker(id="b", lat=52.49, lng=13.41, channel_value=None),
+            Marker(id="a", lat=52.5, lng=13.4, lens_value=1200.0),
+            Marker(id="b", lat=52.49, lng=13.41, lens_value=None),
         ],
         preview_cards=[ListingCard(id="a", district="Kreuzberg", rooms=2.0)],
         active_id="a",

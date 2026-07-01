@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.api import agent, auth, chat, listings
+from flat_chat.core.config import settings
 from flat_chat.core.database import get_async_db
 from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import (
@@ -14,6 +15,7 @@ from flat_chat.core.observability import (
     setup_observability,
     shutdown_observability,
 )
+from flat_chat.routing.service import feed_window_stale, fetch_transit_feed_window
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,11 @@ async def health(
     silver landed but the gold ETL chain didn't (or failed for those
     rows); each orphan listing is invisible to every geo filter. Ops
     decide whether to fail; we just surface the number.
+
+    Also reports `transit_feed` — the MOTIS timetable window ({first_day,
+    last_day, stale}) so ops can spot a lapsed VBB feed (stale=true → the
+    transit lens is clamping departures; re-run scripts/prep-routing.sh).
+    `null` when MOTIS is unreachable / has no timetable loaded.
     """
     if not extended:
         return {"status": "ok"}
@@ -92,4 +99,21 @@ async def health(
         logger.warning(
             "Gold drift: %d listings have no listings_geo_context row", orphans
         )
-    return {"status": "ok", "gold_orphans": int(orphans)}
+
+    # Best-effort transit-feed freshness (never fails the health check).
+    window = await fetch_transit_feed_window(settings.motis_url)
+    if window is not None:
+        first, last = window
+        transit_feed = {
+            "first_day": first.isoformat(),
+            "last_day": last.isoformat(),
+            "stale": feed_window_stale(window),
+        }
+    else:
+        transit_feed = None
+
+    return {
+        "status": "ok",
+        "gold_orphans": int(orphans),
+        "transit_feed": transit_feed,
+    }

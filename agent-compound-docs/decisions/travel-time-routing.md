@@ -46,13 +46,14 @@ Travel time is **its own concern**, kept orthogonal to the existing slices
   tool a routing failure is isolated and the agent degrades gracefully, instead
   of half-failing a mega-search. (Drawn around the *concept* — hub lookups in
   phase 2 are SQL but still flow through this tool for one mental model.)
-- **One active visualization channel.** Markers carry a single generic
-  `channel_value` (replacing the old `price_warm_eur`), named once by
-  `SessionState.marker_channel` (`{key,label}`, default `price_warm`). You only
+- **One active visualization lens.** Markers carry a single generic
+  `lens_value` (replacing the old `price_warm_eur`), named once by
+  `SessionState.marker_lens` (`{key,label}`, default `price_warm`). You only
   ever colour pins by one scalar, so there's no bag of channels. Backend ships
   semantics (`key`/`label`/`values`); the frontend owns the ramp in
-  `state/channelStyles.ts` (`price_warm` → plain pins, `commute_min` → a
-  green→red ramp). Same semantics/appearance split as overlays.
+  `state/lensStyles.ts` (`price_warm` → plain pins, `commute_min` → a Berlin-red
+  sequential ramp, vibrant-near → pale-far, with a frontend-computed adaptive
+  domain). Same semantics/appearance split as overlays.
 - **Independence + one-way seeding.** Slices are independent SSOTs; a travel
   filter deterministically *seeds* the channel (and an isochrone-style anchor
   overlay), which the agent can still set independently — exactly the existing
@@ -68,9 +69,9 @@ Travel time is **its own concern**, kept orthogonal to the existing slices
 1. `PlaceService.anchor_point(ref)` → label + centroid coords.
 2. set `state.travel_time_filter`; draw the anchor as a pinned overlay.
 3. shared `_apply_travel_lens` → `RoutingService.resolve(markers, filter)`
-   annotates each marker's `channel_value` (minutes); if `max_minutes`, drops
+   annotates each marker's `lens_value` (minutes); if `max_minutes`, drops
    over-cutoff (filter preserves order, so `preview_cards` stays a true prefix);
-   sets `marker_channel = commute_min`.
+   sets `marker_lens = commute_min`.
 
 `search_apartments` calls the same `_apply_travel_lens` at the end, so a
 refinement **re-applies the lens** instead of reverting to price. The lens
@@ -90,8 +91,54 @@ tool and the slice model.
 - **Schedule-based, no live traffic** — fine for ranking; stated to users.
 - **OSRM big tables**: 1×5000 ≈ 2.5 s worst case; route only the narrowed set,
   or switch OSRM to CH for large matrices. We chunk destinations (90/req).
-- **VBB freshness**: republished ~twice weekly; a stale `gtfs.zip` yields zero
-  future-dated trips — re-run `prep-routing.sh` to refresh.
+- **VBB freshness**: republished ~twice weekly; the loaded feed carries a short
+  service calendar, so the window lapses and future-dated trips vanish. The
+  backend clamps + labels departures against the MOTIS `/metrics` window rather
+  than silently returning nothing; re-run `prep-routing.sh` to refresh the
+  window. See §Freshness above.
+
+## Freshness — the feed window is authoritative (clamp + label)
+
+MOTIS loads a **finite** VBB timetable window (`prep-routing.sh` sets
+`first_day: TODAY, num_days: 365`, but the downloaded feed carries a short
+service calendar, so the *effective* window is only a week or so). Once real
+time passes that window, a naive "next weekday 08:00" departure lands **outside**
+it → MOTIS returns ~0 reachable stops → every listing's `lens_value` is null →
+all-grey pins. This shipped once and was diagnosed as pure feed-staleness (the
+lens/card/detail code was correct).
+
+The fix has two halves:
+
+- **The backend knows which dates have data.** MOTIS exposes the loaded window
+  on its Prometheus `/metrics` endpoint —
+  `nigiri_timetable_first_day_timestamp_seconds{tag="vbb"}` /
+  `..._last_day_...` (unix seconds). `routing/service.py:fetch_transit_feed_window`
+  reads + parses these (Berlin-local dates, ~5-min TTL cache; failures uncached
+  so recovery is instant), and `RoutingService.feed_window()` shares one cache
+  with the health endpoint. This is the **authoritative** source — no GTFS
+  calendar parsing, no `world.transit_feed_info` table.
+- **Clamp + label, don't fail.** `_commute_departure(window)` clamps the
+  representative weekday-morning departure into `[first, last]` (rolling to the
+  last in-window weekday when the feed has lapsed, the first when the window is
+  future) and returns `(iso, stale, as_of_date)`. `_motis` stamps
+  `TravelTimeFilter.schedule_stale` / `schedule_as_of` from it; when stale,
+  `apply_travel_time` appends a "schedule only runs through <date>" note to its
+  prose and `LensLegend` shows "schedule as of <date>". A slightly-old schedule
+  is still useful (transit changes slowly) — so we clamp + inform rather than
+  refuse. When MOTIS is unreachable / the gauges are absent, `feed_window()` is
+  `None` and departure falls back to the plain next-weekday 08:00 (never crash).
+  Car (OSRM) is date-independent, so none of this touches driving.
+
+`GET /api/health?extended=true` surfaces `transit_feed: {first_day, last_day,
+stale}` (null if MOTIS is unreachable) so ops can spot a lapsed feed.
+
+**Keeping it fresh is manual for the MVP.** Re-running `prep-routing.sh`
+re-downloads the VBB feed, rebuilds the graph with `first_day: TODAY`, and
+restarts the engines (so the re-import takes effect without a second manual
+step). Scheduling this is a documented TODO (root `CLAUDE.md`): no ETL is
+scheduled for the MVP, and when it is, routing refresh should be its **own**
+nightly host-cron job — not folded into the listings ETL (different cadence,
+different failure domain).
 
 ## Shipped follow-ups (same PR)
 
@@ -106,7 +153,8 @@ tool and the slice model.
   resolves because it's also a seed landmark" gap is closed).
 - **Lens-aware clusters.** Cluster bubbles colour by the mean lens value under an
   active lens (MapLibre `clusterProperties` `sum_value`/`n_valued` over the shared
-  `channelStyles` ramp), so the heatmap no longer drowns in red-by-count at city
-  zoom. The commute ramp is a Berlin-red sequential (light = near → deep red =
-  far) to match the rest of the marker design. Hexbin/H3 is the deferred
-  next-level view (see root `CLAUDE.md` Deferred section).
+  `lensStyles` ramp), so the heatmap no longer drowns in red-by-count at city
+  zoom. The commute ramp is a Berlin-red sequential (vibrant red = near → pale =
+  far) over a frontend-computed adaptive domain, to match the rest of the marker
+  design. Hexbin/H3 is the deferred next-level view (see root `CLAUDE.md`
+  Deferred section).

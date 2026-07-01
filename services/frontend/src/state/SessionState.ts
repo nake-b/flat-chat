@@ -251,9 +251,9 @@ export type SearchParams = Record<string, unknown>;
 // ---------------------------------------------------------------------------
 // ResultMarkers — the COLUMNAR wire shape for the full result set (≤5000
 // matches). Parallel, index-aligned arrays: the i-th match is
-// { id: ids[i], lat: lats[i], lng: lngs[i], channel_value: values[i] }.
+// { id: ids[i], lat: lats[i], lng: lngs[i], lens_value: values[i] }.
 // `values` is the single active visualization scalar (warm rent by default,
-// commute minutes under a travel lens — see `MarkerChannel`). This is what
+// commute minutes under a travel lens — see `MarkerLens`). This is what
 // CopilotKit stores verbatim — both the map source and the ordered result
 // set. Decode into objects with `decodeMarkers()`.
 // ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ export interface ResultMarkers {
   lats: number[];
   lngs: number[];
   values: (number | null)[];
-  // Legacy column name for snapshots persisted before the channel
+  // Legacy column name for snapshots persisted before the lens
   // generalization; `decodeMarkers` falls back to it. New backends emit
   // `values`.
   prices?: (number | null)[];
@@ -294,12 +294,12 @@ export interface ResultFacets {
 }
 
 // A single decoded marker — one row zipped out of the parallel arrays.
-// `channel_value` is whatever `SessionState.marker_channel` currently names.
+// `lens_value` is whatever `SessionState.marker_lens` currently names.
 export interface MarkerPoint {
   id: string;
   lat: number;
   lng: number;
-  channel_value: number | null;
+  lens_value: number | null;
 }
 
 // Zip the parallel arrays into objects. Guards null/undefined → []. Length
@@ -321,34 +321,41 @@ export function decodeMarkers(
       id: m.ids[i],
       lat,
       lng,
-      channel_value: col?.[i] ?? null,
+      lens_value: col?.[i] ?? null,
     });
   }
   return out;
 }
 
 // ---------------------------------------------------------------------------
-// MarkerChannel — names the single scalar every marker's `channel_value`
-// carries (the active map visualization channel). Mirror of
-// listings/context.py:MarkerChannel. Backend sets SEMANTICS (`key` + `label`);
+// MarkerLens — names the single scalar every marker's `lens_value`
+// carries (the active map visualization lens). Mirror of
+// listings/context.py:MarkerLens. Backend sets SEMANTICS (`key` + `label`);
 // APPEARANCE (colour ramp / domain / number format) is decided here in
-// `state/channelStyles.ts`, keyed off `key`. Default `price_warm` → the plain
+// `state/lensStyles.ts`, keyed off `key`. Default `price_warm` → the plain
 // pin (no heatmap); `commute_min` → a travel-time ramp.
 // ---------------------------------------------------------------------------
 
-export interface MarkerChannel {
+export interface MarkerLens {
   key: string;
   label: string | null;
 }
 
 // The active commute lens, if any. Mirror of context.py:TravelTimeFilter.
-// Drives the channel label + (when max_minutes is set) the dropped markers.
+// Drives the lens label + (when max_minutes is set) the dropped markers.
+// `schedule_as_of` / `schedule_stale` describe the TRANSIT timetable the times
+// were computed against — when MOTIS's loaded VBB feed has lapsed the backend
+// clamps the departure to the last covered day and flags it here so the legend
+// can show "schedule as of <date>". Defaulted for car (date-independent) and an
+// in-window feed.
 export interface TravelTimeFilter {
   anchor_label: string;
   anchor_lat: number;
   anchor_lng: number;
   mode: "transit" | "car";
   max_minutes: number | null;
+  schedule_as_of: string | null;
+  schedule_stale: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +416,7 @@ export interface SessionState {
   active_id: string | null;
   active_listing_detail: ListingDetail | null;
   map_overlays: MapOverlay[];
-  marker_channel: MarkerChannel;
+  marker_lens: MarkerLens;
   travel_time_filter: TravelTimeFilter | null;
 }
 
@@ -422,7 +429,7 @@ export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   active_id: null,
   active_listing_detail: null,
   map_overlays: [],
-  marker_channel: { key: "price_warm", label: null },
+  marker_lens: { key: "price_warm", label: null },
   travel_time_filter: null,
 }) as SessionState;
 

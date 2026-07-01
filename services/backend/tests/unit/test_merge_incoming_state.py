@@ -22,7 +22,12 @@ from __future__ import annotations
 
 from flat_chat.chat.service import merge_incoming_state
 from flat_chat.chat.session_state import SessionState
-from flat_chat.listings.context import ListingCard, ListingDetail
+from flat_chat.listings.context import (
+    ListingCard,
+    ListingDetail,
+    MarkerLens,
+    TravelTimeFilter,
+)
 from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import SearchParams
 
@@ -162,3 +167,48 @@ def test_merged_overlay_list_is_independent_of_persisted():
 
     # Mutating the per-run list must not bleed into the stored session.
     assert [o.id for o in persisted.map_overlays] == ["transit_line:U7"]
+
+
+# --- lens dismissal: the × on the lens legend -------------------------------
+# Same shrink-only authority as overlays — the frontend may CLEAR the active
+# lens but never SET one (setting stays agent-only, via apply_travel_time).
+
+
+def _lensed() -> SessionState:
+    return SessionState(
+        travel_time_filter=TravelTimeFilter(
+            anchor_label="TU Berlin",
+            anchor_lat=52.5,
+            anchor_lng=13.3,
+            mode="transit",
+            max_minutes=30,
+        ),
+        marker_lens=MarkerLens(key="commute_min", label="min to TU Berlin"),
+    )
+
+
+def test_frontend_clear_drops_persisted_lens():
+    # Persisted had a lens; the incoming envelope dropped it → honour the clear.
+    merged = merge_incoming_state(_lensed(), SessionState())
+    assert merged.travel_time_filter is None
+    assert merged.marker_lens.key == "price_warm"
+
+
+def test_incoming_mirroring_lens_is_preserved():
+    # The frontend still shows the lens → it stays.
+    merged = merge_incoming_state(_lensed(), _lensed())
+    assert merged.travel_time_filter is not None
+    assert merged.marker_lens.key == "commute_min"
+
+
+def test_frontend_cannot_set_a_lens():
+    # Persisted has no lens; an incoming lens is ignored (setting is agent-only).
+    merged = merge_incoming_state(SessionState(), _lensed())
+    assert merged.travel_time_filter is None
+    assert merged.marker_lens.key == "price_warm"
+
+
+def test_none_incoming_keeps_persisted_lens():
+    merged = merge_incoming_state(_lensed(), None)
+    assert merged.travel_time_filter is not None
+    assert merged.marker_lens.key == "commute_min"

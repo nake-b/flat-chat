@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     "get_result_page",
     "locate_place",
     "apply_travel_time",
+    "clear_lens",
     "show_on_map",
     "hide_on_map",
     "clear_map_overlays",

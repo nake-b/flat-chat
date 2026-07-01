@@ -381,9 +381,10 @@ def test_locate_dedups_same_named_platforms_to_one_station(async_db_url):
     into ONE candidate at the centroid of the platforms."""
 
     async def body(session: AsyncSession):
-        await _insert_transit_stop(session, "stop:u2", "Schönhauser Allee", 13.412, 52.549)
-        await _insert_transit_stop(session, "stop:s41", "Schönhauser Allee", 13.414, 52.549)
-        return await PlaceService(session).locate("Schönhauser Allee")
+        name = "Schönhauser Allee"
+        await _insert_transit_stop(session, "stop:u2", name, 13.412, 52.549)
+        await _insert_transit_stop(session, "stop:s41", name, 13.414, 52.549)
+        return await PlaceService(session).locate(name)
 
     candidates = _run(async_db_url, body)
     stations = [c for c in candidates if c.kind == "transit_stop"]
