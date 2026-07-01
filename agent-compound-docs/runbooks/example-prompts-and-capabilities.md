@@ -98,28 +98,39 @@ should check the listing text). This is truthful in practice — embeddings are
 populated (the `world.listings_embeddings` table has rows), so semantic ranking
 actually runs rather than silently degrading to recency. Structured filters need no
 such caveat. It's an LLM-behavior policy (cached static instruction), covered by the
-conversation smoke harness, not a deterministic unit test.
+conversation smoke harness, not a deterministic unit test. Note this handles
+**user-typed** soft attributes only — the starter cards deliberately no longer *suggest*
+them (see Prompt Set), so we're honest when asked but don't advertise the gap.
 
 ## Prompt Set
 The pool lives in `services/frontend/src/state/starterPrompts.ts` as an array of
-concrete objects — `{ category, label, prompt }` — not bare strings. Frontend-owned
-(these are UI/onboarding copy; matches the "frontend owns appearance" split).
+concrete objects — `{ category, emoji, label, prompt }` — not bare strings.
+Frontend-owned (these are UI/onboarding copy; matches the "frontend owns appearance"
+split).
 
-- **`category`** (`budget | place | transit | family | nature | calm | map | health
-  | semantic`) drives `pickStratified(pool, 3)`: shuffle categories, take one prompt
-  from each of 3 distinct categories (fill from leftovers if fewer categories exist).
-  So the visible trio always spans different capabilities — no three near-duplicates.
-- **`label`** is the short pill text; **`prompt`** is the full sentence sent.
-- **Curated to real capabilities.** Every prompt maps to a capability that actually
-  exists (verified against `search/schemas.py`, `geo_filters.py`, the `locate_place`
-  gazetteer, and `listings/types.py`). Removed the disability-parking prompt (no such
-  filter — it's detail-only) and the generic "near a University" prompt (no university
-  category; only *specific* named places resolve). Reworded "as close as possible to a
-  lake" → "close to a lake" and "biggest parks?" → "next to a big park" (no proximity/
-  size sort exists).
-- **`semantic` category = intentional soft-attribute demos.** "student-friendly" (and
-  the dog vibe under `nature`) have no structured filter; the agent routes them to the
-  free-text `query` (semantic ranking) and is instructed to say so — see below.
+- **`category`** (`budget | place | transit | family | nature | calm | map | health`)
+  drives `pickStratified(pool, 3)`: shuffle categories, take one prompt from each of 3
+  distinct categories (fill from leftovers if fewer categories exist). So the visible
+  trio always spans different capabilities — no three near-duplicates.
+- **`emoji` + `label`** render on the card (emoji inline); **`prompt`** is the full
+  sentence sent on click.
+- **Only advertise STRUCTURED capabilities.** Every prompt must map to a real filter
+  (verified against `search/schemas.py`, `geo_filters.py`, the `locate_place`
+  gazetteer, `listings/types.py`). Removed over the review rounds:
+  - disability-parking (detail-only, no filter),
+  - generic "near a University" (no university category; only *specific* named places
+    resolve),
+  - **dog-friendly** and **student-friendly** (no structured filter — soft attributes
+    that only hit the semantic `query`). Even though the agent handles those honestly
+    (see below), a starter card must not *encourage* asking for something we didn't
+    implement.
+  - Reworded off unsupported sorts/rankings: "as close as possible to a lake" →
+    "close to a lake"; "biggest/big park" → "next to a park" (no park-size filter;
+    `near_park` is distance-only); "around the S-Bahn ring" → "inside the ring, under
+    €1,500" (`inside_ring` is a boolean, not an "around"); "compare how far the closest
+    hospitals are" → "hospital within walking distance" (a single search returns only
+    price/area/district facets — per-listing hospital distance is tier-3 detail, so the
+    agent can't compare it across the result set).
 
 `pickStratified` is unit-tested in `starterPrompts.test.ts` (distinct categories,
 count, pool-membership, leftover-fill).

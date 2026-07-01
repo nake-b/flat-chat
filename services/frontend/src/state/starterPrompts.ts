@@ -1,18 +1,20 @@
 // Empty-state starter prompts — the discoverability affordance shown before the
 // first message (NN/g "prompt controls"). Curated, capability-tagged, and sampled
-// one-per-category so the three pills showcase DIFFERENT things the app can do
+// one-per-category so the three cards showcase DIFFERENT things the app can do
 // (not three near-duplicates).
 //
 // Each prompt is a concrete object:
-//   - `label`   → short chip text shown on the pill (keeps the pill compact)
+//   - `emoji`   → shown inline before the label on the card
+//   - `label`   → short chip text shown on the card (keeps it compact)
 //   - `prompt`  → the full sentence actually sent to the agent (sendMessage)
 //   - `category`→ capability bucket, drives the stratified sampler below
 //
-// Curation rule: every prompt must map to a REAL capability. "Soft" attributes
-// with no structured filter (student-friendly, dog vibe) route to the agent's
-// free-text `query` (semantic ranking) — the agent is instructed to say so
-// (see chat/agent.py `_semantic_fallback_block`). Kept intentionally as the
-// `semantic`/`nature` demos, not as false advertising.
+// Curation rule: every prompt maps to a REAL, STRUCTURED capability. We do NOT
+// advertise soft attributes we can't actually filter (e.g. "dog-friendly",
+// "student-friendly") — even though the agent handles them gracefully via the
+// free-text `query` semantic fallback (chat/agent.py `_semantic_fallback_block`),
+// we don't want a starter card *encouraging* users to ask for something we
+// didn't implement. That honesty policy stays for user-typed queries only.
 
 export type StarterCategory =
   | "budget"
@@ -22,8 +24,7 @@ export type StarterCategory =
   | "nature"
   | "calm"
   | "map"
-  | "health"
-  | "semantic";
+  | "health";
 
 export interface StarterPrompt {
   category: StarterCategory;
@@ -107,22 +108,15 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
   // nature — park / water / greenery
   {
     category: "nature",
-    emoji: "🐶",
-    label: "Dog-friendly, next to a big park",
-    prompt:
-      "🐶 We're moving with a dog. Find dog-friendly apartments near a large park, 2-3 rooms, up to 1800€.",
-  },
-  {
-    category: "nature",
     emoji: "🌊",
-    label: "As close to a lake as it gets",
+    label: "Close to a lake",
     prompt: "🌊 Find me a place close to a lake.",
   },
   {
     category: "nature",
     emoji: "🌳",
-    label: "Right next to a big park",
-    prompt: "🌳 Find apartments right next to a big park.",
+    label: "Right next to a park",
+    prompt: "🌳 Find apartments right next to a park.",
   },
   // calm — quiet / low-density
   {
@@ -145,12 +139,12 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
     prompt:
       "🌾 I'm looking for a new place in a low-populated area. 1-2 rooms would be ideal; price doesn't matter.",
   },
-  // map — overlays / ring visualization
+  // map / ring — inside-vs-outside the S-Bahn ring
   {
     category: "map",
     emoji: "🗺️",
-    label: "Map everything around the S-Bahn Ring",
-    prompt: "🗺️ Please visualise all available apartments around the S-Bahn Ring.",
+    label: "Inside the ring, under €1,500",
+    prompt: "🗺️ Show me flats inside the S-Bahn ring, under €1500 a month.",
   },
   {
     category: "map",
@@ -163,17 +157,9 @@ export const STARTER_PROMPTS: StarterPrompt[] = [
   {
     category: "health",
     emoji: "🏥",
-    label: "A hospital close by (compare distances)",
+    label: "A hospital within walking distance",
     prompt:
-      "🏥 Show me apartments with a hospital nearby and compare how far the closest hospitals are.",
-  },
-  // semantic — soft attribute → free-text query (agent warns it can't hard-filter)
-  {
-    category: "semantic",
-    emoji: "🎓",
-    label: "Student-friendly in Steglitz-Zehlendorf",
-    prompt:
-      "🎓 Find me a student-friendly apartment in Steglitz-Zehlendorf. And which buses stop there?",
+      "🏥 Show me apartments with a hospital within walking distance.",
   },
 ];
 
