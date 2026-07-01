@@ -86,6 +86,7 @@ async def _messages_seen_by_model(
         place_service=None,
         transit_overlay_service=None,
         routing_service=None,
+        distance_service=None,
         store=store,
     )
     # Force the run to use our recording model — bypasses provider selection
@@ -176,6 +177,7 @@ def test_foreign_session_is_rejected_before_run():
             place_service=None,
             transit_overlay_service=None,
             routing_service=None,
+            distance_service=None,
             store=store,
         )
         # build_chat_model must never be reached — the gate is before it.

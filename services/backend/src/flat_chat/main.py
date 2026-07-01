@@ -7,15 +7,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.api import agent, auth, chat, listings
-from flat_chat.core.config import settings
 from flat_chat.core.database import get_async_db
+from flat_chat.core.dependencies import get_routing_service
 from flat_chat.core.embedder import build_jina_embedder
 from flat_chat.core.observability import (
     setup_logging,
     setup_observability,
     shutdown_observability,
 )
-from flat_chat.routing.service import feed_window_stale, fetch_transit_feed_window
+from flat_chat.routing.motis import feed_window_stale
+from flat_chat.routing.service import RoutingService
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ app.include_router(
 async def health(
     extended: bool = False,
     db: AsyncSession = Depends(get_async_db),
+    routing_service: RoutingService = Depends(get_routing_service),
 ):
     """Health check.
 
@@ -101,7 +103,7 @@ async def health(
         )
 
     # Best-effort transit-feed freshness (never fails the health check).
-    window = await fetch_transit_feed_window(settings.motis_url)
+    window = await routing_service.feed_window()
     if window is not None:
         first, last = window
         transit_feed = {

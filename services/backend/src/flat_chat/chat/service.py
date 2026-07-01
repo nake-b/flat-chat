@@ -17,9 +17,9 @@ from flat_chat.chat.session_state import SessionState
 from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.core.observability import run_id_var, session_id_var
-from flat_chat.listings.context import MarkerLens
 from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
+from flat_chat.search.distance import DistanceService
 from flat_chat.search.places import PlaceService
 from flat_chat.search.service import SearchService
 from flat_chat.search.transit_overlays import TransitOverlayService
@@ -127,6 +127,7 @@ class ChatService:
         place_service: PlaceService,
         transit_overlay_service: TransitOverlayService,
         routing_service: RoutingService,
+        distance_service: DistanceService,
         store: SessionStore,
     ) -> None:
         self.search_service = search_service
@@ -134,6 +135,7 @@ class ChatService:
         self.place_service = place_service
         self.transit_overlay_service = transit_overlay_service
         self.routing_service = routing_service
+        self.distance_service = distance_service
         self.store = store
 
     async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
@@ -201,6 +203,7 @@ class ChatService:
             place_service=self.place_service,
             transit_overlay_service=self.transit_overlay_service,
             routing_service=self.routing_service,
+            distance_service=self.distance_service,
             session=session,
             state=deps_state,
         )
@@ -326,13 +329,15 @@ def merge_incoming_state(
     merged.map_overlays = [o for o in merged.map_overlays if o.id in visible_ids]
 
     # Lens dismissal (the × on the lens legend): the frontend may only CLEAR the
-    # active lens, never set one. If the persisted state had a travel lens and
-    # the incoming envelope has dropped it, honour the clear — recolour-only, the
-    # result set is kept (same shrink-only authority as overlays). Setting a lens
-    # stays agent-only (`apply_travel_time`), so we never copy an incoming lens.
-    if persisted.travel_time_filter is not None and incoming.travel_time_filter is None:
-        merged.travel_time_filter = None
-        merged.marker_lens = MarkerLens()
+    # active lens, never set one. If the persisted state had a lens (travel or
+    # distance) and the incoming envelope has dropped it, honour the clear —
+    # recolour-only, the result set is kept (same shrink-only authority as
+    # overlays). Also drop the lens's own anchor overlay (origin="lens") so it
+    # doesn't linger; `marker_lens` is computed from `active_lens`, so it needs
+    # no reset. Setting a lens stays agent-only (`apply_*_lens`).
+    if persisted.active_lens is not None and incoming.active_lens is None:
+        merged.active_lens = None
+        merged.map_overlays = [o for o in merged.map_overlays if o.origin != "lens"]
 
     return merged
 

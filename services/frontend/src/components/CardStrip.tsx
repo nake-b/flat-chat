@@ -9,7 +9,7 @@ import {
   type MarkerLens,
   type MarkerPoint,
 } from "../state/SessionState";
-import { lensStyle } from "../state/lensStyles";
+import { lensColorForValue, lensDomain, lensStyle } from "../state/lensStyles";
 
 // Card sizing — pick the integer N (cards visible at once) whose resulting
 // per-card width sits in [MIN_W, MAX_W]. Beyond N, horizontal scroll kicks in.
@@ -68,6 +68,13 @@ export function CardStrip() {
   const total = markers.length;
   const headerCount = state?.total_results ?? total;
   const previewCards = state?.preview_cards;
+
+  // Adaptive lens domain over the whole result set — shared by every card's
+  // badge colour so a card's lens value matches its map pin (same ramp + domain).
+  const lensDomainValue = useMemo(
+    () => lensDomain(markers.map((m) => m.lens_value), state?.marker_lens),
+    [markers, state?.marker_lens],
+  );
 
   // A cheap, stable fingerprint of the result set: length + first/last id. A
   // new search (different filters) yields a different list, hence a different
@@ -253,6 +260,7 @@ export function CardStrip() {
                     hovered={hoverId === m.id}
                     lens={state?.marker_lens ?? null}
                     lensValue={m.lens_value}
+                    lensDomain={lensDomainValue}
                     onHoverChange={(hover) => setHover(hover ? m.id : null)}
                     onClick={() => {
                       void activate(m.id);
@@ -320,6 +328,7 @@ function ApartmentCard({
   hovered,
   lens,
   lensValue,
+  lensDomain,
   onClick,
   onHoverChange,
 }: {
@@ -328,17 +337,19 @@ function ApartmentCard({
   hovered: boolean;
   lens: MarkerLens | null;
   lensValue: number | null;
+  lensDomain?: [number, number];
   onClick: () => void;
   onHoverChange: (hover: boolean) => void;
 }) {
   const isBlank =
     apt.title == null && apt.address == null && apt.price_warm_eur == null;
-  // Under an active heatmap lens (e.g. commute), surface its value as a vibrant
-  // badge — the thing the user is actually evaluating. Default (price) lens has
-  // no style → no badge (the warm-rent figure below already carries price).
+  // Under an active heatmap lens (e.g. commute/distance), surface its value as a
+  // badge coloured by the lens ramp (so it matches the map pin). Default (price)
+  // lens has no style → no badge (the warm-rent figure below already carries it).
   const lensStyleSpec = lensStyle(lens);
   const lensBadge =
     lensStyleSpec && lensValue != null ? lensStyleSpec.format(lensValue) : null;
+  const lensBadgeColor = lensColorForValue(lens, lensValue, lensDomain);
   return (
     <button
       type="button"
@@ -373,7 +384,10 @@ function ApartmentCard({
                 {apt.district ?? "Berlin"}
               </span>
               {lensBadge ? (
-                <span className="ml-auto rounded-full bg-red px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white">
+                <span
+                  className="ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white"
+                  style={{ backgroundColor: lensBadgeColor ?? "#E4003C" }}
+                >
                   {lensBadge}
                 </span>
               ) : null}

@@ -195,6 +195,7 @@ def test_state_snapshot_reaches_sse_stream_end_to_end():
             place_service=None,
             transit_overlay_service=None,
             routing_service=None,
+            distance_service=None,
             store=store,
         )
         original = service_mod.build_chat_model

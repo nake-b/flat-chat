@@ -17,10 +17,13 @@ get a fresh label even if thresholds changed since the gold rebuild.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, Field
 
+# Re-exported so existing `from flat_chat.listings.context import MarkerLens`
+# call sites keep working after the lens vocab moved to the `lenses` leaf.
+from .lenses import MarkerLens as MarkerLens
 from .types import (
     DensityLabel,
     GreeneryLabel,
@@ -139,12 +142,13 @@ class Marker(BaseModel):
 
     `lens_value` is the ONE active visualization scalar for this marker —
     whatever `SessionState.marker_lens` currently names. By default that is
-    the warm rent (the `price_warm` lens); after `apply_travel_time` it is
-    the commute time in minutes (the `commute_min` lens). The map colours
-    pins by this value against a per-lens ramp owned by the frontend
+    the warm rent (the `price_warm` lens); under a travel lens it is the
+    commute time in minutes (`commute_min`), under a distance lens the
+    straight-line distance in metres (`distance_m`). The map colours pins by
+    this value against a per-lens ramp owned by the frontend
     (`state/lensStyles.ts`); identity lives once in `marker_lens`, never
     repeated per marker. May be null (e.g. a listing with no price, or
-    unreachable in the active travel lens) → rendered in a neutral "no data"
+    unreachable under the active lens) → rendered in a neutral "no data"
     colour."""
 
     id: str
@@ -153,48 +157,15 @@ class Marker(BaseModel):
     lens_value: float | None = None
 
 
-class MarkerLens(BaseModel):
-    """Names the single scalar every `Marker.lens_value` currently carries —
-    the active map visualization lens. Lives once in `SessionState`, not per
-    marker. The backend sets SEMANTICS (`key` + human `label`); the frontend
-    owns APPEARANCE (colour ramp / domain / number format) keyed off `key` in
-    `state/lensStyles.ts` — same semantics/appearance split as `MapOverlay`.
+class Anchor(NamedTuple):
+    """A place resolved to a routing/distance anchor — the human name plus a
+    single point (a geometry centroid). Returned by `PlaceService.anchor_point`
+    and fed to the OSRM/MOTIS engines. NamedTuple so it stays unpackable at
+    existing `label, lat, lon = anchor` call sites."""
 
-    Default `price_warm` → the frontend renders the plain pin (today's look, no
-    heatmap); `commute_min` → a travel-time ramp. Adding a future lens (e.g.
-    a noise heatmap) is one registry entry + the backend populating that scalar,
-    nothing structural."""
-
-    key: str = "price_warm"
-    label: str | None = None
-
-
-class TravelTimeFilter(BaseModel):
-    """The active commute lens — a resolved anchor + travel mode + optional
-    cutoff. Carried in `SessionState` so the shared marker derivation can
-    re-apply it after a follow-up `search_apartments` (which rebuilds markers
-    from SQL and would otherwise drop the lens). `RoutingService.resolve`
-    consumes it to compute per-listing travel time.
-
-    `anchor_label` is the human name ("TU Berlin") used for the lens label
-    and any isochrone overlay; `anchor_lat`/`anchor_lng` are the resolved
-    coordinates. `max_minutes` set → hard filter (drop listings over the limit);
-    None → annotate + colour only (no filtering).
-
-    `schedule_as_of` / `schedule_stale` describe the TRANSIT timetable the
-    result was computed against. MOTIS loads a finite VBB feed window; when it
-    has lapsed the routing layer clamps the departure to the last covered day
-    and sets `schedule_stale=True` + `schedule_as_of=<that date>` so the UI /
-    agent can say "schedule as of <date>". Both stay defaulted for car mode
-    (driving is date-independent) and for an in-window transit feed."""
-
-    anchor_label: str
-    anchor_lat: float
-    anchor_lng: float
-    mode: Literal["transit", "car"]
-    max_minutes: int | None = None
-    schedule_as_of: str | None = None
-    schedule_stale: bool = False
+    label: str
+    lat: float
+    lon: float
 
 
 # ---------------------------------------------------------------------------

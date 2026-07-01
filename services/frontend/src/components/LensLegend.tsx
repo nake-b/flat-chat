@@ -30,15 +30,20 @@ export function LensLegend() {
   if (!legend) return null;
 
   // When the transit feed has lapsed the backend clamps the departure and flags
-  // it — surface the schedule's age so the minutes aren't read as live.
-  const filter = state?.travel_time_filter;
+  // it — surface the schedule's age so the minutes aren't read as live. Only the
+  // travel-time lens carries a schedule; the distance lens has none.
+  const activeLens = state?.active_lens;
   const staleAsOf =
-    filter?.schedule_stale && filter?.schedule_as_of ? filter.schedule_as_of : null;
+    activeLens?.kind === "travel_time" &&
+    activeLens.schedule_stale &&
+    activeLens.schedule_as_of
+      ? activeLens.schedule_as_of
+      : null;
 
   return (
-    <div className="absolute bottom-3 left-3 z-10 rounded-lg bg-white/95 px-3 py-2 text-xs text-neutral-800 shadow-sm ring-1 ring-black/10">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="font-medium">{legend.title}</span>
+    <div className="absolute bottom-3 left-3 z-10 w-52 max-w-52 rounded-lg bg-white/95 px-3 py-2 text-xs text-neutral-800 shadow-sm ring-1 ring-black/10">
+      <div className="mb-1 flex items-start gap-2">
+        <span className="font-medium leading-tight">{legend.title}</span>
         <button
           type="button"
           onClick={() => dismissLens()}
@@ -50,7 +55,7 @@ export function LensLegend() {
         </button>
       </div>
       <div
-        className="h-2 w-40 rounded-full"
+        className="h-2 w-full rounded-full"
         style={{ background: legend.gradient }}
         aria-hidden
       />

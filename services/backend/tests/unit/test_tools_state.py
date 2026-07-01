@@ -430,7 +430,7 @@ def test_tools_are_importable():
 # ---------------------------------------------------------------------------
 
 
-from flat_chat.chat.tools import (  # noqa: E402
+from flat_chat.chat.overlay_tools import (  # noqa: E402
     clear_map_overlays,
     hide_on_map,
     show_on_map,

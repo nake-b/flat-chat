@@ -1,30 +1,29 @@
 import logging
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
 
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.toolsets import AgentToolset
 
+from flat_chat.chat.lens_tools import reapply_lens_hook
 from flat_chat.chat.llm_context import LlmResultSetView
+from flat_chat.chat.overlay_tools import rebuild_search_overlays_hook
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.state_emission import StateEmittingToolset
-from flat_chat.listings.context import MarkerLens, TravelTimeFilter
 from flat_chat.listings.types import (
     DensityLabel,
     GreeneryLabel,
     NearSpec,
     NoiseLabel,
 )
-from flat_chat.routing.service import RoutingError
 from flat_chat.search.geo_filters import (
     HospitalFilter,
     KitaFilter,
     SchoolFilter,
     TransitFilter,
 )
-from flat_chat.search.schemas import PREVIEW_N, SearchParams, SortBy
+from flat_chat.search.schemas import SearchParams, SortBy
 
 logger = logging.getLogger(__name__)
 
@@ -38,91 +37,37 @@ toolset: FunctionToolset[ChatDeps] = FunctionToolset()
 # truth. Keep arg descriptions in the docstring `Args:` section.
 
 
-_TOOL_PROTOCOL = """\
+_CORE_PROTOCOL = """\
 <tool_protocol>
-There is ONE active result set per conversation. Listings are referenced by
-1-based indices into it — the same numbers shown on the card strip.
-Indices are stable until the next `search_apartments` call.
-
-Tools:
-  - `search_apartments(...)` — run or REPLACE the active result set. To
-    refine, call again with ALL filters you want to keep (omitted args are
-    dropped). Never volunteer a filter the user did not explicitly ask for.
-  - `locate_place(place_name=...)` — resolve a SPECIFIC named place (a
-    landmark, park, lake/river, school, kita, hospital) to candidate
+Core tools for finding and inspecting listings (the backbone rules — one result
+set, 1-based indices, the place_ref flow — are in <tool_backbone>):
+  - `search_apartments(...)` — run or REPLACE the active result set.
+  - `locate_place(place_name=...)` — resolve a SPECIFIC named place (a landmark,
+    park, lake/river, school, kita, hospital, transit station) to candidate
     references. Returns a numbered list, each with an opaque `place_ref`.
-  - `open_listing(indices=[k])` — open the detail panel for listing #k AND
-    attach the neighbourhood-context blob (transit, schools, kitas, parks,
-    landmarks, noise, hospitals). Pass `indices=[k, m, …]` for side-by-side
-    comparison prose; UI focus anchors to the first index. NEVER pass
-    UUIDs, external IDs, or anything that isn't a 1-based number visible on
-    the cards.
-  - `get_result_page(page=N)` — browse beyond the top 5. CSV format.
-    Indices in the CSV are absolute (1..N of the whole result set), not
-    page-local.
-  - `apply_travel_time(near_place_ref=…, mode=…, max_minutes=…)` — add a
-    commute lens to the ACTIVE results: colour the map by travel time to a
-    place and (with `max_minutes`) drop listings over the cutoff. Transit or
-    car. Run a search first; the lens persists across later searches.
-  - `show_on_map(place_refs=[…], transit_lines=[…])` — DRAW geometries on the
-    map (named places via their `place_ref`, transit lines by name like "U7")
-    WITHOUT filtering. For "draw the U8 so I can see these listings against it",
-    "show me the Spree", "where is Tiergarten?". Pass several at once.
-  - `hide_on_map(targets=[…])` — remove SPECIFIC drawn geometries by label/id
-    (as shown in `<current_state>`): "hide the U8", "remove that line". Pass
-    several at once. A line that's still an active search filter redraws next
-    search — drop the filter instead to keep it off.
-  - `clear_map_overlays()` — wipe ALL drawn geometries ("clear the map").
-  - `clear_lens()` — remove the active commute lens, recolouring the map back to
-    default pins ("remove the commute colouring", "back to normal"). Recolour
-    only — listings a cutoff dropped come back only on a new search.
-
-Drawing geometries on the map. Two ways a geometry appears:
-  1. AUTOMATICALLY — a `search_apartments` call that uses `near_place_ref` or
-     `transit.lines` draws that place/line as a side effect, so results are
-     shown in relation to it. You don't call anything extra.
-  2. ON PURPOSE — `show_on_map(...)` draws a place/line WITHOUT changing the
-     results. Use it when the user wants to see something, or proactively when
-     it helps orient them (e.g. they're weighing a listing and mentioned a
-     river/line nearby). `<current_state>` lists what's already drawn — never
-     redraw something already there or that the user has dismissed.
+  - `open_listing(indices=[k])` — open the detail panel for listing #k AND attach
+    the neighbourhood-context blob (transit, schools, kitas, parks, landmarks,
+    noise, hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
+    prose; UI focus anchors to the first index. NEVER pass UUIDs, external IDs,
+    or anything that isn't a 1-based number visible on the cards.
+  - `get_result_page(page=N)` — browse beyond the top 5. CSV format. Indices in
+    the CSV are absolute (1..N of the whole result set), not page-local.
 
 Named-place search — the 2-tool flow. When the user names a SPECIFIC place
 ("near TU Berlin", "near the Spree", "by the Brandenburger Tor", "near
-Schlachtensee"):
-  1. call `locate_place(place_name="…")`,
-  2. pick the best candidate (ask the user only if genuinely ambiguous),
-  3. call `search_apartments(near_place_ref="<that candidate's place_ref>",
-     radius_km=…)`. This matches against the place's EXACT shape (a river
-     line, a campus polygon), which a coordinate radius cannot.
-Generic proximity ("near A park", "near A lake/kita/school") is NOT a named
-place — use the category filter directly (`near_park`, `near_water`, `kita`,
-`school`), no `locate_place`.
+Schlachtensee"): call `locate_place`, pick the best candidate (ask only if
+genuinely ambiguous), then `search_apartments(near_place_ref="<place_ref>",
+radius_km=…)` — this matches the place's EXACT shape (a river line, a campus
+polygon), which a coordinate radius cannot.
 
-Travel time / commute. When the user cares about how far listings are from a
-specific place ("near my work at TU Berlin", "≤30 min by U-Bahn from Alex",
-"how's the drive to the airport?"):
-  1. `locate_place(...)` to get the destination's `place_ref` (same as named
-     search),
-  2. `apply_travel_time(near_place_ref="…", mode="transit"|"car",
-     max_minutes=…)` on the ALREADY-SEARCHED result set. It does NOT search —
-     run `search_apartments` first. It recolours the map by travel time and, if
-     `max_minutes` is given, drops listings over that cutoff.
-Decide filter vs. annotate by the user's words: a stated limit ("under 30 min")
-→ pass `max_minutes`; "I care about the commute" / "show me how far" → omit it
-(colour + annotate only, nothing dropped). Default `mode` is transit; use "car"
-for "drive"/"by car". The lens sticks across later searches until changed or
-removed with `clear_lens()` (the user can also dismiss it in the UI).
-
-After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight
-of what stands out (transit, noise, neighbourhood character) — the detail
-panel renders structured data; your reply calls out what matters. Don't
-stay silent after the tool completes.
+After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight of what
+stands out (transit, noise, neighbourhood character) — the detail panel renders
+structured data; your reply calls out what matters. Don't stay silent after the
+tool completes.
 </tool_protocol>
 
 <phrase_map>
-Use these as templates when translating user phrases into structured
-filters for `search_apartments`:
+Templates for translating user phrases into `search_apartments` arguments:
   - "near U-Bahn"               → transit: {modes: ["u_bahn"]}
   - "on U8" / "served by U8"    → transit: {lines: ["U8"], distance: "very_near"}
   - "S+U Wittenau" / "near
@@ -156,32 +101,6 @@ filters for `search_apartments`:
     "near Schlachtensee"        → locate_place("…") → near_place_ref
   - "arty / queer-friendly /
     nightlife / loft vibe"      → query: "<the user's words>"
-  - "show me the U7" /
-    "trace the M10"             → show_on_map(transit_lines=["U7"])
-  - "draw the U8 and U9"        → show_on_map(transit_lines=["U8", "U9"])
-  - "show me the Spree" /
-    "where's Tiergarten?" /
-    "draw the Tiergarten"       → locate_place(…) → show_on_map(place_refs=[…])
-  - "hide the U8" /
-    "remove that line"          → hide_on_map(targets=["U8"])
-  - "get rid of the U8 and U9"  → hide_on_map(targets=["U8", "U9"])
-  - "clear the map" /
-    "remove all the lines" /
-    "hide everything"           → clear_map_overlays()
-  - "≤30 min by U-Bahn from
-    TU Berlin" / "within 25 min
-    transit of my work"         → locate_place(…) → apply_travel_time(
-                                  near_place_ref=…, mode="transit", max_minutes=30)
-  - "max 20 min drive to the
-    airport"                    → locate_place(…) → apply_travel_time(
-                                  near_place_ref=…, mode="car", max_minutes=20)
-  - "I work at TU Berlin, show
-    me the commute" / "how far
-    is each from …"             → locate_place(…) → apply_travel_time(
-                                  near_place_ref=…, mode="transit")  # no cutoff
-  - "remove the commute lens" /
-    "stop colouring by travel
-    time" / "back to normal"    → clear_lens()
 </phrase_map>
 """
 
@@ -194,7 +113,7 @@ def tool_protocol_instructions() -> str:
     system prompt — co-locating tool guidance with the tool implementations
     means renaming a tool is one atomic edit (function name + this text).
     """
-    return _TOOL_PROTOCOL
+    return _CORE_PROTOCOL
 
 
 @toolset.tool
@@ -433,209 +352,17 @@ async def search_apartments(
     ctx.deps.state.active_id = None
     ctx.deps.state.active_listing_detail = None
 
-    # Draw the geometry this search is anchored to (the Spree, the U7) so the
-    # user sees results IN RELATION to it. Replaces the previous search-derived
-    # overlays; pinned overlays (from show_on_map) survive.
-    await _rebuild_search_overlays(ctx, params)
-
-    # Re-apply the active commute lens (if any) so a refinement keeps the travel
-    # filter/heatmap instead of silently reverting to price. No-op when no lens
-    # is set (just leaves markers on the default price lens). Routing is a
-    # fallible external dependency: if it's down during a refinement, drop the
-    # lens rather than failing the whole search — the SQL result set is already
-    # valid (same graceful-degradation contract as `apply_travel_time`).
-    try:
-        await _apply_travel_lens(ctx)
-    except RoutingError as exc:
-        logger.warning("travel lens re-apply failed during refinement: %s", exc)
-        _clear_lens(ctx)
+    # Post-search hooks (same chat layer, ordered): redraw the geometry this
+    # search is anchored to (the Spree, the U7) so results are shown IN RELATION
+    # to it, then re-apply the active lens (if any) so a refinement keeps its
+    # heatmap/filter. Each hook owns its own error policy — `reapply_lens_hook`
+    # swallows a routing outage and drops the lens rather than failing the search.
+    await rebuild_search_overlays_hook(ctx)
+    await reapply_lens_hook(ctx)
 
     # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
     # the tool just returns prose for the LLM.
     return LlmResultSetView(ctx.deps.state).summary(ctx.deps.state.preview_cards)
-
-
-@toolset.tool
-async def apply_travel_time(
-    ctx: RunContext[ChatDeps],
-    near_place_ref: str,
-    mode: Literal["transit", "car"] = "transit",
-    max_minutes: int | None = None,
-) -> str:
-    """Add a travel-time (commute) lens to the ACTIVE result set.
-
-    Run `search_apartments` first — this annotates / filters the listings that
-    search already found; it does not search. Recolours the map pins by travel
-    time to `near_place_ref` (bold red = near, faded = far) and shows the
-    minutes on each card.
-
-    Args:
-        near_place_ref: A `place_ref` from `locate_place` for the destination
-            (e.g. the user's workplace / university / a landmark).
-        mode: "transit" (public transport, default) or "car" (driving).
-        max_minutes: If set, DROP listings further than this many minutes (a
-            hard commute filter). If omitted, keep all listings and only
-            colour/annotate by travel time.
-
-    The lens persists across later `search_apartments` refinements until the
-    user changes the destination/mode or it's cleared.
-    """
-    state = ctx.deps.state
-    if not state.result_markers:
-        return (
-            "There's no active result set yet. Run search_apartments first, "
-            "then I can add a travel-time lens to those listings."
-        )
-
-    anchor = await ctx.deps.place_service.anchor_point(near_place_ref)
-    if anchor is None:
-        raise ModelRetry(
-            f"Could not resolve place_ref {near_place_ref!r}. Call locate_place "
-            "first and pass one of the returned place_ref tokens."
-        )
-    label, lat, lon = anchor
-
-    state.travel_time_filter = TravelTimeFilter(
-        anchor_label=label,
-        anchor_lat=lat,
-        anchor_lng=lon,
-        mode=mode,
-        max_minutes=max_minutes,
-    )
-
-    # Draw the destination so the user sees results in relation to it. Pinned so
-    # it survives subsequent searches (like an explicit show_on_map).
-    overlay = await ctx.deps.place_service.overlay_geometry(
-        near_place_ref, origin="pinned"
-    )
-    if overlay is not None:
-        _upsert_overlay(state, overlay)
-
-    try:
-        await _apply_travel_lens(ctx)
-    except RoutingError as exc:
-        # Routing is a fallible external dependency: drop the lens and tell the
-        # agent so it can offer to proceed without travel time.
-        state.travel_time_filter = None
-        state.marker_lens = MarkerLens()
-        logger.warning("apply_travel_time failed: %s", exc)
-        return (
-            f"I couldn't reach the {mode} routing service to compute travel "
-            f"times to {label}. The listings are unchanged — want me to "
-            "continue without the commute filter?"
-        )
-
-    how = "driving" if mode == "car" else "transit"
-    # If the transit timetable has lapsed, `_motis` clamped the departure into
-    # the last covered day and flagged it — tell the user the schedule's age so
-    # they don't take the minutes as live.
-    filt = state.travel_time_filter
-    stale_note = ""
-    if filt is not None and filt.schedule_stale and filt.schedule_as_of:
-        stale_note = (
-            f" Note: the transit timetable data only runs through "
-            f"{filt.schedule_as_of}, so these times reflect that day's schedule."
-        )
-    if max_minutes is not None:
-        return (
-            f"Filtered to {state.total_results} listings within {max_minutes} "
-            f"min {how} of {label}. The map is now coloured by travel time "
-            f"(bold red = closer, faded = farther).{stale_note}"
-        )
-    return (
-        f"Coloured the map by {how} time to {label} (bold red = closer, faded "
-        f"= farther). All {state.total_results} listings are still shown."
-        f"{stale_note}"
-    )
-
-
-def _clear_lens(ctx: RunContext[ChatDeps]) -> None:
-    """Reset to the default price view: drop the travel filter and revert
-    `marker_lens` to `price_warm`.
-
-    Recolour-only — the result set (including any listings a minutes cutoff
-    dropped) is left as-is; a new search restores it. Shared by the `clear_lens`
-    tool, the frontend dismissal (honoured in `merge_incoming_state`), and
-    `_apply_travel_lens`'s no-filter branch."""
-    state = ctx.deps.state
-    state.travel_time_filter = None
-    if state.marker_lens.key != "price_warm":
-        state.marker_lens = MarkerLens()
-
-
-async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
-    """Derive `lens_value` + `marker_lens` from the active travel lens.
-
-    Shared by `search_apartments` (re-apply after a refinement) and
-    `apply_travel_time` (apply on demand). Stateless w.r.t. ordering: keeps the
-    search's sort order, only annotating each marker with travel minutes and —
-    when `max_minutes` is set — dropping the ones over the cutoff. Filtering
-    preserves order; the preview is then refilled back up to `PREVIEW_N` (a
-    cutoff can drop cards that were in the original top-N), so `preview_cards`
-    stays a true, full-length prefix of `result_markers`.
-
-    No lens → resets to the default `price_warm` lens (markers keep the price
-    value search already wrote). Raises `RoutingError` on engine failure."""
-    state = ctx.deps.state
-    filt = state.travel_time_filter
-    if filt is None:
-        _clear_lens(ctx)
-        return
-
-    minutes_by_id = await ctx.deps.routing_service.resolve(state.result_markers, filt)
-
-    new_markers = []
-    for m in state.result_markers:
-        minutes = minutes_by_id.get(m.id)
-        if filt.max_minutes is not None and (
-            minutes is None or minutes > filt.max_minutes
-        ):
-            continue  # over the cutoff (or unreachable) → drop
-        new_markers.append(m.model_copy(update={"lens_value": minutes}))
-
-    state.result_markers = new_markers
-    state.total_results = len(new_markers)
-
-    # Rebuild the preview as the true prefix of the (filtered) marker order,
-    # refilled to PREVIEW_N. A cutoff can drop cards that were in the original
-    # top-N and promote markers from beyond the preview window; those carry no
-    # card data (markers are thin), so hydrate the newly-promoted ids by id.
-    # Annotate-only (no cutoff) keeps the same top-N → `missing` is empty and
-    # this costs no extra query.
-    preview_ids = [m.id for m in new_markers[:PREVIEW_N]]
-    by_id = {c.id: c for c in state.preview_cards}
-    missing = [i for i in preview_ids if i not in by_id]
-    if missing:
-        by_id.update(
-            {c.id: c for c in await ctx.deps.listing_service.get_cards(missing)}
-        )
-    state.preview_cards = [by_id[i] for i in preview_ids if i in by_id]
-
-    state.marker_lens = MarkerLens(
-        key="commute_min", label=f"min to {filt.anchor_label}"
-    )
-
-
-@toolset.tool
-async def clear_lens(ctx: RunContext[ChatDeps]) -> str:
-    """Remove the active travel-time (commute) lens — recolour the map back to
-    the default pins.
-
-    Use when the user wants to drop the commute colouring ("remove the commute
-    lens", "stop colouring by travel time", "back to normal pins"). Recolour
-    ONLY: the current listings are unchanged — if a minutes cutoff had filtered
-    the set, run a search to bring the hidden listings back. The user can also
-    dismiss the lens directly in the UI (the × on the lens legend); either way
-    it stays gone until a new `apply_travel_time`.
-    """
-    state = ctx.deps.state
-    if state.travel_time_filter is None and state.marker_lens.key == "price_warm":
-        return "There's no travel-time lens active right now."
-    _clear_lens(ctx)
-    return (
-        "Removed the travel-time lens — pins are back to default. The current "
-        "listings are unchanged."
-    )
 
 
 @toolset.tool
@@ -683,197 +410,6 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
         lines.append(f"  {i}. {' — '.join(bits)}{coords}  place_ref={c.place_ref}")
     lines.append('Then: search_apartments(near_place_ref="<place_ref>", radius_km=…).')
     return "\n".join(lines)
-
-
-@toolset.tool
-async def show_on_map(
-    ctx: RunContext[ChatDeps],
-    place_refs: list[str] | None = None,
-    transit_lines: list[str] | None = None,
-) -> str:
-    """Draw one or more places / transit lines on the map WITHOUT changing results.
-
-    Use this when the user wants to SEE geometries in relation to the current
-    listings — "draw the U8 so I can see these against it", "show me the Spree",
-    "where's Tiergarten?" — or proactively when it helps orient them. It does
-    NOT filter; the result set and map markers are untouched. (To filter
-    listings near a place, use `search_apartments(near_place_ref=…)` instead —
-    that draws the geometry too, as a side effect.)
-
-    Draw SEVERAL at once by passing lists (`transit_lines=["U8", "U9"]`) rather
-    than calling this tool repeatedly — one call draws them in a single atomic
-    update. Each overlay is PINNED: it stays on the map across subsequent
-    searches until removed (`hide_on_map` / `clear_map_overlays`) or the user
-    dismisses it. Drawing the same place/line again just refreshes it. The
-    `<current_state>` block lists what's already drawn — don't redraw something
-    that's there or that the user hid.
-
-    Args:
-        place_refs: Zero or more opaque `place_ref`s from `locate_place` (named
-            parks, lakes/rivers, landmarks, etc.). Resolve each name with
-            `locate_place` first, then pass the chosen candidates' refs here.
-        transit_lines: Zero or more line names like ["U7", "S41", "M10"]. Passed
-            by name directly — no `locate_place` needed (line names are
-            unambiguous).
-    """
-    places = place_refs or []
-    lines = transit_lines or []
-    if not places and not lines:
-        return (
-            "Pass at least one place_ref (from locate_place) or transit_line "
-            '(e.g. "U7") to draw something.'
-        )
-
-    # Resolve each ref/line to a geometry and pin it; track what resolved
-    # (`drawn`) vs what didn't (`missed`) so the return note can report both.
-    drawn: list[str] = []
-    missed: list[str] = []
-
-    # Places: each opaque place_ref → a named_places geometry via PlaceService.
-    for ref in places:
-        overlay = await ctx.deps.place_service.overlay_geometry(ref, origin="pinned")
-        if overlay is not None:
-            _upsert_overlay(ctx.deps.state, overlay)  # replaces a same-id overlay
-            drawn.append(overlay.label)
-        else:
-            missed.append(f'place_ref "{ref}"')
-
-    # Transit lines: line name → route-shape geometry (display-only resolver).
-    for line in lines:
-        overlay = await ctx.deps.transit_overlay_service.route_geometry(
-            line, origin="pinned"
-        )
-        if overlay is not None:
-            _upsert_overlay(ctx.deps.state, overlay)
-            drawn.append(overlay.label)
-        else:
-            missed.append(f'line "{line}"')
-
-    if not drawn:
-        return (
-            f"Couldn't find {', '.join(missed)} to draw. For a place, resolve it "
-            "with locate_place first; transit lines must be a real line name."
-        )
-    note = f"Drawing {', '.join(drawn)} on the map."
-    if missed:
-        note += f" (Couldn't find {', '.join(missed)}.)"
-    return note
-
-
-@toolset.tool
-async def clear_map_overlays(ctx: RunContext[ChatDeps]) -> str:
-    """Remove ALL geometries currently drawn on the map (lines, shapes, zones).
-
-    Use when the user wants a clean map ("clear the map", "remove those lines",
-    "hide everything"). Does not touch the result set or markers. To remove just
-    one, the user can dismiss it directly in the UI.
-    """
-    overlays = ctx.deps.state.map_overlays
-    if not overlays:
-        return "No geometries are currently drawn on the map."
-    n = len(overlays)
-    ctx.deps.state.map_overlays = []
-    return f"Cleared {n} geometr{'y' if n == 1 else 'ies'} from the map."
-
-
-@toolset.tool
-async def hide_on_map(ctx: RunContext[ChatDeps], targets: list[str]) -> str:
-    """Remove SPECIFIC drawn geometries from the map (as opposed to
-    `clear_map_overlays`, which wipes everything).
-
-    Use when the user wants to hide particular overlays — "hide the U8",
-    "remove that line", "get rid of the U8 and U9". Match each target against
-    the overlays listed in `<current_state>` by their LABEL or id
-    (case-insensitive) — e.g. pass `["U8", "Tiergarten"]`. Hide SEVERAL at once
-    in one call rather than calling this tool repeatedly.
-
-    This only edits what's drawn; it never changes the result set. A target
-    that isn't currently on the map is reported back, not treated as an error.
-
-    IMPORTANT: a line that is still an ACTIVE search filter (shown as `search`
-    in `<current_state>`) will be REDRAWN on the next search. To keep such a
-    line off the map for good, drop the filter instead — re-run
-    `search_apartments` without it — rather than hiding it here.
-
-    Args:
-        targets: Labels or ids of overlays to remove, as shown in
-            `<current_state>` (e.g. ["U8", "U9"]). Case-insensitive.
-    """
-    overlays = ctx.deps.state.map_overlays
-    wanted = [t.strip() for t in targets if t and t.strip()]
-    if not wanted:
-        return "Tell me which overlay to hide (a label or id from the map)."
-
-    # Match case-insensitively on either id or label — the agent passes whatever
-    # it saw in <current_state> (usually the label, e.g. "U8").
-    norm = {w.casefold() for w in wanted}
-    removed = [
-        o for o in overlays if o.id.casefold() in norm or o.label.casefold() in norm
-    ]
-    if not removed:
-        return f"Nothing matching {', '.join(wanted)} is on the map right now."
-
-    # Drop the matched overlays by id (label collisions are theoretically
-    # possible; id is the stable key).
-    removed_ids = {o.id for o in removed}
-    ctx.deps.state.map_overlays = [o for o in overlays if o.id not in removed_ids]
-
-    note = f"Removed {', '.join(o.label for o in removed)} from the map."
-
-    # Report any targets that matched nothing (not an error — just feedback).
-    matched = {o.id.casefold() for o in removed} | {o.label.casefold() for o in removed}
-    not_found = [w for w in wanted if w.casefold() not in matched]
-    if not_found:
-        note += f" ({', '.join(not_found)} wasn't drawn.)"
-
-    # A `search`-origin overlay is redrawn by the next search (it mirrors an
-    # active filter), so warn that hiding alone won't keep it off the map.
-    search_tied = [o.label for o in removed if o.origin == "search"]
-    if search_tied:
-        note += (
-            f" Note: {', '.join(search_tied)} is tied to the active search and "
-            "will redraw on the next search — drop that filter to keep it off."
-        )
-    return note
-
-
-def _upsert_overlay(state, overlay) -> None:
-    """Add `overlay`, replacing any existing one with the same id (stable per
-    logical place/line — so redrawing refreshes rather than duplicates)."""
-    state.map_overlays = [o for o in state.map_overlays if o.id != overlay.id] + [
-        overlay
-    ]
-
-
-async def _rebuild_search_overlays(ctx: RunContext[ChatDeps], params) -> None:
-    """Recompute the SEARCH-derived overlays from the active search's spatial
-    anchors (`near_place_ref` / `transit.lines`), preserving pinned overlays.
-
-    The two anchors mirror the search tool's own asymmetry: a named place goes
-    through `near_place_ref`, while "near the U8" rides `transit.lines` (never
-    `near_place_ref`). Both feed `map_overlays` so the geometry a search filters
-    on is always the geometry drawn. A pinned overlay with the same id wins
-    (it's sticky), so we never duplicate it as a search overlay."""
-    kept = [o for o in ctx.deps.state.map_overlays if o.origin == "pinned"]
-    kept_ids = {o.id for o in kept}
-    fresh: list = []
-
-    if params.near_place_ref:
-        overlay = await ctx.deps.place_service.overlay_geometry(
-            params.near_place_ref, origin="search"
-        )
-        if overlay is not None and overlay.id not in kept_ids:
-            fresh.append(overlay)
-
-    if params.transit is not None and params.transit.lines:
-        for line in params.transit.lines:
-            overlay = await ctx.deps.transit_overlay_service.route_geometry(
-                line, origin="search"
-            )
-            if overlay is not None and overlay.id not in kept_ids:
-                fresh.append(overlay)
-
-    ctx.deps.state.map_overlays = kept + fresh
 
 
 # TODO(post-MVP): split into a pure-query `get_listing_prose` + pure-command
@@ -1014,26 +550,19 @@ async def get_result_page(
 
 
 @dataclass
-class ListingsCapability(AbstractCapability[ChatDeps]):
-    """The apartment search + listing tools bundled as a v2 capability.
+class CoreCapability(AbstractCapability[ChatDeps]):
+    """The always-loaded backbone tools bundled as a v2 capability:
+    `search_apartments`, `open_listing`, `get_result_page`, `locate_place`.
 
-    The tools (`search_apartments`, `open_listing`, `get_result_page`,
-    `locate_place`, `show_on_map`, `clear_map_overlays`) and their
-    `@toolset.instructions` protocol guidance are unchanged — this composes the
-    agent via `capabilities=[...]` (Pydantic AI v2's primary extension
-    primitive) instead of a bare `toolsets=[...]`. `get_toolset` is called once
-    at Agent construction, so the toolset's tools are all registered by then.
+    `locate_place` lives here (not with overlays/lenses) because it mints the
+    `place_ref` tokens that every other capability consumes, so it must always be
+    loaded. Map-overlay tools are in `MapOverlayCapability`, lens tools in
+    `LensCapability` — see `agent-compound-docs/decisions/capability-landscape.md`.
 
-    It returns the toolset wrapped in `StateEmittingToolset` so any `deps.state`
+    Returns the toolset wrapped in `StateEmittingToolset` so any `deps.state`
     mutation a tool makes auto-emits a STATE_SNAPSHOT to the frontend — emission
     stays structural (the wrapper intercepts `call_tool`), not something each
-    tool body has to remember. The old `_return_with_state` helper is gone for
-    the same reason. See `state_emission.py` and `map-overlays.md`.
-
-    New agent-callable tool groups (e.g. the map/frontend command tools and
-    distance tools) should land as their OWN capabilities — optionally with
-    `defer_loading=True` to keep them out of the cached prompt prefix until the
-    model loads them. See agent-compound-docs/decisions/pydantic-v2-migration.md.
+    tool body has to remember. See `state_emission.py` and `map-overlays.md`.
     """
 
     def get_toolset(self) -> AgentToolset[ChatDeps] | None:

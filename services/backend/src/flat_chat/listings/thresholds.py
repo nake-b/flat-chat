@@ -88,6 +88,18 @@ PEDESTRIAN_M_PER_S: float = 1.4
 
 
 # ---------------------------------------------------------------------------
+# Last-mile walk cap (m) for the transit travel-time lens: a listing's transit
+# time = min over stops within this range of (anchor→stop + walk(stop→listing)).
+# Stops farther than this can't "rescue" an otherwise-unreachable listing.
+# 1500 m (~18 min at PEDESTRIAN_M_PER_S) matches CAP_TRANSIT_STOPS_M — Berliners
+# routinely walk >1 km to a station. ROUTING-ONLY: not part of the gold ETL, so
+# (unlike the caps above) it is NOT duplicated into ingestion. See doc §2.
+# ---------------------------------------------------------------------------
+
+CAP_LAST_MILE_WALK_M: int = 1500
+
+
+# ---------------------------------------------------------------------------
 # GTFS Extended Route Type ↔ English mode label. Source: VBB GTFS feed,
 # threshold doc §7.
 # ---------------------------------------------------------------------------

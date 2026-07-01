@@ -1,9 +1,11 @@
-"""Unit tests for RoutingService — engine URL/param building + response parsing.
+"""Unit tests for the routing layer — OSRM/MOTIS clients + RoutingService orchestrator.
 
 No network: `httpx.AsyncClient` is monkeypatched with a fake whose `.get()`
-returns canned engine payloads. Guards the two things most likely to break
-silently: the duration UNITS (engines return seconds; we expose minutes) and
-the positional alignment of the response to the marker batch.
+returns canned engine payloads. Guards the things most likely to break silently:
+the duration UNITS (engines return seconds; we expose minutes), the coord order
+(OSRM lon,lat vs MOTIS lat,lon), the last-mile walk, the departure clamp, and the
+feed-window read. The feed-window cache is now instance-level on `MotisClient`, so
+each `_svc()` / fresh client starts clean — no module reset hook.
 """
 
 from __future__ import annotations
@@ -15,19 +17,20 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from flat_chat.listings.context import Marker, TravelTimeFilter
-from flat_chat.routing import service as routing_mod
-from flat_chat.routing.service import (
-    RoutingError,
-    RoutingService,
+from flat_chat.listings.context import Marker
+from flat_chat.listings.lenses import TravelTimeLens
+from flat_chat.routing.errors import RoutingError
+from flat_chat.routing.motis import (
+    MotisClient,
     _commute_departure,
     _parse_metrics_window,
-    fetch_transit_feed_window,
 )
+from flat_chat.routing.osrm import OsrmClient
+from flat_chat.routing.service import RoutingService
 
 _BERLIN = ZoneInfo("Europe/Berlin")
 
-ANCHOR = TravelTimeFilter(
+ANCHOR = TravelTimeLens(
     anchor_label="TU Berlin",
     anchor_lat=52.512,
     anchor_lng=13.327,
@@ -44,15 +47,6 @@ _METRICS_BODY = (
     'nigiri_timetable_first_day_timestamp_seconds{tag="vbb"} 1782432000\n'
     'nigiri_timetable_last_day_timestamp_seconds{tag="vbb"} 1782864000\n'
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_feed_window_cache():
-    """Drop the module-level feed-window TTL cache around every test so a
-    monkeypatched /metrics response isn't shadowed by a prior test's read."""
-    routing_mod._reset_feed_window_cache()
-    yield
-    routing_mod._reset_feed_window_cache()
 
 
 def _markers(n: int) -> list[Marker]:
@@ -92,18 +86,23 @@ class _FakeClient:
 
 
 def _install(monkeypatch, responder) -> _FakeClient:
+    # osrm.py and motis.py both `import httpx` and call `httpx.AsyncClient(...)`,
+    # so patching the module attribute covers both clients.
     client = _FakeClient(responder)
-    monkeypatch.setattr(routing_mod.httpx, "AsyncClient", lambda *a, **k: client)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: client)
     return client
 
 
 def _svc() -> RoutingService:
-    return RoutingService(osrm_url="http://osrm:5000", motis_url="http://motis:8080")
+    return RoutingService(
+        OsrmClient(osrm_url="http://osrm:5000"),
+        MotisClient(motis_url="http://motis:8080"),
+    )
 
 
 def _one_to_all_call(client: _FakeClient) -> tuple[str, dict]:
-    """The recorded one-to-all call (transit routing now also GETs /metrics for
-    the feed window first, so it's no longer guaranteed to be calls[0])."""
+    """The recorded one-to-all call (transit routing also GETs /metrics for the
+    feed window first, so it's not guaranteed to be calls[0])."""
     for url, params in client.calls:
         if url.endswith("/api/v1/one-to-all"):
             return url, params  # type: ignore[return-value]
@@ -130,8 +129,8 @@ def test_osrm_parses_seconds_to_minutes_and_skips_unrouted(monkeypatch):
             {"code": "Ok", "durations": [[0, 120, 330, None]]}
         ),
     )
-    filt = ANCHOR.model_copy(update={"mode": "car"})
-    out = asyncio.run(_svc().resolve(_markers(3), filt))
+    lens = ANCHOR.model_copy(update={"mode": "car"})
+    out = asyncio.run(_svc().resolve(_markers(3), lens))
     # 120s→2min, 330s→5.5→6min (round), None → absent.
     assert out == {"m0": 2, "m1": 6}
 
@@ -141,8 +140,8 @@ def test_osrm_builds_lonlat_sources0_url(monkeypatch):
         monkeypatch,
         lambda url, params: _FakeResp({"code": "Ok", "durations": [[0, 60]]}),
     )
-    filt = ANCHOR.model_copy(update={"mode": "car"})
-    asyncio.run(_svc().resolve(_markers(1), filt))
+    lens = ANCHOR.model_copy(update={"mode": "car"})
+    asyncio.run(_svc().resolve(_markers(1), lens))
     url = client.calls[0][0]
     assert "/table/v1/driving/13.327,52.512;" in url  # anchor lon,lat first
     assert "sources=0" in url
@@ -151,14 +150,14 @@ def test_osrm_builds_lonlat_sources0_url(monkeypatch):
 
 def test_osrm_raises_routing_error_on_bad_code(monkeypatch):
     _install(monkeypatch, lambda url, params: _FakeResp({"code": "NoTable"}))
-    filt = ANCHOR.model_copy(update={"mode": "car"})
+    lens = ANCHOR.model_copy(update={"mode": "car"})
     with pytest.raises(RoutingError):
-        asyncio.run(_svc().resolve(_markers(2), filt))
+        asyncio.run(_svc().resolve(_markers(2), lens))
 
 
 # MOTIS one-to-all returns transit minutes from the anchor to every reachable
 # STOP; RoutingService adds the last-mile walk from the nearest in-range stop to
-# each listing. These markers are spread so each sits ON one stop and >1 km from
+# each listing. These markers are spread so each sits ON one stop and far from
 # the others (no cross-walk), making the expected total deterministic.
 _M_ONSTOP = [
     Marker(id="m0", lat=52.50, lng=13.40),
@@ -174,7 +173,7 @@ _ONE_TO_ALL = {
 
 
 def test_motis_maps_stops_to_listings_via_last_mile_walk(monkeypatch):
-    _install(monkeypatch, lambda url, params: _FakeResp(_ONE_TO_ALL))
+    _install(monkeypatch, _motis_responder(_ONE_TO_ALL))
     out = asyncio.run(_svc().resolve(_M_ONSTOP, ANCHOR))
     # m0/m1 sit on a stop → walk ≈ 0 → the stop's minutes; m2 has no stop within
     # the walk cap → absent.
@@ -231,29 +230,29 @@ def test_parse_metrics_window_reads_both_gauges():
 
 
 def test_parse_metrics_window_none_when_gauges_absent():
-    # A /metrics body without the nigiri timetable gauges → unknown window.
     assert _parse_metrics_window("some_other_metric 5\n# a comment\n") is None
 
 
-def test_fetch_feed_window_hits_metrics_and_parses(monkeypatch):
+def test_feed_window_hits_metrics_and_parses(monkeypatch):
     client = _install(monkeypatch, lambda url, params: _FakeResp(text=_METRICS_BODY))
-    window = asyncio.run(fetch_transit_feed_window("http://motis:8080"))
+    window = asyncio.run(MotisClient(motis_url="http://motis:8080").feed_window())
     assert window == (date(2026, 6, 26), date(2026, 7, 1))
     assert client.calls[0][0].endswith("/metrics")
 
 
-def test_fetch_feed_window_none_and_uncached_on_unreachable(monkeypatch):
+def test_feed_window_none_and_uncached_on_unreachable(monkeypatch):
+    # One client instance across both reads: a failure must NOT be cached, so a
+    # later successful read is picked up immediately (instance-level cache).
+    motis = MotisClient(motis_url="http://motis:8080")
+
     def _boom(url, params):
         raise httpx.ConnectError("refused")
 
     _install(monkeypatch, _boom)
-    assert asyncio.run(fetch_transit_feed_window("http://motis:8080")) is None
-    # Failures aren't cached — a later successful read is picked up immediately.
+    assert asyncio.run(motis.feed_window()) is None
+
     _install(monkeypatch, lambda url, params: _FakeResp(text=_METRICS_BODY))
-    assert asyncio.run(fetch_transit_feed_window("http://motis:8080")) == (
-        date(2026, 6, 26),
-        date(2026, 7, 1),
-    )
+    assert asyncio.run(motis.feed_window()) == (date(2026, 6, 26), date(2026, 7, 1))
 
 
 # --- departure clamp: in-window / lapsed / future / no-window ---------------
@@ -262,7 +261,6 @@ _WINDOW = (date(2026, 6, 26), date(2026, 7, 1))
 
 
 def test_commute_departure_in_window_not_stale():
-    # A Monday inside the window → next weekday 08:00, no clamp, not stale.
     now = datetime(2026, 6, 29, 6, 0, tzinfo=_BERLIN)  # Mon 06:00
     iso, stale, as_of = _commute_departure(_WINDOW, now=now)
     assert iso.startswith("2026-06-29T08:00")
@@ -271,9 +269,6 @@ def test_commute_departure_in_window_not_stale():
 
 
 def test_commute_departure_lapsed_clamps_inside_window_and_marks_stale():
-    # "Now" is well past the window → clamp inside it. The gauge's last day is a
-    # partial/dead boundary, so we back off one day before rolling to a weekday:
-    # last=2026-07-01 (Wed) → 06-30 (Tue), a fully-served weekday. Flag stale.
     now = datetime(2026, 7, 20, 9, 0, tzinfo=_BERLIN)
     iso, stale, as_of = _commute_departure(_WINDOW, now=now)
     assert iso.startswith("2026-06-30T08:00")
@@ -282,8 +277,6 @@ def test_commute_departure_lapsed_clamps_inside_window_and_marks_stale():
 
 
 def test_commute_departure_future_window_clamps_to_first_weekday_not_stale():
-    # Window is entirely in the future → clamp UP to its first weekday
-    # (2026-06-26 is a Friday), not stale.
     now = datetime(2026, 6, 1, 9, 0, tzinfo=_BERLIN)
     iso, stale, as_of = _commute_departure(_WINDOW, now=now)
     assert iso.startswith("2026-06-26T08:00")
@@ -292,7 +285,6 @@ def test_commute_departure_future_window_clamps_to_first_weekday_not_stale():
 
 
 def test_commute_departure_no_window_falls_back_to_next_weekday():
-    # MOTIS down / window unknown → plain next-weekday 08:00, never stale.
     now = datetime(2026, 7, 20, 9, 0, tzinfo=_BERLIN)  # Monday
     iso, stale, as_of = _commute_departure(None, now=now)
     assert iso.startswith("2026-07-21T08:00")  # next day, Tue

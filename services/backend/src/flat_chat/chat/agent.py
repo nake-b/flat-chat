@@ -12,9 +12,12 @@ See `services/frontend/src/state/UiState.ts` for the matching frontend name.
 
 from pydantic_ai import Agent, RunContext
 
+from flat_chat.chat.lens_tools import LensCapability
 from flat_chat.chat.llm_context import build_dynamic_state_prompt, xml_block
+from flat_chat.chat.overlay_tools import MapOverlayCapability
+from flat_chat.chat.prompts import TOOL_BACKBONE
 from flat_chat.chat.state import ChatDeps
-from flat_chat.chat.tools import ListingsCapability
+from flat_chat.chat.tools import CoreCapability
 
 
 def _role_block() -> str:
@@ -98,6 +101,11 @@ INSTRUCTIONS = "\n\n".join(
         _user_references_block(),
         _honesty_block(),
         _city_center_block(),
+        # Cross-capability tool invariants (one result set, 1-based indices, the
+        # place_ref flow). Lives here — not on a single toolset — because it spans
+        # Core / MapOverlay / Lens; each capability's own protocol then describes
+        # only its own tools. Static → stays in the cached prefix.
+        TOOL_BACKBONE,
     ]
 )
 
@@ -106,15 +114,19 @@ INSTRUCTIONS = "\n\n".join(
 # immutable config (capability binding, instructions, retries). Per-request
 # state (model, deps, history) is passed at `agent.run(...)` time, so no DI
 # needed. Tools are bound via `capabilities=[...]` (Pydantic AI v2's composition
-# primitive) — `ListingsCapability` wraps the search/listing toolset in
-# `StateEmittingToolset` (inside its `get_toolset`), so any `deps.state` mutation
-# a tool makes auto-emits a STATE_SNAPSHOT — emission is structural, not
-# something each tool remembers (see state_emission.py). Future tool groups
-# (map/frontend command tools, distance tools) add their own capabilities.
-# See agent-compound-docs/decisions/pydantic-v2-migration.md.
+# primitive), split by domain: `CoreCapability` (search / open / page / locate),
+# `MapOverlayCapability` (draw geometries), `LensCapability` (colour by travel
+# time / distance). Each returns its toolset wrapped in `StateEmittingToolset`
+# (inside `get_toolset`), so any `deps.state` mutation auto-emits a
+# STATE_SNAPSHOT — emission is structural, not something each tool remembers
+# (see state_emission.py). Splitting into capabilities is behavior-neutral to the
+# LLM (same combined tool list + instructions) and sets up `defer_loading` as a
+# later lever. The deferred `ListingProximityCapability` (single-listing distance
+# / travel queries, issue #44) lands next. See
+# agent-compound-docs/decisions/capability-landscape.md.
 agent: Agent[ChatDeps, str] = Agent(
     deps_type=ChatDeps,
-    capabilities=[ListingsCapability()],
+    capabilities=[CoreCapability(), MapOverlayCapability(), LensCapability()],
     instructions=INSTRUCTIONS,
     retries={"tools": 3},
 )

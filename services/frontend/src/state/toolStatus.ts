@@ -93,7 +93,7 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
       a?.place_name ? `Found ${a.place_name}` : "Place located",
   },
 
-  apply_travel_time: {
+  apply_travel_time_lens: {
     executing: (a: { mode?: string }) => {
       const how = a?.mode === "car" ? "driving" : "transit";
       return `Computing ${how} times`;
@@ -104,6 +104,14 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
     complete: (_a, _r, state: { marker_lens?: { label?: string } } | null) => {
       const label = state?.marker_lens?.label;
       return label ? `Map coloured · ${label}` : "Travel times applied";
+    },
+  },
+
+  apply_distance_lens: {
+    executing: () => "Computing distances",
+    complete: (_a, _r, state: { marker_lens?: { label?: string } } | null) => {
+      const label = state?.marker_lens?.label;
+      return label ? `Map coloured · ${label}` : "Distances applied";
     },
   },
 

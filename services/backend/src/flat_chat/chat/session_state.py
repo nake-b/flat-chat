@@ -33,15 +33,21 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    computed_field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from flat_chat.listings.context import (
     ListingCard,
     ListingDetail,
     Marker,
-    MarkerLens,
-    TravelTimeFilter,
 )
+from flat_chat.listings.lenses import ActiveLens, MarkerLens, marker_lens_for
 from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import ResultFacets, SearchParams
 
@@ -98,20 +104,39 @@ class SessionState(BaseModel):
     """Geometries currently drawn on the map. GeoJSON rides as-is (no columnar
     packing); kept small via server-side simplification at resolution time."""
 
-    # The active map visualization lens — names the single scalar each
-    # `Marker.lens_value` carries (default = warm rent). `apply_travel_time`
-    # flips this to the commute lens; the frontend colours pins accordingly.
-    marker_lens: MarkerLens = Field(default_factory=MarkerLens)
-    """What `result_markers[*].lens_value` means right now. One descriptor
-    for the whole set (never per marker). See `listings.context.MarkerLens`."""
+    # Active map lens, if any. Selection-slice input re-applied by the shared
+    # lens derivation so the lens survives a follow-up `search_apartments` (which
+    # otherwise rebuilds markers from SQL only). None = default price pins. This
+    # is the SINGLE stored source of truth for the lens — `marker_lens` below is
+    # computed from it, and the anchor overlay carries its own `origin="lens"`.
+    active_lens: ActiveLens | None = None
+    """The active lens input — a `TravelTimeLens` or `DistanceLens` (discriminated
+    on `kind`). Set by an `apply_*_lens` tool; consumed by the matching provider
+    (`RoutingService.resolve` / `DistanceService.resolve`)."""
 
-    # Active travel-time lens, if any. Selection-slice input re-applied by the
-    # shared marker derivation so the commute filter survives a follow-up
-    # `search_apartments` (which otherwise rebuilds markers from SQL only). None
-    # = no commute lens active.
-    travel_time_filter: TravelTimeFilter | None = None
-    """The anchor + mode + optional max-minutes of the active commute lens.
-    Set by `apply_travel_time`; consumed by `RoutingService.resolve`."""
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def marker_lens(self) -> MarkerLens:
+        """What `result_markers[*].lens_value` means right now — the frontend
+        descriptor (`key` → ramp, `label` → legend). DERIVED from `active_lens`
+        (single source of truth, can't drift). Serialized to the frontend like a
+        field; ignored on input (the frontend can't set it). Default `price_warm`
+        when no lens is active."""
+        return marker_lens_for(self.active_lens)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_lens(cls, data: object) -> object:
+        """Back-compat: sessions persisted before the lens generalization carry a
+        `travel_time_filter` dict instead of `active_lens`. Remap it to the
+        travel-time variant of the union so an old session keeps its lens on
+        reload (symmetric with the columnar `"prices"` legacy key below). No-op
+        once `active_lens` is present or the field is absent."""
+        if isinstance(data, dict) and data.get("active_lens") is None:
+            legacy = data.get("travel_time_filter")
+            if isinstance(legacy, dict):
+                data = {**data, "active_lens": {**legacy, "kind": "travel_time"}}
+        return data
 
     @field_serializer("result_markers")
     def _serialize_markers(self, markers: list[Marker]) -> dict[str, list]:

@@ -962,7 +962,7 @@ function ApartmentLayer({ map }: { map: MaplibreGl | null }) {
         lens_value: m.lens_value,
         lens_label:
           style && typeof m.lens_value === "number"
-            ? String(Math.round(m.lens_value))
+            ? style.format(m.lens_value)
             : "",
       },
     }));

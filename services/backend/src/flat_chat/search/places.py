@@ -28,6 +28,7 @@ from geoalchemy2 import functions as geo_func
 from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from flat_chat.listings.context import Anchor
 from flat_chat.listings.models import named_places
 from flat_chat.listings.overlays import (
     OVERLAY_CLUSTER_RADIUS_M,
@@ -118,12 +119,13 @@ class PlaceService:
             for r in rows
         ]
 
-    async def anchor_point(self, place_ref: str) -> tuple[str, float, float] | None:
-        """Resolve a `place_ref` to `(label, lat, lon)` — the routing anchor.
+    async def anchor_point(self, place_ref: str) -> Anchor | None:
+        """Resolve a `place_ref` to an `Anchor(label, lat, lon)` — the anchor for
+        a travel-time / distance lens.
 
         Returns the place's name and its geometry centroid (a single point even
-        for a line/polygon, via `ST_Centroid`). Used by `apply_travel_time` to
-        feed the OSRM/MOTIS engines. `None` for an unknown/garbage ref. The
+        for a line/polygon, via `ST_Centroid`). Used by the lens tools to feed
+        the OSRM/MOTIS engines. `None` for an unknown/garbage ref. The
         centroid is a fine anchor: seed-alias points sit on their target, and a
         polygon's centroid is its middle — both snap to the nearest road/stop at
         the engine."""
@@ -149,7 +151,7 @@ class PlaceService:
         ).first()
         if row is None or row.lat is None or row.lon is None:
             return None
-        return (row.name or place_ref, row.lat, row.lon)
+        return Anchor(row.name or place_ref, row.lat, row.lon)
 
     async def overlay_geometry(
         self, place_ref: str, *, origin: OverlayOrigin = "search"

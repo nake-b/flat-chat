@@ -341,22 +341,38 @@ export interface MarkerLens {
   label: string | null;
 }
 
-// The active commute lens, if any. Mirror of context.py:TravelTimeFilter.
-// Drives the lens label + (when max_minutes is set) the dropped markers.
-// `schedule_as_of` / `schedule_stale` describe the TRANSIT timetable the times
-// were computed against — when MOTIS's loaded VBB feed has lapsed the backend
-// clamps the departure to the last covered day and flags it here so the legend
-// can show "schedule as of <date>". Defaulted for car (date-independent) and an
-// in-window feed.
-export interface TravelTimeFilter {
+// The active map lens, if any — a discriminated union on `kind`. Mirror of
+// listings/lenses.py:ActiveLens (TravelTimeLens | DistanceLens). Drives the lens
+// label + (when a cutoff is set) the dropped markers.
+//
+// Travel time: `schedule_as_of` / `schedule_stale` describe the TRANSIT
+// timetable the times were computed against — when MOTIS's loaded VBB feed has
+// lapsed the backend clamps the departure to the last covered day and flags it
+// so the legend can show "schedule as of <date>". Defaulted for car
+// (date-independent) and an in-window feed.
+// Distance: straight-line metres to the anchor's geometry; `max_km` cutoff.
+export interface TravelTimeLens {
+  kind: "travel_time";
   anchor_label: string;
   anchor_lat: number;
   anchor_lng: number;
+  near_place_ref: string | null;
   mode: "transit" | "car";
   max_minutes: number | null;
   schedule_as_of: string | null;
   schedule_stale: boolean;
 }
+
+export interface DistanceLens {
+  kind: "distance";
+  anchor_label: string;
+  anchor_lat: number;
+  anchor_lng: number;
+  near_place_ref: string | null;
+  max_km: number | null;
+}
+
+export type ActiveLens = TravelTimeLens | DistanceLens;
 
 // ---------------------------------------------------------------------------
 // Map overlays — geometries the agent draws on the map (the Spree, a U-Bahn
@@ -373,7 +389,7 @@ export type OverlayKind =
   | "bezirk"
   | "ring"
   | "parks";
-export type OverlayOrigin = "search" | "pinned";
+export type OverlayOrigin = "search" | "pinned" | "lens";
 
 // A labelled point decorating an overlay — currently a transit line's served
 // stations (rendered as dots + line badges). Mirror of context.py:OverlayPoint.
@@ -417,7 +433,7 @@ export interface SessionState {
   active_listing_detail: ListingDetail | null;
   map_overlays: MapOverlay[];
   marker_lens: MarkerLens;
-  travel_time_filter: TravelTimeFilter | null;
+  active_lens: ActiveLens | null;
 }
 
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
@@ -430,7 +446,7 @@ export const EMPTY_SESSION_STATE: SessionState = Object.freeze({
   active_listing_detail: null,
   map_overlays: [],
   marker_lens: { key: "price_warm", label: null },
-  travel_time_filter: null,
+  active_lens: null,
 }) as SessionState;
 
 export const AGENT_NAME = "berlin-agent";

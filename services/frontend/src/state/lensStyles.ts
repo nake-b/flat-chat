@@ -56,10 +56,29 @@ const COMMUTE: LensStyle = {
   format: (v) => `${Math.round(v)} min`,
 };
 
+// Straight-line distance: a sequential BLUE ramp, 0–5 km, near = deep blue →
+// far = pale blue. A different hue from the travel-time red so the two lenses
+// are instantly distinguishable at a glance; same vibrant-near / faded-far
+// reading. `lens_value` arrives in METRES (the backend's ST_Distance unit); the
+// formatter renders km. Blue (not green→red) keeps "far" from reading as "bad".
+const DISTANCE: LensStyle = {
+  domain: [0, 5000],
+  ramp: [
+    [0, "#1D4ED8"],
+    [1250, "#3B82F6"],
+    [2500, "#60A5FA"],
+    [3750, "#93C5FD"],
+    [5000, "#DBEAFE"],
+  ],
+  legendTitle: "Distance",
+  format: (v) => `${(v / 1000).toFixed(1)} km`,
+};
+
 // Keyed by `MarkerLens.key`. `price_warm` is intentionally ABSENT — the
 // default lens has no heatmap (plain pins). Add ramped lenses here.
 export const LENS_STYLES: Record<string, LensStyle> = {
   commute_min: COMMUTE,
+  distance_m: DISTANCE,
 };
 
 // Colour for a marker whose `lens_value` is null (no price / unreachable in
@@ -180,4 +199,53 @@ export function lensColorExpression(
       domain,
     ) ?? plain
   );
+}
+
+// Plain-JS colour (a hex string) for ONE value under the active lens ramp — the
+// same interpolation `rampColorExpression` does for the map, but for DOM use
+// (a card's lens badge / stat), so the card matches its map pin. Returns null
+// for the default/unknown lens (no heatmap) or a null/non-finite value, so the
+// caller can fall back to its own styling.
+export function lensColorForValue(
+  lens: MarkerLens | null | undefined,
+  value: number | null | undefined,
+  domain?: [number, number],
+): string | null {
+  const style = lensStyle(lens);
+  if (!style || typeof value !== "number" || !Number.isFinite(value)) return null;
+  const [nLo, nHi] = style.domain;
+  const nSpan = nHi - nLo || 1;
+  const [lo, hi] = domain ?? style.domain;
+  const stops = style.ramp.map(
+    ([v, c]) => [lo + ((v - nLo) / nSpan) * (hi - lo), c] as [number, string],
+  );
+  if (value <= stops[0][0]) return stops[0][1];
+  const last = stops[stops.length - 1];
+  if (value >= last[0]) return last[1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [v0, c0] = stops[i];
+    const [v1, c1] = stops[i + 1];
+    if (value >= v0 && value <= v1) {
+      return lerpHex(c0, c1, (value - v0) / (v1 - v0 || 1));
+    }
+  }
+  return last[1];
+}
+
+function parseHex(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
+function lerpHex(a: string, b: string, t: number): string {
+  const pa = parseHex(a);
+  const pb = parseHex(b);
+  const ch = (i: number) => Math.round(pa[i] + (pb[i] - pa[i]) * t);
+  return `#${[ch(0), ch(1), ch(2)]
+    .map((n) => n.toString(16).padStart(2, "0"))
+    .join("")}`;
 }

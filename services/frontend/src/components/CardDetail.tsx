@@ -6,7 +6,7 @@ import {
   type ListingDetail,
   type ListingCard,
 } from "../state/SessionState";
-import { lensStyle } from "../state/lensStyles";
+import { lensColorForValue, lensDomain, lensStyle } from "../state/lensStyles";
 
 // The subset of fields the detail body reads — present on BOTH ListingCard
 // and ListingDetail. We render from `active_listing_detail ?? apt` so the
@@ -110,21 +110,36 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
   const source: ListingDetail | ListingCard | null = detail ?? apt ?? null;
   const view: DetailView | null = source ? toDetailView(source) : null;
 
-  // Active lens value for THIS listing (e.g. commute minutes), looked up by id
-  // from the markers — the only tier carrying `lens_value`. Shown as a stat only
-  // under a heatmap lens; the mode word comes from the active travel filter.
+  // Active lens value for THIS listing (e.g. commute minutes / distance),
+  // looked up by id from the markers — the only tier carrying `lens_value`.
+  // Shown as a stat only under a heatmap lens; the stat label comes from the
+  // active lens kind (Drive/Transit for travel time, Distance for distance).
   const lens = state?.marker_lens;
+  const activeLens = state?.active_lens;
   const lensStyleSpec = lensStyle(lens);
   const lensValue = useMemo(() => {
     if (!lensStyleSpec || activeId == null) return null;
     const m = decodeMarkers(state?.result_markers).find((mk) => mk.id === activeId);
     return m?.lens_value ?? null;
   }, [lensStyleSpec, activeId, state?.result_markers]);
+  const lensStatLabel =
+    activeLens?.kind === "travel_time"
+      ? activeLens.mode === "car"
+        ? "Drive"
+        : "Transit"
+      : "Distance";
+  // Colour the lens stat by the lens ramp (matches the map pin), over the same
+  // adaptive domain the map uses.
+  const lensDomainValue = useMemo(
+    () => lensDomain(decodeMarkers(state?.result_markers).map((m) => m.lens_value), lens),
+    [state?.result_markers, lens],
+  );
   const lensStat =
     lensStyleSpec && lensValue != null
       ? {
-          label: state?.travel_time_filter?.mode === "car" ? "Drive" : "Transit",
+          label: lensStatLabel,
           value: lensStyleSpec.format(lensValue),
+          color: lensColorForValue(lens, lensValue, lensDomainValue),
         }
       : null;
 
@@ -215,7 +230,12 @@ export function CardDetail({ apt }: { apt?: ListingCard }) {
           shares row width equally among present cells. */}
       <div className="flex flex-wrap">
         {lensStat && (
-          <Stat label={lensStat.label} value={lensStat.value} accent />
+          <Stat
+            label={lensStat.label}
+            value={lensStat.value}
+            accent
+            accentColor={lensStat.color ?? undefined}
+          />
         )}
         {view.price_warm_eur != null && (
           <Stat label="Warm rent" value={formatEuro(view.price_warm_eur)} accent />
@@ -726,10 +746,14 @@ function Stat({
   label,
   value,
   accent = false,
+  accentColor,
 }: {
   label: string;
   value: React.ReactNode;
   accent?: boolean;
+  // When set (a lens value), overrides the default red accent so the stat
+  // matches the lens ramp / map pin. Ignored for non-accent stats.
+  accentColor?: string;
 }) {
   return (
     <div className="flex min-w-[100px] flex-1 basis-0 flex-col border-b border-r border-paper-rule px-3 py-2">
@@ -742,6 +766,7 @@ function Stat({
             ? "mt-0.5 truncate font-mono text-base font-medium tabular-nums tracking-tight text-red"
             : "mt-0.5 truncate font-mono text-sm tabular-nums text-ink"
         }
+        style={accent && accentColor ? { color: accentColor } : undefined}
       >
         {value}
       </div>

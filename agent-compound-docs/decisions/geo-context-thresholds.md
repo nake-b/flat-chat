@@ -70,6 +70,10 @@ Sources:
 
 Used by `walk_minutes(meters)` to convert distances to walk times for UI chips ("🚇 U8 · 4min").
 
+| Constant | Chosen | Source |
+|---|---|---|
+| `CAP_LAST_MILE_WALK_M` | **1500** | Last-mile stop→listing walk cap for the transit travel-time lens: a listing's transit time = min over stops within this range of (anchor→stop + walk(stop→listing)). Matches `CAP_TRANSIT_STOPS_M` (both mean "a stop is 'near' a listing at ≤1.5 km" ≈ 18 min at 1.4 m/s); Berliners routinely walk >1 km to a station. **Routing-only** — NOT part of the gold ETL, so (unlike the caps in §1) it is not duplicated into ingestion. Used by `routing/service.py`. |
+
 **Candidate future addition**: `accessibility=True` mode that bumps speed down to 1.0 m/s for older/mobility-limited renters. Logged here, not v1.
 
 ---

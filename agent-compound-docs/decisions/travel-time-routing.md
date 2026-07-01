@@ -1,5 +1,33 @@
 # Travel-time (commute) search — engines, hosting, and the slice model
 
+> **Update (PR #41 review).** The travel lens was generalized into a proper
+> **lens layer** and the routing service was hardened. What changed vs. the text
+> below (kept for the design history):
+> - **Lens layer.** The travel-time "lens" is now one case of a general
+>   abstraction — see [`lens-layer.md`](lens-layer.md). `SessionState.travel_time_filter`
+>   → `active_lens: TravelTimeLens | DistanceLens` (discriminated union in the leaf
+>   `listings/lenses.py`); the shared `_apply_travel_lens` → generic
+>   `chat/lens_tools.py:_apply_lens` driven by a provider registry. A second lens
+>   (bird's-eye **distance**, PostGIS `ST_Distance`, no engine) proves the split.
+> - **Tool rename.** `apply_travel_time` → **`apply_travel_time_lens`** (+ new
+>   `apply_distance_lens`), moved into `LensCapability` — see
+>   [`capability-landscape.md`](capability-landscape.md).
+> - **Routing client split.** The 390-line `routing/service.py` became a thin
+>   `OsrmClient` (`routing/osrm.py`) + `MotisClient` (`routing/motis.py`) +
+>   `RoutingService` orchestrator. `RoutingError` moved to `routing/errors.py`.
+>   The module-level feed-window cache + `_reset_feed_window_cache` test hook are
+>   gone — the TTL cache is now **instance state on `MotisClient`** (fresh client =
+>   clean cache); the health check reaches it via `Depends(get_routing_service)`.
+>   `_parse_metrics_window` / `_commute_departure` / `feed_window_stale` live on
+>   `routing/motis.py`; departure/stops are DTOs (`CommuteDeparture`,
+>   `ReachableStop`), the anchor is `listings.context.Anchor`.
+> - **SSOT constants.** The hand-rolled `_haversine_m` → `listings/geo.py:equirect_distance_m`
+>   (last-mile loop only); `_WALK_SPEED_M_PER_MIN` deleted in favour of
+>   `thresholds.PEDESTRIAN_M_PER_S`; the walk cap is `thresholds.CAP_LAST_MILE_WALK_M`
+>   (1500 m, up from a hard-coded 1000).
+> - **Walk-time** (a real street-network travel mode) is a separate follow-up:
+>   issue #49.
+
 ## Context
 
 Conversational apartment search needs "find me a place I can actually commute

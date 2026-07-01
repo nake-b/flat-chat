@@ -5,9 +5,8 @@ from pydantic import BaseModel, Field
 from flat_chat.listings.context import (
     ListingCard,
     ListingDetail,
-    MarkerLens,
-    TravelTimeFilter,
 )
+from flat_chat.listings.lenses import ActiveLens, MarkerLens
 from flat_chat.listings.overlays import MapOverlay
 from flat_chat.search.schemas import ResultFacets, SearchParams
 
@@ -65,4 +64,4 @@ class SessionStateResponse(BaseModel):
     active_listing_detail: ListingDetail | None = None
     map_overlays: list[MapOverlay] = Field(default_factory=list)
     marker_lens: MarkerLens = Field(default_factory=MarkerLens)
-    travel_time_filter: TravelTimeFilter | None = None
+    active_lens: ActiveLens | None = None

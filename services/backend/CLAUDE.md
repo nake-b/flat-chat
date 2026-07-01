@@ -17,11 +17,17 @@ src/flat_chat/
                           listings.py GET /api/listings/{id} (detail)
                                       + GET /api/listings?ids=&view=card (batch tier-2)
   chat/                → Agent orchestration domain
-                          agent.py        Agent(capabilities=[ListingsCapability()], instructions=...)
-                          tools.py        FunctionToolset[ChatDeps] + ListingsCapability
-                                          (search/open/page/locate_place/show_on_map/
-                                          hide_on_map/clear_map_overlays); get_toolset()
-                                          returns the toolset wrapped in StateEmittingToolset
+                          agent.py        Agent(capabilities=[CoreCapability(),
+                                          MapOverlayCapability(), LensCapability()], instructions=...)
+                          prompts.py      TOOL_BACKBONE (cross-capability invariants:
+                                          one result set / 1-based indices / place_ref flow)
+                          tools.py        CoreCapability — search/open/page/locate_place;
+                                          calls the post-search hooks below
+                          overlay_tools.py MapOverlayCapability — show_on_map/hide_on_map/
+                                          clear_map_overlays + rebuild_search_overlays_hook
+                          lens_tools.py   LensCapability — apply_travel_time_lens/
+                                          apply_distance_lens/clear_lens + generic _apply_lens
+                                          (provider registry) + reapply_lens_hook
                           state_emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
                                           on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt
@@ -37,8 +43,11 @@ src/flat_chat/
                                           cookie+JWT backend, current_active_user)
   search/              → Query execution domain
                           service.py      SearchService — async, returns (markers, preview_cards, total, facets)
+                          distance.py     DistanceService — {id: metres} via ST_Distance to a
+                                          named-place geometry (the distance-lens provider)
                           places.py       PlaceService — locate_place trigram lookup over
                                           world.named_places + overlay_geometry (→ GeoJSON)
+                                          + anchor_point (→ Anchor for lens anchors)
                           transit_overlays.py TransitOverlayService — line name → route-shape
                                           GeoJSON + served stations (world.transit_stops via
                                           lines_served) as MapOverlay.points; display only,
@@ -50,7 +59,11 @@ src/flat_chat/
                           models.py       Listing + ListingGeoContext + ListingNearby* + named_places
                                           + TransitRoute/TransitRouteShape/TransitStop ORMs (read-only world.*)
                           types.py        Literal types (NoiseLabel, DensityLabel, GreeneryLabel, ...)
-                          context.py      ListingDetail + ListingCard + nested dataclasses
+                          context.py      ListingDetail + ListingCard + Marker + Anchor
+                          lenses.py       MarkerLens + ActiveLens union (TravelTimeLens |
+                                          DistanceLens) — leaf lens vocab (see lens-layer.md)
+                          geo.py          equirect_distance_m — cheap in-memory point math
+                                          (routing last-mile loop)
                           overlays.py     MapOverlay + OverlayPoint + OVERLAY_* consts
                                           (leaf-layer overlay vocab; both search/ resolvers import it)
                           projection.py   Shared tier-2 ListingCard projection (preview + get_cards)

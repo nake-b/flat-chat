@@ -23,6 +23,7 @@ from flat_chat.users.models import DUMMY_USER_ID
 if TYPE_CHECKING:
     from flat_chat.listings.service import ListingService
     from flat_chat.routing.service import RoutingService
+    from flat_chat.search.distance import DistanceService
     from flat_chat.search.places import PlaceService
     from flat_chat.search.service import SearchService
     from flat_chat.search.transit_overlays import TransitOverlayService
@@ -70,6 +71,7 @@ class ChatDeps:
     place_service: PlaceService
     transit_overlay_service: TransitOverlayService
     routing_service: RoutingService
+    distance_service: DistanceService
     session: ChatSession
     # Overwritten per-request by the dispatch path from session.state +
     # the incoming AG-UI envelope's state (frontend-driven changes like
