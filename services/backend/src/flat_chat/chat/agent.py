@@ -45,6 +45,12 @@ CAPABILITIES_AT_THE_MOMENT_REPLY = (
     "example transit, family-friendliness, greenery, quietness).\n"
     "- Draw and clear map overlays (places and transit lines) without "
     "changing filters.\n"
+    "- Colour the map by travel time or distance to a place you name (a "
+    '"lens"): how many minutes each apartment is from it by car or public '
+    "transport, or how far it is in a straight line — and optionally keep only "
+    "those within a limit (for example under 30 minutes, or within 5 km). "
+    "Travel times depend on the routing service being available and on the "
+    "loaded timetable, so I'll flag when they're approximate or out of date.\n"
     "\n"
     "Important: this reflects what is available at the moment in your current "
     "database snapshot. If data is missing or outdated, I will still try to "
