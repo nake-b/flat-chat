@@ -8,6 +8,7 @@ import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import { useSidebarOpen } from "../hooks/useSidebarOpen";
 import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 import { useRecovery } from "../state/recovery";
+import { useRunError } from "../state/runError";
 import {
   CAPABILITIES_HREF,
   STARTER_HEADLINES,
@@ -80,6 +81,30 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
       { id: crypto.randomUUID(), role: "user", content: prompt },
       { followUp: true },
     );
+
+  // Terminal run-error banner (populated by the RUN_ERROR subscriber in
+  // main.tsx). Retry re-sends the last user turn — the failed run left the user
+  // message in the thread but produced no reply, so this drives a fresh attempt;
+  // the subscriber clears the banner when that run starts.
+  const runErrorMessage = useRunError((s) => s.message);
+  const clearRunError = useRunError((s) => s.clear);
+  const retryLastTurn = () => {
+    const lastUser = [...messages]
+      .reverse()
+      .find(
+        (m) =>
+          m.role === "user" &&
+          typeof m.content === "string" &&
+          m.content.trim().length > 0,
+      );
+    clearRunError();
+    if (lastUser && typeof lastUser.content === "string") {
+      void sendMessage(
+        { id: crypto.randomUUID(), role: "user", content: lastUser.content },
+        { followUp: true },
+      );
+    }
+  };
 
   // Show starters only while the thread is empty AND we already know the
   // history (`historyLoaded`). On a resumed thread CopilotKit mounts with
@@ -231,6 +256,32 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {runErrorMessage ? (
+        <div
+          role="alert"
+          className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm"
+        >
+          <span className="text-ink-soft">{runErrorMessage}</span>
+          <span className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={retryLastTurn}
+              className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={clearRunError}
+              aria-label="Dismiss error"
+              className="px-1 text-ink-ghost transition-colors hover:text-ink"
+            >
+              ×
+            </button>
+          </span>
         </div>
       ) : null}
 
