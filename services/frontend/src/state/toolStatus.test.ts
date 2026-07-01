@@ -46,3 +46,21 @@ describe("TOOL_STATUS.get_result_page", () => {
     expect(TOOL_STATUS.get_result_page.complete!({}, "Page 2/5…", null)).toBe("");
   });
 });
+
+describe("TOOL_STATUS proximity tools", () => {
+  it("distance_to: generic running label, silent finish (prose is the answer)", () => {
+    expect(TOOL_STATUS.distance_to.executing({})).toBe("Measuring distance");
+    expect(TOOL_STATUS.distance_to.complete!({}, "≈ 4.2 km …", null)).toBe("");
+  });
+
+  it("travel_time_to: running label reflects mode, silent finish", () => {
+    expect(TOOL_STATUS.travel_time_to.executing({ mode: "car" })).toBe(
+      "Checking drive time",
+    );
+    expect(TOOL_STATUS.travel_time_to.executing({ mode: "transit" })).toBe(
+      "Checking travel time",
+    );
+    expect(TOOL_STATUS.travel_time_to.executing({})).toBe("Checking travel time");
+    expect(TOOL_STATUS.travel_time_to.complete!({}, "≈ 18 min …", null)).toBe("");
+  });
+});

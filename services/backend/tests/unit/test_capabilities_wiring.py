@@ -1,10 +1,13 @@
 """Capability wiring — the agent surfaces its tools via `capabilities=[...]`.
 
-Tool binding is split across three capabilities — `CoreCapability`,
-`MapOverlayCapability`, `LensCapability` — each wrapping its own `FunctionToolset`
-via `get_toolset()`. This guards that the composition actually reaches the model:
-the agent must advertise exactly the UNION of all three capabilities' tools. If a
-future refactor drops a capability, marks one `defer_loading=True` by accident, or
+Tool binding is split across four capabilities — `CoreCapability`,
+`MapOverlayCapability`, `LensCapability` (always loaded) and the DEFERRED
+`ListingProximityCapability` — each wrapping its own `FunctionToolset` via
+`get_toolset()`. This guards that the composition actually reaches the model:
+the always-loaded tools must all be present and un-deferred, the proximity tools
+must be present and FLAGGED deferred, and Pydantic AI must inject its
+`load_capability` + `search_tools` plumbing (proof deferral is active). If a
+future refactor drops a capability, flips `defer_loading` on the wrong one, or
 breaks `get_toolset()`, this fails.
 
 `get_toolset()` returns the toolset wrapped in `StateEmittingToolset` (the
@@ -20,6 +23,9 @@ from __future__ import annotations
 
 import asyncio
 
+from pydantic_ai._deferred_capabilities import (
+    DEFERRED_CAPABILITY_TOOL_METADATA_KEY,
+)
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -39,7 +45,8 @@ from flat_chat.listings.thresholds import (
 
 _SQM_PER_HECTARE = 10_000
 
-EXPECTED_TOOLS = {
+# Always-loaded tools (Core / MapOverlay / Lens) — present AND un-deferred.
+ALWAYS_LOADED_TOOLS = {
     # CoreCapability
     "search_apartments",
     "open_listing",
@@ -55,12 +62,27 @@ EXPECTED_TOOLS = {
     "clear_lens",
 }
 
+# ListingProximityCapability (defer_loading=True) — present AND flagged deferred.
+DEFERRED_TOOLS = {"distance_to", "travel_time_to"}
+
+# Plumbing Pydantic AI injects once ANY capability defers: the on-demand loader
+# tool + the tool-search catalog tool.
+DEFERRED_PLUMBING = {"load_capability", "search_tools"}
+
 
 def test_agent_advertises_listing_tools_via_capability():
-    captured: dict[str, set[str]] = {}
+    captured: dict[str, bool] = {}
 
     def capture_fn(_messages, info: AgentInfo) -> ModelResponse:
-        captured["tools"] = {t.name for t in info.function_tools}
+        # name → is it flagged as a deferred-capability tool?
+        captured.update(
+            {
+                t.name: bool(
+                    (t.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY)
+                )
+                for t in info.function_tools
+            }
+        )
         return ModelResponse(parts=[TextPart(content="ok")])
 
     deps = ChatDeps(
@@ -80,7 +102,15 @@ def test_agent_advertises_listing_tools_via_capability():
         await agent.run("hello", deps=deps, model=FunctionModel(capture_fn))
 
     asyncio.run(run())
-    assert captured["tools"] == EXPECTED_TOOLS
+
+    names = set(captured)
+    # Exactly the always-loaded tools + the deferred tools + the deferral plumbing.
+    assert names == ALWAYS_LOADED_TOOLS | DEFERRED_TOOLS | DEFERRED_PLUMBING
+    # Always-loaded tools are NOT flagged deferred.
+    assert all(captured[t] is False for t in ALWAYS_LOADED_TOOLS)
+    # Proximity tools ARE flagged deferred (kept out of the cached prefix until
+    # the model loads the capability on demand).
+    assert all(captured[t] is True for t in DEFERRED_TOOLS)
 
 
 def _fmt(value: float) -> str:
