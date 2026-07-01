@@ -24,7 +24,7 @@ from flat_chat.search.geo_filters import (
     SchoolFilter,
     TransitFilter,
 )
-from flat_chat.search.schemas import SearchParams, SortBy
+from flat_chat.search.schemas import PREVIEW_N, SearchParams, SortBy
 
 logger = logging.getLogger(__name__)
 
@@ -440,8 +440,15 @@ async def search_apartments(
 
     # Re-apply the active commute lens (if any) so a refinement keeps the travel
     # filter/heatmap instead of silently reverting to price. No-op when no lens
-    # is set (just leaves markers on the default price lens).
-    await _apply_travel_lens(ctx)
+    # is set (just leaves markers on the default price lens). Routing is a
+    # fallible external dependency: if it's down during a refinement, drop the
+    # lens rather than failing the whole search — the SQL result set is already
+    # valid (same graceful-degradation contract as `apply_travel_time`).
+    try:
+        await _apply_travel_lens(ctx)
+    except RoutingError as exc:
+        logger.warning("travel lens re-apply failed during refinement: %s", exc)
+        _clear_lens(ctx)
 
     # State mutation above auto-emits a STATE_SNAPSHOT via StateEmittingToolset;
     # the tool just returns prose for the LLM.
@@ -563,7 +570,9 @@ async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
     `apply_travel_time` (apply on demand). Stateless w.r.t. ordering: keeps the
     search's sort order, only annotating each marker with travel minutes and —
     when `max_minutes` is set — dropping the ones over the cutoff. Filtering
-    preserves order, so `preview_cards` stays a true prefix of `result_markers`.
+    preserves order; the preview is then refilled back up to `PREVIEW_N` (a
+    cutoff can drop cards that were in the original top-N), so `preview_cards`
+    stays a true, full-length prefix of `result_markers`.
 
     No lens → resets to the default `price_warm` lens (markers keep the price
     value search already wrote). Raises `RoutingError` on engine failure."""
@@ -584,10 +593,24 @@ async def _apply_travel_lens(ctx: RunContext[ChatDeps]) -> None:
             continue  # over the cutoff (or unreachable) → drop
         new_markers.append(m.model_copy(update={"lens_value": minutes}))
 
-    surviving = {m.id for m in new_markers}
     state.result_markers = new_markers
     state.total_results = len(new_markers)
-    state.preview_cards = [c for c in state.preview_cards if c.id in surviving]
+
+    # Rebuild the preview as the true prefix of the (filtered) marker order,
+    # refilled to PREVIEW_N. A cutoff can drop cards that were in the original
+    # top-N and promote markers from beyond the preview window; those carry no
+    # card data (markers are thin), so hydrate the newly-promoted ids by id.
+    # Annotate-only (no cutoff) keeps the same top-N → `missing` is empty and
+    # this costs no extra query.
+    preview_ids = [m.id for m in new_markers[:PREVIEW_N]]
+    by_id = {c.id: c for c in state.preview_cards}
+    missing = [i for i in preview_ids if i not in by_id]
+    if missing:
+        by_id.update(
+            {c.id: c for c in await ctx.deps.listing_service.get_cards(missing)}
+        )
+    state.preview_cards = [by_id[i] for i in preview_ids if i in by_id]
+
     state.marker_lens = MarkerLens(
         key="commute_min", label=f"min to {filt.anchor_label}"
     )

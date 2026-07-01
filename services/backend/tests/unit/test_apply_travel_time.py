@@ -11,8 +11,13 @@ import asyncio
 from types import SimpleNamespace
 
 from flat_chat.chat.session_state import SessionState
-from flat_chat.chat.tools import apply_travel_time, clear_lens
-from flat_chat.listings.context import ListingCard, Marker
+from flat_chat.chat.tools import apply_travel_time, clear_lens, search_apartments
+from flat_chat.listings.context import (
+    ListingCard,
+    Marker,
+    MarkerLens,
+    TravelTimeFilter,
+)
 from flat_chat.routing.service import RoutingError
 
 
@@ -46,10 +51,31 @@ class _StubPlace:
         return None  # geometry rebuild is out of scope here
 
 
-def _ctx(state, *, routing, place=None):
+class _StubListing:
+    """Hydrates cards by id, in the requested order, skipping unknown ids —
+    same contract as the real `ListingService.get_cards`."""
+
+    def __init__(self, cards=None):
+        self._cards = {c.id: c for c in (cards or [])}
+
+    async def get_cards(self, ids):
+        return [self._cards[i] for i in ids if i in self._cards]
+
+
+class _StubSearch:
+    def __init__(self, markers, preview, total, facets=None):
+        self._ret = (markers, preview, total, facets)
+
+    async def search(self, params):
+        return self._ret
+
+
+def _ctx(state, *, routing, place=None, listing=None, search=None):
     deps = SimpleNamespace(
+        search_service=search,
         routing_service=routing,
         place_service=place or _StubPlace(),
+        listing_service=listing or _StubListing(),
         state=state,
     )
     return SimpleNamespace(deps=deps)
@@ -178,3 +204,57 @@ def test_clear_lens_noop_when_no_lens_active():
     assert "no travel-time lens" in out.lower()
     assert state.marker_lens.key == "price_warm"
     assert state.travel_time_filter is None
+
+
+def test_cutoff_refills_preview_from_beyond_the_window():
+    # 12 markers but only the top-10 have preview cards (the real PREVIEW_N
+    # cap). A cutoff drops id-3 — one of those top-10 — promoting id-10 (which
+    # lives beyond the preview window) into the preview. It carries no card
+    # data, so it must be hydrated by id via get_cards; the preview must stay a
+    # full 10-length prefix of the survivors, not silently short.
+    state = _state(12)
+    state.preview_cards = state.preview_cards[:10]  # mimic the PREVIEW_N cap
+    minutes = {f"id-{i}": (99 if i == 3 else 10) for i in range(12)}
+    listing = _StubListing(
+        [ListingCard(id="id-10", district="X"), ListingCard(id="id-11", district="X")]
+    )
+    ctx = _ctx(state, routing=_StubRouting(minutes), listing=listing)
+
+    asyncio.run(apply_travel_time(ctx, near_place_ref="place:x:1", max_minutes=30))
+
+    survivors = [f"id-{i}" for i in range(12) if i != 3]
+    assert [m.id for m in state.result_markers] == survivors
+    # Preview is the first 10 survivors, in order — incl. the hydrated id-10.
+    assert [c.id for c in state.preview_cards] == survivors[:10]
+    assert state.total_results == 11
+
+
+def test_refinement_search_degrades_when_routing_down():
+    # A refinement search re-applies the active lens; if routing is down it must
+    # NOT fail the whole search. The lens is dropped and the SQL result set the
+    # search just produced stands (graceful degradation, same as the tool).
+    state = _state(3)
+    state.travel_time_filter = TravelTimeFilter(
+        anchor_label="TU Berlin",
+        anchor_lat=52.5,
+        anchor_lng=13.3,
+        mode="transit",
+        max_minutes=30,
+    )
+    state.marker_lens = MarkerLens(key="commute_min", label="min to TU Berlin")
+    fresh = [
+        Marker(id=f"id-{i}", lat=52.5, lng=13.4, lens_value=900.0 + i) for i in range(3)
+    ]
+    preview = [ListingCard(id=f"id-{i}", district="X") for i in range(3)]
+    ctx = _ctx(
+        state,
+        routing=_StubRouting({}, error=True),
+        search=_StubSearch(fresh, preview, 3),
+    )
+
+    out = asyncio.run(search_apartments(ctx, query="kreuzberg"))
+
+    assert isinstance(out, str)  # did not raise
+    assert state.travel_time_filter is None
+    assert state.marker_lens.key == "price_warm"
+    assert [m.id for m in state.result_markers] == ["id-0", "id-1", "id-2"]

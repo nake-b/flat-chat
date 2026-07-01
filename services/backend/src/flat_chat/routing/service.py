@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 
 _BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
+# Per-request network timeout (seconds), shared by the `/metrics` feed-window
+# read and the engine calls. One matrix / one-to-all call over a city-sized
+# graph is tens of milliseconds; this is a generous ceiling.
+_TIMEOUT = 20.0
+
 
 # --- Transit feed freshness -------------------------------------------------
 # MOTIS loads a finite VBB timetable window (built by prep-routing.sh) and
@@ -199,14 +204,11 @@ def _commute_departure(
     clamped = datetime(target.year, target.month, target.day, 8, 0, tzinfo=_BERLIN_TZ)
     return clamped.isoformat(), stale, target.isoformat()
 
+
 # Destinations per OSRM request. Keeps the GET URL bounded (each coord is
 # ~20 chars) and stays under OSRM's table-size limit even if it's left at the
 # default 100 — we run 90 to leave headroom for the anchor + query string.
 _CHUNK = 90
-
-# Per-request network timeout (seconds). One matrix / one-to-all call over a
-# city-sized graph is tens of milliseconds; this is a generous ceiling.
-_TIMEOUT = 20.0
 
 # Transit last-mile model. one-to-all gives anchor→stop minutes; we add the
 # walk from the stop to the listing at a steady pace, ignoring stops beyond a
@@ -263,6 +265,10 @@ class RoutingService:
         Unreachable / unrouted markers are simply absent from the dict (the
         caller renders them as "no data" or drops them under a cutoff). Raises
         `RoutingError` if the engine is unreachable or the response is malformed.
+
+        Side effect (transit mode only): stamps `filt.schedule_stale` /
+        `filt.schedule_as_of` from the loaded MOTIS feed window, so the caller
+        can surface the schedule's age. Car mode leaves them untouched.
         """
         # Markers always carry coordinates (search drops null-coordinate rows),
         # but guard anyway so a bad row can't desync the positional response.

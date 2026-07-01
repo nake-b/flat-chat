@@ -69,8 +69,10 @@ docker run --rm -v "$MOTIS_DIR:/work" -w /work "$MOTIS_IMAGE" /motis import
 # agent-compound-docs/decisions/travel-time-routing.md §Freshness).
 echo "==> Restarting the routing engines to load the fresh graphs"
 if docker compose --profile routing up -d --no-deps --force-recreate osrm motis; then
-  echo "==> Done. Verify the loaded transit feed window:"
-  echo "    curl -s localhost:18080/metrics | grep nigiri_timetable_.*_day"
+  echo "==> Done. Verify the loaded transit feed window (motis has no published"
+  echo "    port; read /metrics from inside the compose network, e.g. via the"
+  echo "    backend container, which has httpx + MOTIS_URL):"
+  echo "    docker compose exec backend python -c \"import os,httpx;print(httpx.get(os.environ['MOTIS_URL']+'/metrics').text)\" | grep nigiri_timetable_.*_day"
 else
   echo "==> Import done, but the compose restart failed — start manually:"
   echo "    docker compose --profile routing up -d --force-recreate osrm motis"
