@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
@@ -47,42 +47,6 @@ function pickRandomItems<T>(items: readonly T[], count: number): T[] {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-function submitPromptToComposer(prompt: string) {
-  const textarea = document.querySelector(
-    ".copilotKitInput textarea",
-  ) as HTMLTextAreaElement | null;
-  if (!textarea) return;
-
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype,
-    "value",
-  )?.set;
-  setter?.call(textarea, prompt);
-  textarea.dispatchEvent(new Event("input", { bubbles: true }));
-
-  // CopilotKit may enable the send button on the next paint after `input`.
-  // Retry a few frames so one click on an example reliably sends to the agent.
-  const tryClickSubmit = (attempt = 0) => {
-    const submit = document.querySelector(
-      ".copilotKitInput button, .copilotKitInput button[type='submit']",
-    ) as HTMLButtonElement | null;
-    if (submit && !submit.disabled) {
-      submit.click();
-      return;
-    }
-    if (attempt >= 8) return;
-    requestAnimationFrame(() => tryClickSubmit(attempt + 1));
-  };
-
-  requestAnimationFrame(() => {
-    if (textarea.form?.requestSubmit) {
-      textarea.form.requestSubmit();
-      return;
-    }
-    tryClickSubmit();
-  });
-}
-
 export function ChatPane({
   onNewConversation,
 }: {
@@ -90,12 +54,27 @@ export function ChatPane({
 }) {
   const userEmail = useAuth((s) => s.user?.email);
   const logout = useAuth((s) => s.logout);
-  const { messages } = useCopilotChatInternal();
+  const { messages, sendMessage } = useCopilotChatInternal();
   // Headline + the three example prompts are picked once on mount and stay
   // stable for the life of the (empty) thread — no reroll. They stop rendering
   // as soon as the first user message lands (see `starterOpen`).
   const [starterHeadline] = useState(() => pickRandomItems(STARTER_HEADLINES, 1)[0]);
   const [starterPrompts] = useState(() => pickRandomItems(STARTER_PROMPTS, 3));
+
+  // Send a starter/capabilities prompt as a real user turn via CopilotKit's
+  // programmatic send API (`followUp: true` runs the agent). No DOM scraping —
+  // the message flows through `POST /api/agent` like any typed prompt, so it's
+  // persisted + reload-safe and the derived `starterOpen` dismisses the cards.
+  const sendPrompt = (prompt: string) =>
+    void sendMessage(
+      { id: crypto.randomUUID(), role: "user", content: prompt },
+      { followUp: true },
+    );
+  // Keep the latest `sendMessage` in a ref so the document-level click listener
+  // below can stay on `[]` deps (never re-subscribes) yet always call the
+  // current send fn.
+  const sendPromptRef = useRef(sendPrompt);
+  sendPromptRef.current = sendPrompt;
 
   // Show starters only while the thread is empty. Once the user has sent
   // anything they're dismissed and don't come back — simpler and less
@@ -119,7 +98,7 @@ export function ChatPane({
       );
       if (!trigger) return;
       event.preventDefault();
-      submitPromptToComposer(CAPABILITIES_PROMPT);
+      sendPromptRef.current(CAPABILITIES_PROMPT);
     };
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
@@ -185,7 +164,7 @@ export function ChatPane({
               <button
                 key={prompt}
                 type="button"
-                onClick={() => submitPromptToComposer(prompt)}
+                onClick={() => sendPrompt(prompt)}
                 className="min-h-[72px] rounded-[14px_14px_14px_4px] border border-[#dedede] bg-[#ececec] px-3 py-2 text-left text-sm leading-snug text-ink-soft transition-colors hover:bg-[#e3e3e3]"
               >
                 {prompt}

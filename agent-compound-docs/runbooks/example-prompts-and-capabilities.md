@@ -19,15 +19,18 @@ Primary files:
 - A random headline is shown above the prompt boxes.
 
 ### Prompt click behavior (send immediately)
-`submitPromptToComposer(prompt)` in `ChatPane.tsx` performs:
-1. Programmatically set composer textarea value.
-2. Dispatch an `input` event so React/CopilotKit state updates.
-3. Submit immediately:
-   - first via `textarea.form.requestSubmit()` when available,
-   - fallback by clicking submit button,
-   - with short `requestAnimationFrame` retries to handle delayed button enable.
+`sendPrompt(prompt)` in `ChatPane.tsx` uses CopilotKit's programmatic send API:
 
-Result: selecting an example prompt sends directly to the agent (not just filling input).
+```ts
+const { sendMessage } = useCopilotChatInternal();
+sendMessage({ id: crypto.randomUUID(), role: "user", content: prompt }, { followUp: true });
+```
+
+`followUp: true` runs the agent after appending the message. The prompt flows
+through `POST /api/agent` exactly like a typed message — persisted, reload-safe,
+and it dismisses the starter cards (the derived `starterOpen` sees the new user
+turn). Both the starter cards and the `#capabilities` link go through this one
+helper. No textarea scraping, no `requestAnimationFrame` submit retries.
 
 ## Visibility Logic
 Starter prompts show **only while the thread is empty**. As soon as the user
@@ -140,11 +143,13 @@ Review feedback pushed us to (1):
   message — so the shortcut only skipped one (cheap) LLM call, not any model
   construction. Not worth a dual-maintained constant and a whole code path.
 
-### Known divergence from standard practice (follow-up, not fixed here) ⚠️
-`submitPromptToComposer()` **DOM-scrapes** CopilotKit's composer (`querySelector`
-the textarea, dispatch a synthetic `input` event, then `requestAnimationFrame`
--retry the submit button). The standard approach is the framework's programmatic
-send API — CopilotKit exposes it via `useCopilotChat` / `useCopilotChatInternal`
-(we already import the latter for `messages`). Swapping to that removes the
-brittle selector + retry loop. Left as a follow-up because it's orthogonal to the
-review items above and works today.
+### Programmatic send — resolved ✅
+An earlier version **DOM-scraped** CopilotKit's composer to submit starter /
+capabilities prompts (`querySelector` the textarea, dispatch a synthetic `input`
+event, then `requestAnimationFrame`-retry the submit button) — brittle against
+CopilotKit's internal class names and the send-button enable timing. This now
+uses the framework's programmatic send API: `useCopilotChatInternal().sendMessage`
+(see "Prompt click behavior" above). The public `useCopilotChat()` omits
+`sendMessage`, so the internal hook is required — it's the same hook already used
+for `messages` here and for `setMessages` in `ConversationRecovery.tsx`, and
+needs no `publicApiKey`.
