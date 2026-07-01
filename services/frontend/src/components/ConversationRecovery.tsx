@@ -4,6 +4,7 @@ import { useCopilotChatInternal } from "@copilotkit/react-core";
 
 import { getConversationMessages, getConversationState } from "../api/session";
 import { useSessionState } from "../hooks/useSessionState";
+import { useRecovery } from "../state/recovery";
 
 // Reload recovery (renders nothing). On a resumed conversation, hydrates the
 // frontend from the durable store over plain HTTP — NO agent turn:
@@ -52,6 +53,9 @@ export function ConversationRecovery({
         // collapsed multi-search turns; no projection here.
         setMessages(messages as never);
       }
+      // History is now known (even if empty / the fetch failed) — let ChatPane
+      // decide whether to show the starter cards without a flash.
+      useRecovery.getState().setHistoryLoaded(true);
     })();
 
     return () => {
