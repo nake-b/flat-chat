@@ -98,9 +98,11 @@ class PlaceService:
             similarity), so short abbreviations ("HU", "TU") and multi-word
             queries reach the candidate set — plain `similarity('HU', 'HU Berlin
             – Campus Mitte')` = 0.13 is below the `%` threshold and would drop
-            the row entirely. `%>` only ADMITS rows; it does not drive the rank
-            (it flattens to 1.0 for any name containing the query as a word,
-            including out-of-Berlin stops).
+            the row entirely. Word similarity feeds the rank too (the score is
+            `greatest(similarity, word_similarity)`), but it flattens to 1.0 for
+            any name containing the query as a word (including out-of-Berlin
+            stops), so within the top bucket it can't discriminate — the
+            `ST_Dimension` tiebreak and the exact score do.
           - ORDER BY `priority` (curated campuses lead), then a coarse score
             bucket, then `ST_Dimension` (an area beats a coincident point inside
             the bucket — surfaces "Volkspark Hasenheide" over the same-named bus

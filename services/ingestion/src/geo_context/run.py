@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_seed and (only is None or "seed" in only):
         seed_ok, seed_fail = _run_seed()
 
-    # Curated university campuses APPEND into their own `curated_places` table
+    # Curated university campuses full-replace their own `curated_places` table
     # (independent of `landmarks`), so ordering vs WFS/OSM/seed is irrelevant —
     # placed after the seed for readability.
     uni_ok, uni_fail = (0, 0)
