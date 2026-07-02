@@ -249,7 +249,7 @@ class DbSessionStore:
 
     async def save(self, session: ChatSession) -> None:
         conv_uuid = self._parse_id(session.id)
-        # Serialize the whole history once; we append the tail (or rewrite).
+        # Serialize the whole history once, then rewrite all rows (see below).
         # mode="json" makes datetimes/enums in message parts JSON-native so
         # asyncpg's JSONB codec (json.dumps under the hood) can bind them.
         serialized = ModelMessagesTypeAdapter.dump_python(
@@ -268,46 +268,28 @@ class DbSessionStore:
                 .values(updated_at=func.clock_timestamp())
             )
 
-            existing = await db.scalar(
-                select(func.count())
-                .select_from(Message)
-                .where(Message.conversation_id == conv_uuid)
+            # Whole-history round-trip: delete every message row and re-insert
+            # the full serialized history each turn. This is Pydantic AI's
+            # documented persistence pattern — `all_messages()` is NOT a
+            # guaranteed byte-identical append: history processors can replace
+            # the history, a re-rendered system prompt changes the head, and
+            # (the bug that motivated this) deferred-capability discovery
+            # (`load_capability` / `search_tools`) reshapes the prefix between
+            # turns. A prior count-based tail-append silently wrote the wrong
+            # slice when the prefix moved, persisting an orphaned tool-return
+            # that made the NEXT turn 500 in the AG-UI adapter ("Tool call with
+            # ID … not found in the history"). Rewriting is O(rows) per turn,
+            # which is negligible at conversation scale; revisit only if very
+            # long threads make the delete+reinsert measurable. See
+            # session-persistence.md.
+            await db.execute(
+                delete(Message).where(Message.conversation_id == conv_uuid)
             )
-            existing = existing or 0
-
-            # `result.all_messages()` is normally append-only, but history
-            # processors / injected system prompts can rewrite the prefix.
-            # Guard: if the DB has more rows than the live history (or we
-            # otherwise can't trust a clean tail), rewrite from scratch so
-            # the DB stays == the live history. Common path just appends.
-            #
-            # NOTE: this only detects a *shrink*. An equal-length or longer
-            # history whose existing prefix was rewritten in place would slip
-            # through and append onto stale rows. That can't happen on our
-            # paths today (`all_messages()` only ever grows, and reload
-            # injection re-prepends history that came from these very rows, so
-            # the prefix is byte-identical) — but if a prefix-rewriting history
-            # processor is ever added, this guard must compare the boundary row
-            # too, not just the count.
-
-            if existing > len(serialized):
-                logger.warning(
-                    "History shrank (%d → %d); rewriting messages",
-                    existing,
-                    len(serialized),
-                )
-                await db.execute(
-                    delete(Message).where(Message.conversation_id == conv_uuid)
-                )
-                start, tail = 0, serialized
-            else:
-                start, tail = existing, serialized[existing:]
-
-            for offset, content in enumerate(tail):
+            for seq, content in enumerate(serialized):
                 db.add(
                     Message(
                         conversation_id=conv_uuid,
-                        seq=start + offset,
+                        seq=seq,
                         kind=content.get("kind", "")
                         if isinstance(content, dict)
                         else "",

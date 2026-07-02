@@ -121,7 +121,9 @@ def test_distance_to_active_listing():
     # Full-shape pin: the frontend status pill parses this exact prose into
     # "9.4 km to <place>" (services/frontend/src/state/proximityBreadcrumb.ts).
     # A reword here must update that parser — keep them in lockstep.
-    assert out == "This apartment is about 4.2 km from TU Berlin (straight-line distance)."
+    assert (
+        out == "This apartment is about 4.2 km from TU Berlin (straight-line distance)."
+    )
     _assert_untouched(state, markers_before=["id-0", "id-1", "id-2"], total_before=3)
 
 
