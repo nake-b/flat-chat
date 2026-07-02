@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     # chat deployment.
     azure_openai_title_deployment: str = ""
 
+    # OpenAI — standard (non-Azure) OpenAI API. Preferred provider when its key
+    # is set (order: OpenAI > Anthropic > Azure). Runs on SDK defaults for now
+    # (no custom stall-timeout/retry client — see `providers/openai.py`).
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.4"
+    # Cheap/fast model for one-shot sidebar titling (see build_title_model).
+    openai_title_model: str = "gpt-5.4-nano"
+    # Optional base-URL override for OpenAI-compatible endpoints/proxies.
+    openai_base_url: str = ""
+
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"
 

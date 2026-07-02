@@ -43,7 +43,8 @@ src/flat_chat/
                           service.py      ChatService — dispatches AG-UI run, history-authoritative
                           title_gen.py    TitleGenerationService(model) + pure title helpers
                                           (fired as a background task after the first turn)
-                          providers/      Provider dispatch (Anthropic / Azure) — one
+                          providers/      Provider dispatch (OpenAI / Anthropic / Azure;
+                                          order OpenAI > Anthropic > Azure) — one
                                           parameterized builder per provider serves both
                                           chat + title (build_chat_model / build_title_model)
   users/               → Identity domain (app.* owned).
