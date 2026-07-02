@@ -224,7 +224,7 @@ export function ToolStatusInline({
       aria-label={ariaLabel}
     >
       <span
-        className={`inline-block h-1.5 w-1.5 rounded-full bg-red ${
+        className={`inline-block h-2 w-2 rounded-full bg-red ${
           pulse ? "animate-pulse" : ""
         }`}
         aria-hidden

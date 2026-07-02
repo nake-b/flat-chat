@@ -380,18 +380,24 @@ function ApartmentCard({
           </div>
         </div>
       ) : (
-        <div className="flex h-full flex-col justify-between gap-2">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
+        <div className="flex h-full flex-col gap-2">
+          {/* Block (not flex) scroll container: flex children default to
+              flex-shrink:1 and get squeezed to fit — which clips the
+              line-clamp-2 title mid-line instead of scrolling. A block keeps
+              each child at its natural height and scrolls the overflow. */}
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+            {/* pr-6 reserves the top-right corner for the absolutely-positioned
+                BookmarkHeart (right-2 top-2) so the ml-auto lens badge clears it. */}
+            <div className="flex items-center gap-2 pr-6">
               <span className="font-mono text-[10px] tabular-nums uppercase tracking-widest text-ink-ghost">
                 {String(index).padStart(2, "0")}
               </span>
-              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
+              <span className="min-w-0 truncate font-mono text-[10px] uppercase tracking-widest text-ink-ghost">
                 {apt.district ?? "Berlin"}
               </span>
               {lensBadge ? (
                 <span
-                  className="ml-auto rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white"
+                  className="ml-auto shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white"
                   style={{ backgroundColor: lensBadgeColor ?? "#E4003C" }}
                 >
                   {lensBadge}
@@ -409,7 +415,7 @@ function ApartmentCard({
             <CardChips apt={apt} />
           </div>
 
-          <div className="flex items-end justify-between border-t border-paper-rule pt-1.5">
+          <div className="flex shrink-0 items-end justify-between border-t border-paper-rule pt-1.5">
             <div className="flex flex-col">
               <span className="font-mono text-[9px] uppercase tracking-widest text-ink-ghost">
                 warm
@@ -585,14 +591,17 @@ function CardChips({ apt }: { apt: ListingCard }) {
   const shown = chips.slice(0, MAX_CHIPS);
 
   return (
+    // Wrap freely — the card's middle block scrolls (overflow-y-auto), so extra
+    // chip rows are reachable by scrolling rather than clipped/hidden. Each chip
+    // stays whitespace-nowrap so a single label ("🌳 146m") never breaks mid-token.
     <div className="flex flex-wrap gap-1">
       {shown.map((c) => (
         <span
           key={c.key}
           className={
             c.wbs
-              ? "border border-red bg-red px-1 py-px font-mono text-[9px] uppercase tracking-widest text-white"
-              : "border border-ink/20 px-1 py-px font-mono text-[9px] uppercase tracking-widest text-ink-soft"
+              ? "whitespace-nowrap border border-red bg-red px-1 py-px font-mono text-[9px] uppercase tracking-widest text-white"
+              : "whitespace-nowrap border border-ink/20 px-1 py-px font-mono text-[9px] uppercase tracking-widest text-ink-soft"
           }
         >
           {c.label}
