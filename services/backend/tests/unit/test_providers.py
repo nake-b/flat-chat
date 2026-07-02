@@ -6,8 +6,9 @@ the provider classes (`AnthropicModel` / `AnthropicProvider` / `OpenAIChatModel`
 (every other test mocks the model with `FunctionModel`/`TestModel`). The v2
 upgrade touches exactly this construction surface, so these guard it:
 
-  - `build_chat_model()` prefers Anthropic, falls back to Azure, raises when
-    neither is configured (the orchestration contract in providers/__init__.py).
+  - `build_chat_model()` picks by preference order (OpenAI > Anthropic >
+    Azure), falls back to the next when a key is unset, and raises when none is
+    configured (the orchestration contract in providers/__init__.py).
   - the Anthropic model carries the three `anthropic_cache_*` breakpoints — the
     whole reason the Anthropic-direct provider exists (~5600 cached prefix
     tokens/turn). A silent drop here would degrade cost/latency invisibly.
