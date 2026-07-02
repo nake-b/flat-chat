@@ -118,9 +118,10 @@ def test_distance_to_active_listing():
     out = asyncio.run(distance_to(ctx, to_place_ref="place:x:1"))
 
     assert distance.calls == [["id-1"]]  # measured from the OPEN listing
-    assert "4.2 km" in out
-    assert "TU Berlin" in out
-    assert "This apartment" in out
+    # Full-shape pin: the frontend status pill parses this exact prose into
+    # "9.4 km to <place>" (services/frontend/src/state/proximityBreadcrumb.ts).
+    # A reword here must update that parser — keep them in lockstep.
+    assert out == "This apartment is about 4.2 km from TU Berlin (straight-line distance)."
     _assert_untouched(state, markers_before=["id-0", "id-1", "id-2"], total_before=3)
 
 
@@ -229,8 +230,9 @@ def test_travel_time_to_car():
     out = asyncio.run(travel_time_to(ctx, to_place_ref="place:x:1", mode="car"))
 
     assert routing.last_mode == "car"
-    assert "25 min" in out
-    assert "by car" in out
+    # Full-shape pin: parsed into "25 min to <place> by car" by the frontend pill
+    # (services/frontend/src/state/proximityBreadcrumb.ts) — keep in lockstep.
+    assert out == "This apartment is about 25 min from TU Berlin by car."
     _assert_untouched(state, markers_before=["id-0", "id-1"], total_before=2)
 
 

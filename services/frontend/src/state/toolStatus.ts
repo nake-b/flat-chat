@@ -1,3 +1,4 @@
+import { proximityBreadcrumb } from "./proximityBreadcrumb";
 import { formatSearchBreadcrumb, parseSearchCount } from "./searchBreadcrumb";
 
 // Single source of truth for status-pill labels in the chat thread.
@@ -132,19 +133,21 @@ export const TOOL_STATUS: Record<string, ToolUiSpec> = {
   },
 
   // Single-listing point-to-point queries (deferred ListingProximityCapability).
-  // These are PURE queries — the assistant's prose reply IS the answer, so the
-  // finish stays silent to avoid duplicating it in a pill. The destination name
-  // isn't in the args (near_place_ref is an opaque token), so the running label
-  // stays generic.
+  // The destination name isn't in the args (near_place_ref is an opaque token),
+  // so the RUNNING label stays generic. The FINISH names the place + value,
+  // parsed from the result prose ("9.4 km to FU Berlin", "19 min to FU Berlin by
+  // car") — a real tool-call result message, so it persists across reload through
+  // the same render path as the search breadcrumb (issue #22). Non-measurement
+  // results (guidance / unreachable / routing error) → "" → renders nothing.
   distance_to: {
     executing: () => "Measuring distance",
-    complete: () => "",
+    complete: (_a, result) => proximityBreadcrumb(result),
   },
 
   travel_time_to: {
     executing: (a: { mode?: string }) =>
       a?.mode === "car" ? "Checking drive time" : "Checking travel time",
-    complete: () => "",
+    complete: (_a, result) => proximityBreadcrumb(result),
   },
 };
 

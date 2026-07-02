@@ -48,12 +48,18 @@ describe("TOOL_STATUS.get_result_page", () => {
 });
 
 describe("TOOL_STATUS proximity tools", () => {
-  it("distance_to: generic running label, silent finish (prose is the answer)", () => {
+  it("distance_to: generic running label, place-named persisted finish", () => {
     expect(TOOL_STATUS.distance_to.executing({})).toBe("Measuring distance");
-    expect(TOOL_STATUS.distance_to.complete!({}, "≈ 4.2 km …", null)).toBe("");
+    expect(
+      TOOL_STATUS.distance_to.complete!(
+        {},
+        "This apartment is about 9.4 km from FU Berlin (straight-line distance).",
+        null,
+      ),
+    ).toBe("9.4 km to FU Berlin");
   });
 
-  it("travel_time_to: running label reflects mode, silent finish", () => {
+  it("travel_time_to: running label reflects mode, place-named persisted finish", () => {
     expect(TOOL_STATUS.travel_time_to.executing({ mode: "car" })).toBe(
       "Checking drive time",
     );
@@ -61,6 +67,30 @@ describe("TOOL_STATUS proximity tools", () => {
       "Checking travel time",
     );
     expect(TOOL_STATUS.travel_time_to.executing({})).toBe("Checking travel time");
-    expect(TOOL_STATUS.travel_time_to.complete!({}, "≈ 18 min …", null)).toBe("");
+    expect(
+      TOOL_STATUS.travel_time_to.complete!(
+        {},
+        "This apartment is about 19 min from FU Berlin by car.",
+        null,
+      ),
+    ).toBe("19 min to FU Berlin by car");
+  });
+
+  it("proximity finish stays silent for non-measurement results", () => {
+    // Guidance / unreachable / routing-error prose isn't a measurement → "".
+    expect(
+      TOOL_STATUS.distance_to.complete!(
+        {},
+        "No listing is open right now, so I don't know which apartment you mean.",
+        null,
+      ),
+    ).toBe("");
+    expect(
+      TOOL_STATUS.travel_time_to.complete!(
+        {},
+        "This apartment has no reachable route to FU Berlin by car within the routable window.",
+        null,
+      ),
+    ).toBe("");
   });
 });
