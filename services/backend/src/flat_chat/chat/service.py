@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
+from functools import cached_property
 from typing import Any
 
 from ag_ui.core import (
@@ -13,7 +14,13 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from pydantic import ValidationError
-from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
@@ -150,13 +157,51 @@ class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
             yield pending
 
 
+def _new_turn_messages(parsed: list[ModelMessage]) -> list[ModelMessage]:
+    """Reduce a client-sent thread to just THIS turn's new input — the tail from
+    the last user prompt onward.
+
+    We are SERVER-AUTHORITATIVE: the DB history (injected as `message_history`) is
+    the single source of truth for everything before this turn, so whatever thread
+    the client echoes back in the envelope is untrusted and contributes only the
+    new user turn. `AGUIAdapter` appends the envelope messages to `message_history`
+    (`[*message_history, *frontend_messages]`), so returning only the new turn here
+    is what prevents the DB history + client thread from duplicating.
+
+    Robust to either client posture: a client that sends the whole thread and one
+    that sends only the new prompt both reduce to the same new-turn slice. If no
+    user prompt is found (shouldn't happen for a chat send), return `parsed`
+    unchanged rather than drop the turn."""
+    for i in range(len(parsed) - 1, -1, -1):
+        msg = parsed[i]
+        if isinstance(msg, ModelRequest) and any(
+            isinstance(p, UserPromptPart) for p in msg.parts
+        ):
+            return parsed[i:]
+    return parsed
+
+
 class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
-    """AG-UI adapter wired to use the finish-shaping event stream."""
+    """AG-UI adapter wired to use the finish-shaping event stream and to be
+    server-authoritative about history (see `messages`)."""
 
     def build_event_stream(self) -> _FlatChatEventStream:
         return _FlatChatEventStream(
             self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version
         )
+
+    @cached_property
+    def messages(self) -> list[ModelMessage]:
+        """Only THIS turn's new input from the envelope (see `_new_turn_messages`).
+
+        Overrides the base (which parses the client's whole thread) so the agent's
+        history is DB-authoritative: `dispatch_agent_request` always injects the
+        stored history as `message_history`, and the envelope contributes only the
+        new user turn — no client/server divergence, no `len(messages)` heuristic."""
+        parsed = self.load_messages(
+            self.run_input.messages, preserve_file_data=self.preserve_file_data
+        )
+        return _new_turn_messages(parsed)
 
 
 def _summarise_prompt(run_input: Any) -> str:
@@ -313,17 +358,14 @@ class ChatService:
         except RuntimeError as exc:
             raise LlmProviderUnavailableError("No LLM provider configured") from exc
 
-        # History-authoritative recovery. `run_stream` prepends any supplied
-        # `message_history` to the envelope's messages. In normal live turns the
-        # frontend already carries the full thread, so we pass nothing (passing
-        # stored history too would duplicate it). After a reload where the chat
-        # transcript wasn't restored, the frontend sends ONLY the new prompt — we
-        # detect that (≤1 envelope message) and inject the stored history so the
-        # agent keeps full context. The ≤1 test is robust to tool-message count
-        # inflation that would break a length comparison. See R3.
-        message_history = None
-        if session.message_history and len(adapter.messages) <= 1:
-            message_history = session.message_history
+        # Server-authoritative history. The stored DB history is the single
+        # source of truth; the adapter's `messages` (overridden) contributes only
+        # this turn's new user input, which `run_stream` appends to the history we
+        # pass here (`[*message_history, *new_turn]`). So we ALWAYS inject the
+        # stored history — no `len(messages)` heuristic, and a client that echoes a
+        # stale/filtered thread can't diverge the agent's context. First turn:
+        # history is empty → None, and the new turn stands alone.
+        message_history = session.message_history or None
 
         stream = adapter.run_stream(
             deps=deps,
