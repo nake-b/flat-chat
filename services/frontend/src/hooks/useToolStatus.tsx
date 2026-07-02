@@ -110,27 +110,22 @@ function ToolPill({
   return <></>;
 }
 
-// Thinking pill that injects itself as the LAST child of
-// `.copilotKitMessagesContainer`, so it sits in the same vertical rhythm as
-// tool pills — directly below the most recent message. We *cannot* use
-// CopilotKit's `useCoAgentStateRender`: its claim-bridge anchors the render
-// to a message id that can be stale, parking the pill above an old assistant
-// bubble. By owning a portal slot we ourselves keep at the end of the
-// container (via MutationObserver), positioning is deterministic.
-//
-// Hook variant — call it inside ChatPane. The hook returns JSX (a portal),
-// so callers must include `{useThinkingPillInStream()}` in their tree.
-export function useThinkingPillInStream(): React.ReactNode {
-  // Show the Thinking pill ONLY in the genuine reasoning gap — not while a tool
-  // executes (its own pill owns the line) and not while the answer streams (the
-  // answer is the indicator). `useAgentPhase` collapses those signals into one
-  // mutually-exclusive phase. See frontend-status-lifecycle.md.
-  const shouldShow = useAgentPhase() === "reasoning";
-
+// A DOM slot kept as the LAST child of `.copilotKitMessagesContainer`, so
+// anything portalled into it renders in the message stream — directly below the
+// most recent message, in the same vertical rhythm. We *cannot* use CopilotKit's
+// `useCoAgentStateRender` (its claim-bridge anchors to a message id that can go
+// stale, parking the node above an old bubble); owning a portal slot we keep at
+// the end via MutationObserver is deterministic. Shared by the Thinking pill and
+// the run-error banner so both sit at the bottom of the conversation, like a new
+// message. `marker` distinguishes the slots in the DOM.
+export function useEndOfMessagesSlot(
+  active: boolean,
+  marker = "data-fc-stream-slot",
+): HTMLDivElement | null {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!shouldShow) {
+    if (!active) {
       setSlot(null);
       return undefined;
     }
@@ -150,7 +145,7 @@ export function useThinkingPillInStream(): React.ReactNode {
       if (cancelled) return true;
 
       const node = document.createElement("div");
-      node.setAttribute("data-fc-thinking-slot", "");
+      node.setAttribute(marker, "");
       target.appendChild(node);
       createdSlot = node;
       setSlot(node);
@@ -182,7 +177,20 @@ export function useThinkingPillInStream(): React.ReactNode {
       createdSlot?.remove();
       setSlot(null);
     };
-  }, [shouldShow]);
+  }, [active, marker]);
+
+  return slot;
+}
+
+// Thinking pill in the message stream. Hook variant — call it inside ChatPane
+// and include `{useThinkingPillInStream()}` in the tree.
+export function useThinkingPillInStream(): React.ReactNode {
+  // Show the Thinking pill ONLY in the genuine reasoning gap — not while a tool
+  // executes (its own pill owns the line) and not while the answer streams (the
+  // answer is the indicator). `useAgentPhase` collapses those signals into one
+  // mutually-exclusive phase. See frontend-status-lifecycle.md.
+  const shouldShow = useAgentPhase() === "reasoning";
+  const slot = useEndOfMessagesSlot(shouldShow, "data-fc-thinking-slot");
 
   if (!slot || !shouldShow) return null;
   return createPortal(

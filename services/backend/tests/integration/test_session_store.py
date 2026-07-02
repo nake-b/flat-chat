@@ -6,8 +6,9 @@ Drives the store through a connection bound with
 ``ROLLBACK`` discards everything — keeping the test DB pristine.
 
 Covers the contract the in-memory store can't: history round-trips through
-JSONB, the snapshot survives (incl. the columnar marker serializer), messages
-append across turns, and a shrinking history triggers the full-rewrite guard.
+JSONB, the snapshot survives (incl. the columnar marker serializer), history
+grows across turns, and a reshaped/shrunk history is persisted verbatim by the
+whole-history rewrite (the regression for the deferred-capability 500).
 
 Gated on ``TEST_DATABASE_URL`` (see tests/README.md).
 """
@@ -147,6 +148,34 @@ def test_history_shrink_triggers_full_rewrite(async_db_url):
 
     got = drive(async_db_url, body)
     assert _texts(got.message_history) == ["new1", "new2"]
+
+
+def test_reshaped_prefix_persists_faithfully(async_db_url):
+    # Regression for the deferred-capability 500. `all_messages()` is NOT a
+    # byte-identical append: deferred-capability discovery (load_capability /
+    # search_tools) reshapes the history PREFIX between turns while the total
+    # length grows. The old count-based tail-append only guarded against a
+    # SHRINK, so a rewritten-but-longer prefix slipped through — it appended the
+    # new tail onto STALE rows, persisting an orphaned tool-return that made the
+    # next turn 500 in the AG-UI adapter. Whole-history rewrite must persist the
+    # new history verbatim even when the prefix changed in place.
+    async def body(store):
+        session = await store.create(USER)
+        session.message_history = [_user("a"), _assistant("b")]
+        await store.save(session)
+        # Turn 2: prefix rewritten in place (index 0 "a" → "X") AND length grew
+        # from 2 → 4. Not a shrink, not a clean append.
+        session.message_history = [
+            _user("X"),
+            _assistant("b"),
+            _user("c"),
+            _assistant("d"),
+        ]
+        await store.save(session)
+        return await store.get(session.id)
+
+    got = drive(async_db_url, body)
+    assert _texts(got.message_history) == ["X", "b", "c", "d"]
 
 
 def test_get_unknown_or_malformed_id_raises(async_db_url):

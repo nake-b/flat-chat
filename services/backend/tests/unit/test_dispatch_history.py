@@ -1,21 +1,20 @@
-"""History-authoritative dispatch — the reload-recovery injection logic.
+"""Server-authoritative dispatch — the stored history is the source of truth.
 
-`ChatService.dispatch_agent_request` injects the stored conversation history
-into the agent run ONLY when the frontend sent ≤1 envelope message (the reload
-case where the transcript wasn't restored, so the client carries just the new
-prompt). In a normal live turn the envelope already carries the full thread, so
-we inject nothing — passing stored history too would duplicate it.
+`ChatService.dispatch_agent_request` ALWAYS injects the stored conversation
+history as `message_history`; the AG-UI adapter's `messages` is overridden to
+contribute only THIS turn's new user input (`_new_turn_messages`). So the agent
+always sees `stored_history + new_turn`, regardless of what thread the client
+echoes back — no `len(messages)` heuristic, and a stale/tampered/filtered client
+thread can't diverge the agent's context.
 
 These tests drive the real dispatch path with an `InMemorySessionStore` (no DB)
 and a streaming `FunctionModel` that records the messages the agent actually
 received, then assert what the model saw:
 
-  - reload (1 msg)  → stored history is prepended (agent keeps context)
-  - live (full thread) → no duplication (model sees exactly the envelope)
-  - first turn (no stored history) → just the new prompt
-
-This locks in the `len(adapter.messages) <= 1` branch in service.py, which was
-previously only covered by a manual end-to-end check.
+  - reload (client sends only the new prompt) → stored history + prompt
+  - live (client echoes the full thread)      → no duplication (same result)
+  - divergent client thread                   → DB wins; client thread ignored
+  - first turn (no stored history)            → just the new prompt
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.requests import Request
 
 import flat_chat.chat.service as service_mod
-from flat_chat.chat.service import ChatService
+from flat_chat.chat.service import ChatService, _drop_trailing_unanswered_prompt
 from flat_chat.chat.sessions import InMemorySessionStore, SessionNotFoundError
 
 USER = "00000000-0000-0000-0000-000000000001"
@@ -132,7 +131,8 @@ def test_reload_injects_stored_history():
 
 
 def test_live_turn_does_not_duplicate_history():
-    """Full thread in the envelope → stored history is NOT re-prepended."""
+    """Full thread in the envelope → only its new-turn tail is used (+ DB history),
+    so each prompt appears exactly once — no doubling of the prior turn."""
     seen = asyncio.run(
         _messages_seen_by_model(
             stored_history=_prior_turn(),
@@ -143,8 +143,55 @@ def test_live_turn_does_not_duplicate_history():
             ],
         )
     )
-    # Each prompt appears exactly once — no doubling of the prior turn.
     assert seen == ["2 rooms in Kreuzberg", "Found 3.", "under 1000 euros"]
+
+
+def test_divergent_client_thread_is_ignored_db_wins():
+    """Server-authoritative: if the client echoes a stale/tampered thread, the DB
+    history wins and only the client's NEW user turn is taken from the envelope."""
+    seen = asyncio.run(
+        _messages_seen_by_model(
+            stored_history=_prior_turn(),  # DB truth: "2 rooms…", "Found 3."
+            envelope_messages=[
+                {"id": "x", "role": "user", "content": "TAMPERED prompt"},
+                {"id": "y", "role": "assistant", "content": "fabricated reply"},
+                {"id": "z", "role": "user", "content": "under 1000 euros"},
+            ],
+        )
+    )
+    # The tampered prefix is dropped; agent sees DB history + only the new turn.
+    assert seen == ["2 rooms in Kreuzberg", "Found 3.", "under 1000 euros"]
+
+
+def test_crashed_turn_dangling_prompt_dropped_before_run():
+    """W3: a stored history ending in an unanswered user prompt (a crashed turn)
+    is dropped before the next run, so the model never sees two user turns."""
+    stored = [
+        ModelRequest(parts=[UserPromptPart(content="2 rooms in Kreuzberg")]),
+        ModelResponse(parts=[TextPart(content="Found 3.")]),
+        ModelRequest(parts=[UserPromptPart(content="LOST — stream crashed")]),
+    ]
+    seen = asyncio.run(
+        _messages_seen_by_model(
+            stored_history=stored,
+            envelope_messages=[
+                {"id": "m1", "role": "user", "content": "under 1000 euros"}
+            ],
+        )
+    )
+    # The dangling "LOST" prompt is gone; agent sees the answered turn + new one.
+    assert seen == ["2 rooms in Kreuzberg", "Found 3.", "under 1000 euros"]
+
+
+def test_drop_trailing_unanswered_prompt_helper():
+    user = ModelRequest(parts=[UserPromptPart(content="hi")])
+    asst = ModelResponse(parts=[TextPart(content="hello")])
+    # Ends with an unanswered user prompt → dropped.
+    assert _drop_trailing_unanswered_prompt([user, asst, user]) == [user, asst]
+    # Ends with an assistant response (normal) → unchanged.
+    assert _drop_trailing_unanswered_prompt([user, asst]) == [user, asst]
+    # Empty → unchanged.
+    assert _drop_trailing_unanswered_prompt([]) == []
 
 
 def test_first_turn_has_no_history_to_inject():

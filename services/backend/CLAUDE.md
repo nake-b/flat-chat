@@ -19,7 +19,8 @@ src/flat_chat/
                           bookmarks.py POST/DELETE /api/bookmarks/{listing_id} + GET /api/bookmarks(/ids)
   chat/                → Agent orchestration domain
                           agent.py        Agent(capabilities=[CoreCapability(),
-                                          MapOverlayCapability(), LensCapability()], instructions=...)
+                                          MapOverlayCapability(), LensCapability(),
+                                          ListingProximityCapability()], instructions=...)
                           tools/backbone.py      TOOL_BACKBONE (cross-capability invariants:
                                           one result set / 1-based indices / place_ref flow)
                           tools/core.py        CoreCapability — search/open/page/locate_place;
@@ -29,6 +30,9 @@ src/flat_chat/
                           tools/lenses.py   LensCapability — apply_travel_time_lens/
                                           apply_distance_lens/clear_lens + generic _apply_lens
                                           (provider registry) + reapply_lens_hook
+                          tools/proximity.py ListingProximityCapability (DEFERRED) —
+                                          distance_to/travel_time_to (single listing → one
+                                          place; pure-query, reuses the lens providers)
                           tools/emission.py StateEmittingToolset — auto-emits STATE_SNAPSHOT
                                           on any deps.state change (forget-proof emission)
                           llm_context.py  LlmResultSetView + build_dynamic_state_prompt

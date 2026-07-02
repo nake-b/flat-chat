@@ -259,33 +259,7 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
         </div>
       ) : null}
 
-      {runErrorMessage ? (
-        <div
-          role="alert"
-          className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm"
-        >
-          <span className="text-ink-soft">{runErrorMessage}</span>
-          <span className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={retryLastTurn}
-              className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={clearRunError}
-              aria-label="Dismiss error"
-              className="px-1 text-ink-ghost transition-colors hover:text-ink"
-            >
-              ×
-            </button>
-          </span>
-        </div>
-      ) : null}
-
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <CopilotChat
           className="h-full"
           markdownTagRenderers={markdownTagRenderers}
@@ -296,6 +270,40 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
           }}
         />
         {thinkingPill}
+
+        {/* Run-error banner — an OVERLAY at the bottom of the message area, just
+            above the composer. Deliberately NOT injected into
+            `.copilotKitMessagesContainer` (a React-managed DOM tree): a previous
+            version portalled it in there, and mutating CopilotKit's own children
+            corrupted message ordering (a live "Searching…" pill jumping above
+            older tool results). Rendering it as our own absolutely-positioned
+            sibling keeps it visually at the bottom, like a fresh notice, without
+            touching CopilotKit's DOM. */}
+        {runErrorMessage ? (
+          <div
+            role="alert"
+            className="absolute inset-x-3 bottom-20 z-20 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm shadow-md backdrop-blur-sm"
+          >
+            <span className="text-ink-soft">{runErrorMessage}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={retryLastTurn}
+                className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={clearRunError}
+                aria-label="Dismiss error"
+                className="px-1 text-ink-ghost transition-colors hover:text-ink"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

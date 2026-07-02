@@ -69,7 +69,8 @@ Status: **implemented** (this is the as-built record; supersedes the former
   populated by a background LLM call after the first completed turn (see "Sidebar
   + titling" below). `archived_at` is still unused (deferred until rename/archive UX).
 - `messages(id, conversation_id fk CASCADE, seq, kind, content jsonb, created_at)`
-  — **row-per-message**, append-only, ordered by `seq`. `content` is the opaque
+  — **row-per-message**, ordered by `seq`, **rewritten whole each turn** (delete +
+  re-insert all of `all_messages()`; see the whole-history decision below). `content` is the opaque
   `ModelMessagesTypeAdapter` form of one Pydantic-AI `ModelMessage`; `kind` is the
   message-level discriminator (`request`/`response`), NOT a part-level role.
   `UniqueConstraint(conversation_id, seq)`.
@@ -97,12 +98,25 @@ Status: **implemented** (this is the as-built record; supersedes the former
   `get_async_db` — because `save()` runs in `on_complete` at the END of the SSE
   stream, after the request scope is gone. The factory is injectable so tests bind
   it to a savepoint connection.
-- **Backend history-authoritative.** `AGUIAdapter.run_stream(message_history=…)`
-  prepends supplied history to the envelope messages. We inject the stored history
-  **only when the frontend sent ≤1 message** (the reload-fallback case — just the
-  new prompt); in normal live turns and the `setMessages`-success path the frontend
-  already carries the thread, so we pass nothing (avoids duplication). The ≤1 test
-  is robust to tool-message count inflation that would break a length comparison.
+- **Whole-history round-trip on save, not a tail-append.** `save()` deletes every
+  message row and re-inserts all of `all_messages()` each turn. An earlier
+  count-based tail-append (`serialized[existing:]`) assumed a byte-identical prefix,
+  but `all_messages()` is NOT a guaranteed append — a re-rendered system prompt, a
+  history processor, or (the bug that motivated this) **deferred-capability
+  discovery** (`load_capability` / `search_tools`) reshapes the prefix between turns.
+  The tail-append then wrote the wrong slice onto stale rows, persisting an orphaned
+  tool-return that 500'd the NEXT turn in the AG-UI adapter. Whole-history rewrite is
+  Pydantic AI's documented pattern; O(rows)/turn is negligible at conversation scale.
+- **Server-authoritative history (no `len(messages)` heuristic).** The stored DB
+  history is the single source of truth. `dispatch_agent_request` ALWAYS injects it
+  as `message_history`; the adapter's `messages` is overridden (`_new_turn_messages`)
+  to contribute only THIS turn's new user input, which `run_stream` appends
+  (`[*message_history, *new_turn]`). A client that echoes a stale/filtered/tampered
+  thread therefore can't diverge the agent's context. Replaces the earlier
+  "inject only when the frontend sent ≤1 message" reload heuristic. Standard posture
+  (Vercel/OpenAI/LangGraph). A trailing unanswered user prompt from a crashed turn
+  is dropped (`_drop_trailing_unanswered_prompt`) so the model never sees two user
+  messages in a row.
 - **Linear history, no branching.** A goal-directed search assistant doesn't need
   it; adding a nullable `parent_id` later is additive. `seq` is display-order only.
 - **Auth: real password login via fastapi-users** (shipped — see
@@ -172,8 +186,12 @@ The plan flagged this as the risky piece. Findings against the installed
   lock pushes resolution into the streaming generator, where a miss can no longer be
   a 404 — it becomes a mid-stream `RUN_ERROR` event. That's a behavioral change to
   the error contract, not a wiring tweak, so it's deliberately deferred.
-- **No mid-stream-crash resume.** Persistence is atomic at `on_complete`; a turn
-  that dies before it is lost entirely (history + state stay consistent at turn N-1).
+- **Partial mid-stream resume (prompt only).** The user's prompt is now persisted
+  at dispatch START (before the run), so a stream that dies mid-flight preserves the
+  message — on reload the user sees it and can re-ask (a crashed turn's dangling
+  prompt is dropped from the next run's context, see above). The assistant turn
+  itself is still not resumable — full resumable-streams (Redis/pub-sub, per the
+  Vercel/assistant-ui model, or per-step durability à la LangGraph) stays deferred.
 - **In-process `asyncio.Lock`** — correct for single-process only. Multi-process
   needs a Postgres advisory lock held for the stream (a deliberate later redesign).
 - **Full-history load** per dispatch / `GET /messages` (no cursor pagination yet) —

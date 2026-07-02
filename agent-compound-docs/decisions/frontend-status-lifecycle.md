@@ -53,7 +53,8 @@ kills the "two indicators fighting" class of bugs.
 > CopilotKit hook `useCopilotChatInternal().messages` and depends on the message shape
 > `{id, role, content}` (it's the same internal hook `ConversationRecovery` already uses for
 > `setMessages`, so the dependency is accepted project-wide). It's pinned at `@copilotkit/*
-> ^1.10.0`; a CopilotKit upgrade must re-verify that `messages` is still an array of
+> ~1.57.3` (the installed line — the older `^1.10.0` claim was stale; our direct-AG-UI
+> wiring relies on v2-era APIs absent from 1.10.x); a CopilotKit upgrade must re-verify that `messages` is still an array of
 > `{role, content}`. `useAgentPhase.test.tsx` asserts the `streaming` branch against that exact
 > shape, so a breaking reshape fails the test loudly rather than silently resurrecting the
 > "Thinking on top of the streaming answer" bug.

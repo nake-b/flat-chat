@@ -5,7 +5,7 @@ import { create } from "zustand";
 //
 // Why this exists: the backend emits a terminal RUN_ERROR when an agent run
 // fails mid-stream (e.g. the LLM provider errors after its own retries are
-// exhausted — see providers/anthropic.py + chat/service.py). CopilotKit 1.10
+// exhausted — see providers/anthropic.py + chat/service.py). CopilotKit
 // doesn't render RUN_ERROR anywhere, so without this the run just stops and the
 // UI looks hung. `main.tsx` subscribes to the HttpAgent's `onRunErrorEvent` and
 // sets the message here; it `clear()`s on `onRunStartedEvent` so a retry (or any

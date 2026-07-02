@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from flat_chat.listings.context import Marker
+from flat_chat.listings.context import Anchor, Marker
 from flat_chat.listings.lenses import TravelTimeLens
 from flat_chat.routing.errors import RoutingError
 from flat_chat.routing.motis import (
@@ -178,6 +178,22 @@ def test_motis_maps_stops_to_listings_via_last_mile_walk(monkeypatch):
     # m0/m1 sit on a stop → walk ≈ 0 → the stop's minutes; m2 has no stop within
     # the walk cap → absent.
     assert out == {"m0": 12, "m1": 24}
+
+
+def test_travel_times_returns_freshness_and_resolve_stamps_lens(monkeypatch):
+    # The neutral core returns the schedule freshness as DATA on the result; the
+    # `resolve` lens-adapter copies the SAME freshness onto the lens (which the
+    # lens layer reads afterwards). Assert parity so the two stay in lockstep.
+    _install(monkeypatch, _motis_responder(_ONE_TO_ALL))
+    anchor = Anchor(ANCHOR.anchor_label, ANCHOR.anchor_lat, ANCHOR.anchor_lng)
+    result = asyncio.run(_svc().travel_times(_M_ONSTOP, anchor, "transit"))
+    assert result.values == {"m0": 12, "m1": 24}
+
+    lens = ANCHOR.model_copy()
+    values = asyncio.run(_svc().resolve(_M_ONSTOP, lens))
+    assert values == result.values
+    assert lens.schedule_stale == result.schedule_stale
+    assert lens.schedule_as_of == result.schedule_as_of
 
 
 def test_motis_uses_one_to_all_latlon_and_transit(monkeypatch):

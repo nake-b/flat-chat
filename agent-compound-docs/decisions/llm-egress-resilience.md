@@ -63,3 +63,28 @@ backend outside Docker for LLM egress. Tracked as an ops task, not a repo change
   transient corruption at all; retries make recovery invisible. The banner is the
   last resort, not the first response.
 - **Retrying 400s** — dangerous; would hide real malformed-request bugs.
+
+## Follow-up (2026-07-02): the watchdog had to be re-engineered
+
+Live testing on `feat/listing-proximity-tools` showed the initial port didn't
+actually stop the freeze:
+
+- **`read=45s × max_retries=5` = a ~4-minute freeze** before an error surfaced.
+  Retuned to `read=12s × max_retries=3` (budget 48s): faster stall detection, and
+  MORE attempts (4) so ~1.2% per-call visible failure — most corruption still
+  self-heals invisibly, but a dead egress fails fast.
+- **A `wait_for(stream.__anext__())` inactivity guard does NOT fire** on a real
+  stall: a stuck TLS read ignores cancellation, so `wait_for` hangs waiting for
+  the cancel to complete. Fixed by draining the stream in a background PRODUCER
+  task feeding a `queue`; the consumer reads the queue with the timeout. Queue
+  reads are cleanly cancellable, so the inactivity watchdog (`60s`) is
+  GUARANTEED; a producer that won't die is abandoned. Budget (48s) < watchdog
+  (60s) so SDK self-heal completes before the watchdog trips; the watchdog is the
+  backstop for a stall that trickles bytes and never trips the per-read timeout.
+- **Catch `BaseException` in the producer** (re-raising `CancelledError`): on
+  Python 3.14 the anthropic/httpx streaming failure can arrive as a
+  `BaseExceptionGroup`, which `except Exception` missed → the SSE aborted raw
+  instead of emitting our clean, retryable `RUN_ERROR`.
+
+Net: infinite "agent stopped responding" freeze eliminated — most turns self-heal;
+the rest surface a retry banner in ≤60s. Root cause remains the ops-level egress.

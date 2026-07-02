@@ -1,7 +1,9 @@
 # Capability landscape — how tools are grouped
 
 **Status:** Implemented in the travel-time PR (#41), splitting the single
-`ListingsCapability` into domain capabilities as the tool surface grew.
+`ListingsCapability` into domain capabilities as the tool surface grew. Extended
+in #44, which added `ListingProximityCapability` as the first `defer_loading=True`
+capability (single-listing distance / travel-time point queries).
 
 ## Context
 
@@ -26,7 +28,7 @@ freely and reversibly.
 | **CoreCapability** (`chat/tools/core.py`) | `search_apartments`, `open_listing`, `get_result_page`, `locate_place` | every conversation | always |
 | **MapOverlayCapability** (`chat/tools/overlays.py`) | `show_on_map`, `hide_on_map`, `clear_map_overlays` | orienting on the map | loaded |
 | **LensCapability** (`chat/tools/lenses.py`) | `apply_travel_time_lens`, `apply_distance_lens`, `clear_lens` | mid-session, commute/distance | loaded |
-| **ListingProximityCapability** *(follow-up, [#44](https://github.com/nake-b/flat-chat/issues/44))* | `distance_to`, `travel_time_to` (single active listing) | late-session, evaluating one flat — often never | **deferred** |
+| **ListingProximityCapability** (`chat/tools/proximity.py`) | `distance_to`, `travel_time_to` (single listing → one place) | late-session, evaluating one flat — often never | **deferred** |
 
 Each capability's `get_toolset()` wraps its own `FunctionToolset` in
 `StateEmittingToolset`, so any `deps.state` mutation still auto-emits a
@@ -54,13 +56,30 @@ agent's static `instructions=` (so they sit in the cached prefix). Each
 capability's own `<..._protocol>` then describes only its own tools. This is
 where "run `locate_place` first" is documented once, spanning capabilities.
 
-## defer_loading: not yet
+## defer_loading: the always-loaded set stays undeferred; proximity defers
 
-The cached prefix is comfortable (~5,600 tokens). Deferring now buys little and
-adds a first-use ToolSearch round-trip. We split into capabilities now so
-`defer_loading` is a one-line flip later — when the always-loaded tool count
-crosses ~10–12 or tool selection gets sloppy. **Capabilities are the seam;
-`defer_loading` is the lever.**
+The always-loaded three (Core / MapOverlay / Lens, ~10 tools) stay in the cached
+prefix — the prefix is comfortable (~5,600 tokens) and deferring them buys little
+against a first-use round-trip. **`ListingProximityCapability` is the one we
+defer** (#44): it's the textbook case — a late-session, single-listing question
+(asked only while evaluating one specific flat) that many conversations never
+trigger — so its two tools + `<proximity_protocol>` prose stay OUT of the cached
+prefix until the model loads the capability on demand.
+
+Mechanics (verified against the installed Pydantic AI): `defer_loading=True`
+requires a stable `id` (message history identifies the capability across a load)
+and a `description` (the load-catalog routing hint the model reads to decide
+whether to load). Turning on ANY deferred capability injects two plumbing tools
+into the surface — `load_capability` (loads a capability by id) and `search_tools`
+— and flags the deferred tools with `metadata['pydantic_ai_deferred_capability_tool']`.
+The deferred-capability catalog renders as a *static* instruction (byte-identical
+every turn, including after a load) precisely so it doesn't bust the prompt-cache
+prefix. `test_capabilities_wiring.py` asserts all of this: always-loaded tools
+present + un-deferred, proximity tools present + flagged, plumbing present.
+
+The rule for the always-loaded set is unchanged: flip `defer_loading` when that
+count crosses ~10–12 or tool selection gets sloppy. **Capabilities are the seam;
+`defer_loading` is the lever — and proximity is the first place we pulled it.**
 
 ## The bigger picture: package-by-layer vs. package-by-feature
 

@@ -186,3 +186,16 @@ different failure domain).
   far) over a frontend-computed adaptive domain, to match the rest of the marker
   design. Hexbin/H3 is the deferred next-level view (see root `CLAUDE.md`
   Deferred section).
+
+## Follow-up (#44) — single-listing point queries reuse the same engines
+
+The whole-set travel-time / distance *lens* has a point-to-point sibling:
+`distance_to` / `travel_time_to` in the deferred `ListingProximityCapability`
+(`chat/tools/proximity.py`). They answer "how far / how long is *this one* flat
+from X" for the open listing (or a card by `from_index`) — pure-query prose, no
+lens, no result-set or map mutation. No new routing code: both providers expose
+`resolve(markers, lens) -> {id: value}`, so a single-listing query is just
+`resolve([one_marker], transient_lens)` with a `TravelTimeLens`/`DistanceLens`
+that is **never stored in state**. Car → a 1×1 OSRM matrix; transit → the same
+MOTIS one-to-all + last-mile as the lens, over one marker (the stale-feed note is
+surfaced identically). See `capability-landscape.md` for why it ships deferred.

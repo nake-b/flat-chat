@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
+from functools import cached_property
 from typing import Any
 
 from ag_ui.core import (
@@ -14,7 +16,13 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from pydantic import ValidationError
-from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 from starlette.requests import Request
@@ -47,6 +55,19 @@ logger = logging.getLogger(__name__)
 # without holding it here the task can be garbage-collected mid-execution. Each
 # task removes itself via `add_done_callback(_background_tasks.discard)`.
 _background_tasks: set[asyncio.Task[None]] = set()
+
+# Hard backstop against a stalled agent run. The Anthropic client's per-read
+# timeout + SDK retries (providers/anthropic.py) bound a clean no-bytes stall to
+# ~45s, but that can't be fully trusted: a corrupted stream can trickle garbage
+# bytes (resetting the read timeout so it never fires) yet never produce an
+# event — an infinite freeze. This watchdog is the guarantee: if NO AG-UI event
+# flows for this long, the run is aborted and a terminal RUN_ERROR is emitted
+# (via the queue-decoupled loop below, so it fires even when the stuck read
+# ignores cancellation). Set FAR above any legitimate inter-event gap (LLM
+# first-token ~1-3s; the slowest tool — routing — a few seconds) so it never
+# false-trips a healthy run, but low enough that a real freeze surfaces in ~1 min
+# instead of the multi-minute hang users were hitting.
+_SSE_INACTIVITY_TIMEOUT_S = 60.0
 
 
 class InvalidAgentRequestError(Exception):
@@ -151,13 +172,80 @@ class _FlatChatEventStream(AGUIEventStream[ChatDeps, str]):
             yield pending
 
 
+def _new_turn_messages(parsed: list[ModelMessage]) -> list[ModelMessage]:
+    """Reduce a client-sent thread to just THIS turn's new input — the tail from
+    the last user prompt onward.
+
+    We are SERVER-AUTHORITATIVE: the DB history (injected as `message_history`) is
+    the single source of truth for everything before this turn, so whatever thread
+    the client echoes back in the envelope is untrusted and contributes only the
+    new user turn. `AGUIAdapter` appends the envelope messages to `message_history`
+    (`[*message_history, *frontend_messages]`), so returning only the new turn here
+    is what prevents the DB history + client thread from duplicating.
+
+    Robust to either client posture: a client that sends the whole thread and one
+    that sends only the new prompt both reduce to the same new-turn slice. If no
+    user prompt is found (shouldn't happen for a chat send), return `parsed`
+    unchanged rather than drop the turn."""
+    for i in range(len(parsed) - 1, -1, -1):
+        msg = parsed[i]
+        if isinstance(msg, ModelRequest) and any(
+            isinstance(p, UserPromptPart) for p in msg.parts
+        ):
+            return parsed[i:]
+    return parsed
+
+
+def _drop_trailing_unanswered_prompt(
+    history: list[ModelMessage],
+) -> list[ModelMessage]:
+    """Drop a trailing user prompt left by a previously CRASHED turn.
+
+    W3 persists this turn's user prompt BEFORE the run so a dropped stream doesn't
+    lose it. If that run never completes, the stored history ends with an
+    unanswered user `ModelRequest`. Feeding that as `message_history` for the next
+    turn would put two consecutive user messages in front of the model (Anthropic
+    requires alternating roles). The next turn supersedes the lost one, so drop a
+    trailing user-prompt request before using the history as the run's context.
+    (Display via `GET /messages` still shows it, so the user sees what was lost.)"""
+    if (
+        history
+        and isinstance(history[-1], ModelRequest)
+        and any(isinstance(p, UserPromptPart) for p in history[-1].parts)
+    ):
+        return history[:-1]
+    return history
+
+
 class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
-    """AG-UI adapter wired to use the finish-shaping event stream."""
+    """AG-UI adapter wired to use the finish-shaping event stream and to be
+    server-authoritative about history (see `messages`)."""
 
     def build_event_stream(self) -> _FlatChatEventStream:
         return _FlatChatEventStream(
             self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version
         )
+
+    @cached_property
+    def messages(self) -> list[ModelMessage]:
+        """Only THIS turn's new input from the envelope (see `_new_turn_messages`).
+
+        Overrides the base (which parses the client's whole thread) so the agent's
+        history is DB-authoritative: `dispatch_agent_request` always injects the
+        stored history as `message_history`, and the envelope contributes only the
+        new user turn — no client/server divergence, no `len(messages)` heuristic.
+
+        Safe to narrow because `messages` has exactly ONE consumer in the base
+        adapter: `run_stream` does `message_history = [*message_history, *sanitize(
+        self.messages)]` — i.e. it treats `messages` as the frontend-contributed
+        TAIL appended after our injected history, which is precisely the new turn.
+        Sanitization still runs over the reduced set. (Verified against the
+        installed pydantic_ai `ui/_adapter.py`; re-check this invariant on upgrade
+        if a new internal path starts reading the full parsed thread.)"""
+        parsed = self.load_messages(
+            self.run_input.messages, preserve_file_data=self.preserve_file_data
+        )
+        return _new_turn_messages(parsed)
 
 
 def _summarise_prompt(run_input: Any) -> str:
@@ -314,17 +402,26 @@ class ChatService:
         except RuntimeError as exc:
             raise LlmProviderUnavailableError("No LLM provider configured") from exc
 
-        # History-authoritative recovery. `run_stream` prepends any supplied
-        # `message_history` to the envelope's messages. In normal live turns the
-        # frontend already carries the full thread, so we pass nothing (passing
-        # stored history too would duplicate it). After a reload where the chat
-        # transcript wasn't restored, the frontend sends ONLY the new prompt — we
-        # detect that (≤1 envelope message) and inject the stored history so the
-        # agent keeps full context. The ≤1 test is robust to tool-message count
-        # inflation that would break a length comparison. See R3.
-        message_history = None
-        if session.message_history and len(adapter.messages) <= 1:
-            message_history = session.message_history
+        # Server-authoritative history. The stored DB history is the single
+        # source of truth; the adapter's `messages` (overridden) contributes only
+        # this turn's new user input, which `run_stream` appends to the history we
+        # pass here (`[*message_history, *new_turn]`). So we ALWAYS inject the
+        # stored history — no `len(messages)` heuristic, and a client that echoes a
+        # stale/filtered thread can't diverge the agent's context. A trailing
+        # unanswered prompt from a crashed turn (W3) is dropped so the model never
+        # sees two user messages in a row. First turn: history empty → None.
+        prior_history = _drop_trailing_unanswered_prompt(session.message_history)
+        message_history = prior_history or None
+
+        # W3 (lightweight mid-stream resume): persist THIS turn's user prompt
+        # before the run so a dropped stream (engine stall / SSE drop) doesn't lose
+        # it — the user sees their message on reload and can re-ask. `on_complete`
+        # overwrites with the full authoritative history at stream end. Full
+        # resumable-streams (Redis) stays deferred — see session-persistence.md.
+        new_turn = adapter.messages
+        if new_turn:
+            session.message_history = [*prior_history, *new_turn]
+            await self.store.save(session)
 
         stream = adapter.run_stream(
             deps=deps,
@@ -477,25 +574,75 @@ async def _with_session_and_lock(
     acquiring them at the call site would release before any events flow.
     Wrapping the generator keeps both active until the stream closes.
 
-    Also the last line of defence against a mid-run failure. If the agent run
-    raises (e.g. the LLM provider errors after its own retries are exhausted),
-    the exception would otherwise propagate into Starlette's SSE writer and the
-    stream would just die — no run-finished, no error, a frozen "thinking" pill.
-    We catch it, log it in full (this is where the provider exception class is
-    visible), and emit a terminal `RUN_ERROR` so the frontend resolves the pill
-    and can tell the user to retry, instead of hanging forever.
+    Also the last line of defence against a mid-run failure OR stall. If the
+    agent run raises (e.g. the LLM provider errors after its retries are
+    exhausted) OR goes silent (a stalled egress that never raises), the SSE would
+    otherwise die or hang — no run-finished, no error, a frozen "thinking" /
+    "Searching…" pill.
+
+    An INACTIVITY WATCHDOG bounds it: if no AG-UI event arrives for
+    `_SSE_INACTIVITY_TIMEOUT_S`, we emit a terminal `RUN_ERROR` and return so the
+    frontend resolves the pill and offers a retry. Crucially the watchdog reads
+    from a QUEUE fed by a background producer task — NOT `wait_for(__anext__())`
+    directly. A stalled TLS read does not always honour cancellation, so
+    `wait_for(__anext__())` would itself hang waiting for the cancel to land
+    (observed: a stalled run froze for minutes despite the timeout). Reading a
+    queue is cleanly cancellable regardless of what the upstream read is doing, so
+    the timeout is guaranteed; a producer that won't die is abandoned (it errors
+    out on its own eventually) — the user is unblocked either way.
+    `CancelledError` (client disconnect) inherits `BaseException`, so it
+    propagates untouched rather than becoming a spurious error event.
     """
+    _RETRY_MSG = "Sorry — I hit a problem reaching the model. Please try that again."
+    _EVENT, _DONE, _ERROR = "event", "done", "error"
+
+    async def _produce(q: asyncio.Queue[tuple[str, Any]]) -> None:
+        try:
+            async for ev in stream:
+                await q.put((_EVENT, ev))
+            await q.put((_DONE, None))
+        except asyncio.CancelledError:
+            raise  # cooperative cancellation (client disconnect / our cleanup)
+        except BaseException:  # noqa: BLE001
+            # Catch EVERYTHING else — not just `Exception`. The anthropic/httpx
+            # streaming path on 3.14 can surface a provider failure as a
+            # `BaseExceptionGroup` (from an anyio task group), which `except
+            # Exception` misses; it would then abort the SSE abruptly (a raw
+            # "connection error") instead of our clean, retryable RUN_ERROR.
+            logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
+            await q.put((_ERROR, None))
+
     async with lock:
         with using_session(session_id):
+            queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+            producer = asyncio.create_task(_produce(queue))
             try:
-                async for event in stream:
-                    yield event
-            except Exception:
-                logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=(
-                        "Sorry — I hit a problem reaching the model. "
-                        "Please try that again."
-                    ),
-                )
+                while True:
+                    try:
+                        kind, payload = await asyncio.wait_for(
+                            queue.get(), timeout=_SSE_INACTIVITY_TIMEOUT_S
+                        )
+                    except TimeoutError:
+                        logger.error(
+                            "Agent run stalled — no events for %.0fs — RUN_ERROR",
+                            _SSE_INACTIVITY_TIMEOUT_S,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR, message=_RETRY_MSG
+                        )
+                        return
+                    if kind == _EVENT:
+                        yield payload
+                    elif kind == _DONE:
+                        return
+                    else:  # _ERROR (already logged with traceback in the producer)
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR, message=_RETRY_MSG
+                        )
+                        return
+            finally:
+                # Best-effort: request cancellation and give it a brief moment,
+                # but never block the response on a read that won't cancel.
+                producer.cancel()
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(producer, timeout=0.5)

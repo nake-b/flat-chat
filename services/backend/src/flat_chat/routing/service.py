@@ -1,8 +1,8 @@
 """RoutingService — per-listing travel time from an anchor, car or transit.
 
-Orchestrates two thin clients (`OsrmClient` car, `MotisClient` transit) over the
-active result set. The anchor + mode + optional cutoff arrive as a
-`TravelTimeLens` (already resolved to coordinates by the caller):
+Orchestrates two thin clients (`OsrmClient` car, `MotisClient` transit) over a
+set of listings. The neutral core method is `travel_times(markers, anchor, mode,
+max_minutes)` — it takes only what the routing needs (no lens):
 
   - **car** → `OsrmClient.table` (one anchor → many listings in one matrix).
   - **transit** → `MotisClient.one_to_all` gives anchor→stop minutes for EVERY
@@ -11,15 +11,22 @@ active result set. The anchor + mode + optional cutoff arrive as a
     Only stops within `CAP_LAST_MILE_WALK_M` count; listings with no reachable
     stop in range are absent (rendered "no data" / dropped under a cutoff).
 
-Returned values are **minutes** (rounded). Engine failures raise `RoutingError`
-so the calling tool can degrade gracefully. Transit mode also stamps
-`lens.schedule_stale` / `lens.schedule_as_of` from the loaded MOTIS feed window,
-so the caller can surface the schedule's age; car mode leaves them untouched.
+`travel_times` returns a `TravelTimeResult` — `{marker_id: minutes}` (rounded)
+plus the transit-schedule freshness (`schedule_stale` / `schedule_as_of`) as
+DATA, not by mutating its argument. `resolve(markers, lens)` is a thin
+`LensValueProvider` adapter over it: it unpacks the `TravelTimeLens`, calls
+`travel_times`, and stamps the freshness back onto the lens (which the lens layer
+reads afterwards). So the point-to-point proximity tools call `travel_times`
+directly without ever constructing a lens.
+
+Engine failures raise `RoutingError` so the calling tool can degrade gracefully.
 
 See `agent-compound-docs/decisions/travel-time-routing.md`.
 """
 
 from __future__ import annotations
+
+from typing import NamedTuple
 
 from flat_chat.listings import thresholds
 from flat_chat.listings.context import Anchor, Marker
@@ -32,6 +39,20 @@ from flat_chat.routing.osrm import OsrmClient
 # pre-filter (cheap reject before the equirectangular distance).
 _LAT_DEG_PER_M = 1.0 / 111_000.0
 _LON_DEG_PER_M = 1.0 / 67_000.0
+
+
+class TravelTimeResult(NamedTuple):
+    """The result of a `travel_times` call: `{marker_id: minutes}` (rounded) plus
+    the transit-schedule freshness carried as DATA. `schedule_stale` /
+    `schedule_as_of` are set from the loaded MOTIS feed window on the transit path
+    (so a caller can say "schedule as of <date>"); both stay defaulted for car
+    mode. Returning freshness here — rather than mutating a lens — keeps the core
+    method free of the lens type; `resolve` copies it onto the lens for the lens
+    layer."""
+
+    values: dict[str, float]
+    schedule_stale: bool = False
+    schedule_as_of: str | None = None
 
 
 class RoutingService:
@@ -47,38 +68,52 @@ class RoutingService:
         Delegates to `MotisClient` so the tool + health endpoint share it."""
         return await self._motis.feed_window()
 
-    async def resolve(
-        self, markers: list[Marker], lens: ActiveLens
-    ) -> dict[str, float]:
-        """Return `{marker_id: minutes}` from the anchor to each marker.
+    async def travel_times(
+        self,
+        markers: list[Marker],
+        anchor: Anchor,
+        mode: str,
+        max_minutes: int | None = None,
+    ) -> TravelTimeResult:
+        """Route each marker to `anchor` — the neutral core (no lens).
 
-        Implements the `LensValueProvider` Protocol (hence the `ActiveLens` param);
-        the lens layer only ever routes a `travel_time` lens here, so narrow to
-        `TravelTimeLens` up front. Unreachable / unrouted markers are simply absent
-        from the dict. Raises `RoutingError` if the engine is unreachable or the
-        response is malformed. Transit mode stamps `lens.schedule_stale` /
-        `lens.schedule_as_of`."""
-        assert isinstance(lens, TravelTimeLens)
+        Returns a `TravelTimeResult`: `{marker_id: minutes}` plus the transit
+        schedule freshness. Unreachable / unrouted markers are simply absent from
+        the values dict. Raises `RoutingError` if the engine is unreachable or the
+        response is malformed. Car mode leaves the freshness defaulted."""
         # Markers always carry coordinates (search drops null-coordinate rows),
         # but guard anyway so a bad row can't desync a positional response.
         usable = [m for m in markers if m.lat is not None and m.lng is not None]
         if not usable:
-            return {}
+            return TravelTimeResult({})
 
+        if mode == "car":
+            return TravelTimeResult(await self._osrm.table(anchor, usable))
+        return await self._transit(usable, anchor, max_minutes)
+
+    async def resolve(
+        self, markers: list[Marker], lens: ActiveLens
+    ) -> dict[str, float]:
+        """`LensValueProvider` adapter over `travel_times` — `{marker_id: minutes}`.
+
+        The lens layer only ever routes a `travel_time` lens here, so narrow to
+        `TravelTimeLens` up front, unpack it into the core call, and stamp the
+        returned schedule freshness back onto the lens (the lens layer reads
+        `lens.schedule_stale` / `lens.schedule_as_of` afterwards to caption the
+        legend)."""
+        assert isinstance(lens, TravelTimeLens)
         anchor = Anchor(lens.anchor_label, lens.anchor_lat, lens.anchor_lng)
-        if lens.mode == "car":
-            return await self._osrm.table(anchor, usable)
-        return await self._transit(usable, lens, anchor)
+        result = await self.travel_times(markers, anchor, lens.mode, lens.max_minutes)
+        lens.schedule_stale = result.schedule_stale
+        lens.schedule_as_of = result.schedule_as_of
+        return result.values
 
     async def _transit(
-        self, markers: list[Marker], lens: TravelTimeLens, anchor: Anchor
-    ) -> dict[str, float]:
-        stops, departure = await self._motis.one_to_all(anchor, lens.max_minutes)
-        lens.schedule_stale = departure.stale
-        lens.schedule_as_of = departure.as_of
-        if not stops:
-            return {}
-        return _last_mile(markers, stops)
+        self, markers: list[Marker], anchor: Anchor, max_minutes: int | None
+    ) -> TravelTimeResult:
+        stops, departure = await self._motis.one_to_all(anchor, max_minutes)
+        values = _last_mile(markers, stops) if stops else {}
+        return TravelTimeResult(values, departure.stale, departure.as_of)
 
 
 def _last_mile(markers: list[Marker], stops: list[ReachableStop]) -> dict[str, float]:
