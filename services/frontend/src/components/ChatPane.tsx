@@ -1,5 +1,4 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
@@ -7,11 +6,7 @@ import { CopilotChat } from "@copilotkit/react-ui";
 import { AccountMenu } from "./AccountMenu";
 import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import { useSidebarOpen } from "../hooks/useSidebarOpen";
-import {
-  useEndOfMessagesSlot,
-  useToolStatusPills,
-  useThinkingPillInStream,
-} from "../hooks/useToolStatus";
+import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
 import { useRecovery } from "../state/recovery";
 import { useRunError } from "../state/runError";
 import {
@@ -110,10 +105,6 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
       );
     }
   };
-  // Render the error banner at the END of the message stream (like a new
-  // message), not pinned to the top of the pane. Same portal-slot mechanism as
-  // the Thinking pill.
-  const errorSlot = useEndOfMessagesSlot(!!runErrorMessage, "data-fc-error-slot");
 
   // Show starters only while the thread is empty AND we already know the
   // history (`historyLoaded`). On a resumed thread CopilotKit mounts with
@@ -268,36 +259,7 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
         </div>
       ) : null}
 
-      {errorSlot && runErrorMessage
-        ? createPortal(
-            <div
-              role="alert"
-              className="my-3 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm"
-            >
-              <span className="text-ink-soft">{runErrorMessage}</span>
-              <span className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={retryLastTurn}
-                  className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
-                >
-                  Retry
-                </button>
-                <button
-                  type="button"
-                  onClick={clearRunError}
-                  aria-label="Dismiss error"
-                  className="px-1 text-ink-ghost transition-colors hover:text-ink"
-                >
-                  ×
-                </button>
-              </span>
-            </div>,
-            errorSlot,
-          )
-        : null}
-
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <CopilotChat
           className="h-full"
           markdownTagRenderers={markdownTagRenderers}
@@ -308,6 +270,40 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
           }}
         />
         {thinkingPill}
+
+        {/* Run-error banner — an OVERLAY at the bottom of the message area, just
+            above the composer. Deliberately NOT injected into
+            `.copilotKitMessagesContainer` (a React-managed DOM tree): a previous
+            version portalled it in there, and mutating CopilotKit's own children
+            corrupted message ordering (a live "Searching…" pill jumping above
+            older tool results). Rendering it as our own absolutely-positioned
+            sibling keeps it visually at the bottom, like a fresh notice, without
+            touching CopilotKit's DOM. */}
+        {runErrorMessage ? (
+          <div
+            role="alert"
+            className="absolute inset-x-3 bottom-20 z-20 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm shadow-md backdrop-blur-sm"
+          >
+            <span className="text-ink-soft">{runErrorMessage}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={retryLastTurn}
+                className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={clearRunError}
+                aria-label="Dismiss error"
+                className="px-1 text-ink-ghost transition-colors hover:text-ink"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
