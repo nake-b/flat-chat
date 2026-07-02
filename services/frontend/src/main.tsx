@@ -145,12 +145,15 @@ function Bootstrap() {
   return (
     <CopilotKit
       key={conversationId}
-      // CopilotKit requires *something* in `runtimeUrl` even in
-      // `agents__unsafe_dev_only` mode — it's never hit (the HttpAgent owns the
-      // wire) but the provider's runtime client throws at construction without it.
+      // CopilotKit requires *something* in `runtimeUrl` even with
+      // `selfManagedAgents` — it's never hit (the HttpAgent owns the wire) but
+      // the provider's runtime client throws at construction without it.
       runtimeUrl="/api/agent"
       agent={AGENT_NAME}
-      agents__unsafe_dev_only={{ [AGENT_NAME]: agent }}
+      // `selfManagedAgents` is the documented production path for driving an
+      // AG-UI agent directly (auth stays on our backend via the JWT cookie) —
+      // the drop-in successor to the dev-only `agents__unsafe_dev_only` alias.
+      selfManagedAgents={{ [AGENT_NAME]: agent }}
       showDevConsole={false}
     >
       <ConversationRecovery conversationId={conversationId} resumed={resumed} />
