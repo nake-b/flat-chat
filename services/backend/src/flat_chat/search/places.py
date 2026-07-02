@@ -11,10 +11,13 @@ migration) that `UNION ALL`s the named source tables and composes the opaque
 `place_ref` (`'<kind>:<src_id>'`). The view owns the table↔kind mapping; this
 service never references the underlying tables.
 
-Resolution uses `pg_trgm`: `name % :q` (the `%` similarity operator, served
-by the per-base-table GIN trigram indexes) plus `similarity(name, :q)` for
-ranking. `centroid` lat/lon are for agent display only — the actual distance
-search uses the full geometry, not the centroid.
+Resolution uses `pg_trgm`: the WHERE widens `name % :q` (similarity) with
+`name %> :q` (word similarity) so short abbreviations reach the candidate set,
+and ranking goes `priority` (curated campuses) → score bucket → `ST_Dimension`
+(area over coincident point) → exact score. Each candidate carries its shape
+(area/line/point) and containing neighbourhood so the agent can pick the right
+one rather than blindly taking rank #1. `centroid` lat/lon are for agent display
+only — the actual distance search uses the full geometry, not the centroid.
 """
 
 from __future__ import annotations
@@ -25,11 +28,11 @@ from dataclasses import dataclass
 
 from geoalchemy2 import Geography
 from geoalchemy2 import functions as geo_func
-from sqlalchemy import cast, func, select
+from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.listings.context import Anchor
-from flat_chat.listings.models import named_places
+from flat_chat.listings.models import named_places, ortsteile
 from flat_chat.listings.overlays import (
     OVERLAY_CLUSTER_RADIUS_M,
     OVERLAY_COORD_DIGITS,
@@ -42,9 +45,16 @@ from flat_chat.listings.overlays import (
 logger = logging.getLogger(__name__)
 
 # A name search returns at most this many candidates for the agent to pick
-# from — small enough to stay cheap in the prompt, large enough to
-# disambiguate (e.g. several "Stadtpark"s).
-LOCATE_LIMIT = 5
+# from — small enough to stay cheap in the prompt, large enough to give the
+# agent a real menu to disambiguate over (several "Stadtpark"s; the park vs the
+# same-named bus stop; the three HU campuses).
+LOCATE_LIMIT = 8
+
+# ST_Dimension → a human/agent-legible shape word. The agent uses this to
+# prefer an *area* (a park/campus polygon you can search within) over a
+# coincident *point* (a same-named transit stop) for "near a green space"-type
+# queries. See the `locate_place` docstring + tool protocol.
+_GEOM_KIND_BY_DIM = {2: "area", 1: "line", 0: "point"}
 
 
 @dataclass(slots=True, kw_only=True)
@@ -59,6 +69,13 @@ class PlaceCandidate:
     description: str | None
     lat: float | None
     lon: float | None
+    # "area" | "line" | "point" — the geometry's dimensionality, so the agent
+    # can prefer a searchable area over a coincident point.
+    geom_kind: str
+    # Containing Berlin neighbourhood (Ortsteil), or None if outside Berlin /
+    # unresolved — a locality hint that helps the agent and user tell same-named
+    # places apart.
+    locality: str | None
 
 
 class PlaceService:
@@ -70,20 +87,51 @@ class PlaceService:
     async def locate(self, name: str) -> list[PlaceCandidate]:
         """Return up to LOCATE_LIMIT candidates whose name fuzzy-matches `name`.
 
-        Empty / whitespace-only input returns []. Ordered by descending
-        trigram similarity. `lat`/`lon` are the geometry centroid (display
-        only — the real search uses the full geometry via `near_place_ref`).
+        Empty / whitespace-only input returns []. Each candidate carries its
+        shape (`geom_kind`: area/line/point) and containing neighbourhood
+        (`locality`) so the agent can pick the right one for the user's query —
+        not just rank #1. `lat`/`lon` are the geometry centroid (display only —
+        the real search uses the full geometry via `near_place_ref`).
+
+        Matching + ranking:
+          - WHERE widens `name % q` (similarity ≥ 0.3) with `name %> q` (word
+            similarity), so short abbreviations ("HU", "TU") and multi-word
+            queries reach the candidate set — plain `similarity('HU', 'HU Berlin
+            – Campus Mitte')` = 0.13 is below the `%` threshold and would drop
+            the row entirely. Word similarity feeds the rank too (the score is
+            `greatest(similarity, word_similarity)`), but it flattens to 1.0 for
+            any name containing the query as a word (including out-of-Berlin
+            stops), so within the top bucket it can't discriminate — the
+            `ST_Dimension` tiebreak and the exact score do.
+          - ORDER BY `priority` (curated campuses lead), then a coarse score
+            bucket, then `ST_Dimension` (an area beats a coincident point inside
+            the bucket — surfaces "Volkspark Hasenheide" over the same-named bus
+            stop), then the exact score.
         """
         q = (name or "").strip()
         if not q:
             return []
 
         np = named_places.c
-        # `%` is the pg_trgm similarity operator (predicate pushdown hits the
-        # per-base-table GIN trgm indexes); `similarity(...)` gives the score
-        # to order by. Centroid via ST_Centroid so a line/polygon still yields
-        # a single display point.
         centroid = geo_func.ST_Centroid(np.geom)
+        dim = geo_func.ST_Dimension(np.geom)
+        # Best of full-string similarity and word similarity: full-string ranks
+        # full-name queries, word-similarity keeps abbreviations from being
+        # buried. Rounded to 1 decimal it forms coarse buckets so the
+        # dimension tiebreak (area > point) can fire across near-ties, not only
+        # exact ones (issue #38).
+        score = func.greatest(
+            func.similarity(np.name, q), func.word_similarity(q, np.name)
+        )
+        # Containing Berlin neighbourhood — correlated point-in-polygon against
+        # the ortsteil polygons. None outside Berlin (e.g. VBB stops in
+        # Brandenburg) — itself a useful "not local" signal.
+        locality_subq = (
+            select(ortsteile.c.name)
+            .where(geo_func.ST_Intersects(ortsteile.c.geom, centroid))
+            .limit(1)
+            .scalar_subquery()
+        )
         stmt = (
             select(
                 np.place_ref,
@@ -92,17 +140,20 @@ class PlaceService:
                 np.description,
                 geo_func.ST_Y(centroid).label("lat"),
                 geo_func.ST_X(centroid).label("lon"),
+                dim.label("dim"),
+                locality_subq.label("locality"),
             )
-            .where(np.name.op("%")(q))
-            # Tiebreak on geometry richness so a polygon/line beats a coincident
-            # point at equal name-match (ST_Dimension: polygon=2, line=1,
-            # point=0). Without it, a seed-alias POINT sitting on top of real
-            # building footprints can win an exact-name tie and the agent draws
-            # a dot instead of a shape. Helps near_place_ref search too (a
-            # footprint is a better ST_DWithin target than a point).
+            # `%` (similarity) OR `%>` (word similarity, the commutator of
+            # `q <% name`) — see the docstring. Both are served by the
+            # per-base-table GIN trgm indexes.
+            .where(np.name.op("%")(q) | np.name.op("%>")(q))
             .order_by(
-                func.similarity(np.name, q).desc(),
-                geo_func.ST_Dimension(np.geom).desc(),
+                np.priority.desc(),
+                # `round(v, s)` is numeric-only in Postgres; similarity/
+                # word_similarity are `real`, so cast before bucketing.
+                func.round(cast(score, Numeric), 1).desc(),
+                dim.desc(),
+                score.desc(),
             )
             .limit(LOCATE_LIMIT)
         )
@@ -115,20 +166,27 @@ class PlaceService:
                 description=r.description,
                 lat=r.lat,
                 lon=r.lon,
+                geom_kind=_GEOM_KIND_BY_DIM.get(r.dim, "point"),
+                locality=r.locality,
             )
             for r in rows
         ]
 
     async def anchor_point(self, place_ref: str) -> Anchor | None:
-        """Resolve a `place_ref` to an `Anchor(label, lat, lon)` — the anchor for
-        a travel-time / distance lens.
+        """Resolve a `place_ref` to an `Anchor(label, lat, lon)` — the single
+        point a travel-time / distance lens routes to.
 
-        Returns the place's name and its geometry centroid (a single point even
-        for a line/polygon, via `ST_Centroid`). Used by the lens tools to feed
-        the OSRM/MOTIS engines. `None` for an unknown/garbage ref. The
-        centroid is a fine anchor: seed-alias points sit on their target, and a
-        polygon's centroid is its middle — both snap to the nearest road/stop at
-        the engine."""
+        A routing engine (OSRM/MOTIS) needs ONE destination coordinate, so we
+        reduce the place to a point. Prefer the curated `anchor_geom` (a
+        campus's MAIN building) when present — otherwise the footprint centroid,
+        which for a sprawling multi-building campus is its middle and can sit far
+        from any building. `COALESCE(anchor_geom, ST_Centroid(geom))` gives the
+        main building for curated campuses and the centroid for everything else.
+        `None` for an unknown/garbage ref.
+
+        (The straight-line DISTANCE lens does NOT use this — it measures to the
+        full geometry via `ST_Distance` in `DistanceService`; this anchor only
+        feeds the routing engines and the drawn anchor marker.)"""
         from .service import _parse_place_ref  # same package; no import cycle
 
         parsed = _parse_place_ref(place_ref)
@@ -137,13 +195,13 @@ class PlaceService:
         kind, src_id = parsed
 
         np = named_places.c
-        centroid = geo_func.ST_Centroid(np.geom)
+        anchor = geo_func.ST_Centroid(func.coalesce(np.anchor_geom, np.geom))
         row = (
             await self.db.execute(
                 select(
                     np.name,
-                    geo_func.ST_Y(centroid).label("lat"),
-                    geo_func.ST_X(centroid).label("lon"),
+                    geo_func.ST_Y(anchor).label("lat"),
+                    geo_func.ST_X(anchor).label("lon"),
                 )
                 .where(np.kind == kind, np.src_id == src_id)
                 .limit(1)

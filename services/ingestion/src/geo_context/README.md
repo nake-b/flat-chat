@@ -88,7 +88,36 @@ docker compose --profile geo-context run --rm geo-context \
 # Skip GTFS (handy when iterating on WFS aliases):
 docker compose --profile geo-context run --rm geo-context \
     python -m geo_context.run --skip-gtfs
+
+# Skip the curated university-campus gazetteer:
+docker compose --profile geo-context run --rm geo-context \
+    python -m geo_context.run --skip-universities
 ```
+
+### Curated university campuses (`curated_places`)
+
+`curated_places` is an editorially-curated gazetteer arm of `world.named_places`
+(the `locate_place` source) for universities — whose buildings are scattered
+across many same-named `landmarks` rows, so raw resolution picks a random annex
+and abbreviations ("TU"/"HU") fall below the trigram threshold. Its geometry is
+**footprint-derived but frozen** (G5):
+
+```bash
+# 1. Edit selectors (name_pattern + bbox per campus) — the editorial input:
+services/ingestion/src/geo_context/campus_sources.yaml
+
+# 2. Regenerate the frozen geometry (unions the real landmark footprints into a
+#    MultiPolygon of the actual buildings — no convex hull. Review the diff):
+python -m geo_context.author_campuses            # writes university_seed.yaml
+python -m geo_context.author_campuses --check     # report only, no write
+
+# 3. university_seed.yaml is loaded into world.curated_places by the
+#    geo-context loader (_run_universities), which runs as part of the profile
+#    and can be skipped with --skip-universities.
+```
+
+Re-authoring is a deliberate human step (edit selectors → re-run → review diff),
+not a per-ingest recompute — see `agent-compound-docs/decisions/named-place-search.md`.
 
 ### Production / scheduled
 
@@ -115,6 +144,7 @@ Suggested cadence:
 | `disabled_parking` | gdi.berlin.de/services/wfs/behindertenparkplaetze | dl-de/by-2-0 | monthly |
 | `landmarks` (ALKIS) | gdi.berlin.de/services/wfs/alkis_gebaeude | dl-de/zero-2-0 | yearly |
 | `landmarks` (OSM) | overpass-api.de (Overpass) | ODbL | — |
+| `curated_places` (universities) | derived from `landmarks` via `author_campuses.py` (frozen `university_seed.yaml`) | — | on edit |
 | `bezirke` | gdi.berlin.de/services/wfs/alkis_bezirke | dl-de/zero-2-0 | rarely |
 | `ortsteile` | gdi.berlin.de/services/wfs/alkis_ortsteile | dl-de/zero-2-0 | rarely |
 | `inner_city_zone` (Umweltzone) | gdi.berlin.de/services/wfs/umweltzone | dl-de/zero-2-0 | rarely |

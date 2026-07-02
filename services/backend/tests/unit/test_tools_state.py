@@ -235,6 +235,8 @@ def test_locate_place_returns_candidates_and_does_not_mutate_state():
         description=None,
         lat=52.514,
         lon=13.35,
+        geom_kind="area",
+        locality="Tiergarten",
     )
     place = _MockPlaceService([candidate])
     state = SessionState()

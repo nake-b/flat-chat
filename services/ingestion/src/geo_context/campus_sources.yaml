@@ -1,0 +1,84 @@
+# Editorial selectors for the curated university-campus gazetteer.
+#
+# This file is the HUMAN input to `python -m geo_context.author_campuses`, which
+# unions the real `world.landmarks` footprints matching each `name_pattern`
+# whose centroid falls inside `bbox` into ONE MultiPolygon of the actual
+# building shapes (ST_Union, deliberately NOT a convex hull — a hull would wrap
+# one fat blob around everything, swallowing streets and non-campus buildings),
+# and writes the frozen geometry into `university_seed.yaml`. The loader
+# (`_run_universities`) then writes that into `world.curated_places`.
+#
+# Why bbox + pattern (not clustering): a university's buildings are scattered
+# under one name (TU spans ~9 km incl. far institutes; HU spans Mitte↔Adlershof
+# ~16 km), and geometry alone can't say which cluster is "the campus" or split
+# HU-Nord from HU-Mitte (~1.5 km apart). The bbox encodes that editorial call.
+#
+# `name` embeds BOTH the abbreviation and the full form so word-similarity
+# matching resolves "TU", "HU", "Freie Universität" and "Humboldt" alike.
+# `bbox` = [min_lon, min_lat, max_lon, max_lat] (EPSG:4326), tight around the
+# intended campus. Re-run the authoring script and review the diff after edits.
+#
+# NB: Alice Salomon HS (ASH, Hellersdorf) is intentionally absent — it has no
+# footprint in `world.landmarks`, so there is nothing to derive geometry from.
+
+campuses:
+  - name: "TU Berlin – Technische Universität Berlin – Campus Charlottenburg"
+    description: "Main campus of the Technical University, Straße des 17. Juni."
+    # Widened to catch functionally-named TU buildings (Hauptgebäude der TU,
+    # Architekturfakultät, Institut für …, Mathematikgebäude, Studentenhaus
+    # Mensa, Volkswagen-Haus Universitätsbibliothek) — not just rows literally
+    # named "Technische Universität Berlin". The tight bbox keeps the non-TU
+    # neighbours in the same area out (UdK, the Zoo, embassy, theatres, schools).
+    # Single-quoted so the \y word-boundaries reach Postgres verbatim.
+    name_pattern: 'Technische Universität|\yTU\y|Institute? für|Architekturfakultät|Mathematikgebäude|Elektronische Institute|Studentenhaus Mensa|Volkswagen-Haus'
+    bbox: [13.318, 52.508, 13.340, 52.516]
+    # Main-building anchor for the travel-time lens (routes here, not to the
+    # centroid of the sprawling campus).
+    anchor_pattern: 'Hauptgebäude der TU'
+
+  - name: "FU Berlin – Freie Universität Berlin – Campus Dahlem"
+    description: "Main campus of the Free University, in Dahlem (Steglitz-Zehlendorf)."
+    name_pattern: "Freie Universität|^FU "
+    bbox: [13.270, 52.443, 13.300, 52.463]
+    anchor_pattern: "^Freie Universität Berlin$"
+
+  - name: "HU Berlin – Humboldt-Universität zu Berlin – Campus Mitte"
+    description: "Humboldt University's historic main campus, Unter den Linden."
+    name_pattern: "Humboldt-Universität|^HU Berlin"
+    bbox: [13.385, 52.510, 13.400, 52.522]
+    anchor_pattern: "^Humboldt-Universität zu Berlin$"
+
+  - name: "HU Berlin – Humboldt-Universität zu Berlin – Campus Nord"
+    description: "Humboldt University's life-sciences campus, Invalidenstraße (incl. Naturkunde)."
+    name_pattern: "Humboldt-Universität|^HU Berlin"
+    bbox: [13.376, 52.523, 13.387, 52.534]
+
+  - name: "HU Berlin – Humboldt-Universität zu Berlin – Campus Adlershof"
+    description: "Humboldt University's natural-sciences campus in Adlershof, Treptow-Köpenick."
+    name_pattern: "Humboldt-Universität|^HU Berlin"
+    bbox: [13.524, 52.427, 13.540, 52.436]
+
+  - name: "UdK Berlin – Universität der Künste Berlin"
+    description: "University of the Arts, main site on Hardenbergstraße, Charlottenburg."
+    name_pattern: "Universität der Künste|^UdK"
+    bbox: [13.320, 52.507, 13.332, 52.516]
+
+  - name: "HTW Berlin – Hochschule für Technik und Wirtschaft – Campus Wilhelminenhof"
+    description: "HTW's main campus in Oberschöneweide, Treptow-Köpenick."
+    name_pattern: "Hochschule für Technik und Wirtschaft|^HTW"
+    bbox: [13.522, 52.489, 13.529, 52.496]
+
+  - name: "HWR Berlin – Hochschule für Wirtschaft und Recht – Campus Schöneberg"
+    description: "HWR's Schöneberg campus, Badensche Straße."
+    name_pattern: "Hochschule für Wirtschaft und Recht|^HWR"
+    bbox: [13.331, 52.482, 13.341, 52.487]
+
+  - name: "BHT – Berliner Hochschule für Technik (ehem. Beuth) – Campus Wedding"
+    description: "Berlin University of Applied Sciences (formerly Beuth), Luxemburger Straße, Wedding."
+    name_pattern: "Berliner Hochschule für Technik|Beuth"
+    bbox: [13.349, 52.542, 13.357, 52.547]
+
+  - name: "Charité – Universitätsmedizin Berlin – Campus Mitte"
+    description: "Charité's central campus in Mitte (the flagship university-medicine site)."
+    name_pattern: "Charité"
+    bbox: [13.373, 52.524, 13.384, 52.528]

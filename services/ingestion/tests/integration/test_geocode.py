@@ -53,6 +53,11 @@ def _bootstrap(url: str) -> None:
         conn.execute(sa.text("CREATE SCHEMA public"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS postgis"))
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # pg_trgm backs the GIN trigram indexes the geo-context migrations
+        # create (0007/0008/0009). The DROP SCHEMA public CASCADE above removes
+        # it, so recreate it — otherwise `alembic upgrade head` fails at 0007
+        # with "operator class gin_trgm_ops does not exist".
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         conn.execute(sa.text("CREATE SCHEMA world"))
         conn.execute(sa.text("CREATE SCHEMA app"))
     engine.dispose()
@@ -76,6 +81,15 @@ def engine() -> sa.Engine:
         _TEST_URL, connect_args={"options": "-csearch_path=world,public"}
     )
     yield eng
+    # Leave the shared test DB clean: this module COMMITS listings (real
+    # geocoder writes, not rolled back), and the per-test `conn` fixture only
+    # truncates at each test's START — so the last test's rows would otherwise
+    # leak into modules that run after us (e.g. gold enrichers scanning
+    # `listings`). Truncate on teardown so we're a good citizen on the
+    # session-shared database.
+    with eng.connect() as c:
+        c.execute(sa.text("TRUNCATE world.listings CASCADE"))
+        c.commit()
     eng.dispose()
 
 

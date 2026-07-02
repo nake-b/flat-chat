@@ -561,5 +561,28 @@ named_places = Table(
     Column("name", Text),
     Column("description", Text),
     Column("geom", Geometry(srid=4326)),
+    # Editorial rank boost: curated_places rows are 1, every raw arm is 0, so
+    # `PlaceService.locate` orders curated campuses above same-named footprints.
+    # Added by the 0009 migration (a column on every UNION arm of the view).
+    Column("priority", Integer),
+    # Optional representative point for a curated place (a campus's MAIN
+    # building), synthesized by the view from curated_places.anchor_lat/lon;
+    # NULL for every non-curated arm. `PlaceService.anchor_point` COALESCEs it
+    # with the footprint centroid so a travel-time lens routes to the main
+    # building. See the 0009 migration.
+    Column("anchor_geom", Geometry(srid=4326)),
+    schema="world",
+)
+
+# `world.ortsteile` — Berlin neighbourhood polygons (ingestion-owned, geo-context
+# v2). Read SELECT-only, and only for the `locate_place` locality label: a
+# point-in-polygon lookup that tells the agent which neighbourhood a candidate
+# sits in ("Volkspark Hasenheide — park · area · Neukölln"). Same dedicated
+# `view_metadata` so it stays out of `create_all` / the drift test.
+ortsteile = Table(
+    "ortsteile",
+    view_metadata,
+    Column("name", Text),
+    Column("geom", Geometry(srid=4326)),
     schema="world",
 )

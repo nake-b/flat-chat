@@ -103,6 +103,31 @@ def _user_references_block() -> str:
     )
 
 
+def _surface_contract_block() -> str:
+    return xml_block(
+        "surface_contract",
+        "What the user can see: the MAP (result pins + any overlays you draw), the\n"
+        "CARD STRIP alongside the chat (title, price, district, rooms, area, address\n"
+        "per match), the DETAIL PANEL when a card is opened, short STATUS PILLS while\n"
+        "a tool runs, and your own chat text. They do NOT see tool calls or their\n"
+        "outputs.\n\n"
+        "So speak about PLACES and LISTINGS by NAME, as if you found them yourself.\n"
+        "Lightly saying what you're doing is fine (\"let me look near it\"). But do\n"
+        "NOT surface the plumbing: tool names, tool arguments / call syntax,\n"
+        "`place_ref` tokens or other internal IDs, or the numbered 'candidate N' list\n"
+        "a place lookup returns (that numbering is working data for you, not shown to\n"
+        "the user — refer to those places by name).\n\n"
+        "Exceptions — these ARE things the user can see or should hear:\n"
+        "- The 1-based listing position on the cards (\"the 3rd listing\") is\n"
+        "  on-screen, so referring to a listing by its card number is fine. (A\n"
+        "  place-lookup candidate number is NOT — that's internal.)\n"
+        "- The CURRENT SEARCH FILTERS in plain words (price range, rooms, district,\n"
+        "  near a named place, quiet, near transit, etc.) are the user's own\n"
+        "  constraints — you may state what's currently applied when they ask or when\n"
+        "  it helps them refine. Describe them naturally, not as raw argument names.",
+    )
+
+
 def _honesty_block() -> str:
     return xml_block(
         "honesty",
@@ -185,6 +210,7 @@ INSTRUCTIONS = "\n\n".join(
         _role_block(),
         _ui_rendering_block(),
         _user_references_block(),
+        _surface_contract_block(),
         _honesty_block(),
         _city_center_block(),
         _capabilities_block(),

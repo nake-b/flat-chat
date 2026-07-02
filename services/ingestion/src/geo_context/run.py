@@ -26,6 +26,7 @@ from sqlalchemy import text
 from db import engine
 
 from .config import Catalog, WfsDataset, load_catalog
+from .extract.curated import load_curated_frame
 from .extract.gtfs import VbbGtfsClient
 from .extract.osm import OverpassClient
 from .extract.seed import load_seed_frame
@@ -175,6 +176,31 @@ def _run_seed() -> tuple[int, int]:
         return 0, 1
 
 
+def _run_universities() -> tuple[int, int]:
+    """REPLACE the curated `curated_places` gazetteer from `university_seed.yaml`.
+
+    Loads the frozen, footprint-derived campus geometries (authored once by
+    `python -m geo_context.author_campuses`) into `world.curated_places`. These
+    lead the `locate_place` candidate menu via the view's `priority=1` boost, so
+    "near TU / FU / HU" resolves to the campus rather than a random same-named
+    ALKIS footprint. Full-replace (TRUNCATE + write) is idempotent and correct —
+    the table holds only curated rows. Independent of `landmarks`, so it runs
+    even on a WFS/OSM-skipped pass.
+    """
+    try:
+        gdf = load_curated_frame()
+        if gdf.empty:
+            logger.warning("universities: no valid rows, skipping")
+            return 0, 0
+        with engine.begin() as conn:
+            _write_replace(conn, gdf, "curated_places", geom_type="Geometry")
+        logger.info("OK universities → curated_places (%d rows)", len(gdf))
+        return 1, 0
+    except Exception:
+        logger.error("FAIL universities (rolled back):\n%s", traceback.format_exc())
+        return 0, 1
+
+
 def _run_gtfs(catalog: Catalog) -> tuple[int, int]:
     if not catalog.gtfs.enabled:
         return 0, 0
@@ -234,6 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-seed", action="store_true", help="skip the curated landmark seed"
     )
+    parser.add_argument(
+        "--skip-universities",
+        action="store_true",
+        help="skip the curated university-campus gazetteer (curated_places)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -259,14 +290,22 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_seed and (only is None or "seed" in only):
         seed_ok, seed_fail = _run_seed()
 
+    # Curated university campuses full-replace their own `curated_places` table
+    # (independent of `landmarks`), so ordering vs WFS/OSM/seed is irrelevant —
+    # placed after the seed for readability.
+    uni_ok, uni_fail = (0, 0)
+    if not args.skip_universities and (only is None or "universities" in only):
+        uni_ok, uni_fail = _run_universities()
+
     gtfs_ok, gtfs_fail = (0, 0)
     if not args.skip_gtfs and (only is None or "gtfs" in only):
         gtfs_ok, gtfs_fail = _run_gtfs(catalog)
 
-    total_ok = wfs_ok + osm_ok + seed_ok + gtfs_ok
-    total_fail = wfs_fail + osm_fail + seed_fail + gtfs_fail
+    total_ok = wfs_ok + osm_ok + seed_ok + uni_ok + gtfs_ok
+    total_fail = wfs_fail + osm_fail + seed_fail + uni_fail + gtfs_fail
     logger.info(
-        "geo_context: %d ok, %d failed (wfs=%d/%d, osm=%d/%d, seed=%d/%d, gtfs=%d/%d)",
+        "geo_context: %d ok, %d failed "
+        "(wfs=%d/%d, osm=%d/%d, seed=%d/%d, universities=%d/%d, gtfs=%d/%d)",
         total_ok,
         total_fail,
         wfs_ok,
@@ -275,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
         osm_ok + osm_fail,
         seed_ok,
         seed_ok + seed_fail,
+        uni_ok,
+        uni_ok + uni_fail,
         gtfs_ok,
         gtfs_ok + gtfs_fail,
     )

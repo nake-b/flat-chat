@@ -159,22 +159,11 @@ seeds:
     geometry: "POINT(13.38452 52.52883)"
 
   # ---- Aliases (search-only) → point at the target's location ----
-  - name: TU Berlin
-    category: alias
-    description: "Alias → Technische Universität Berlin (Hauptgebäude, Charlottenburg)."
-    geometry: "POINT(13.3269 52.5125)"
-  - name: HU Berlin
-    category: alias
-    description: "Alias → Humboldt-Universität (Unter den Linden, Mitte)."
-    geometry: "POINT(13.3935 52.5179)"
-  - name: FU Berlin
-    category: alias
-    description: "Alias → Freie Universität Berlin (Dahlem)."
-    geometry: "POINT(13.2926 52.4527)"
-  - name: Charité
-    category: alias
-    description: "Alias → Charité – Universitätsmedizin (Campus Mitte)."
-    geometry: "POINT(13.3765 52.5266)"
+  # NB: university aliases (TU / HU / FU / Charité) moved to the curated
+  # university-campus gazetteer (`curated_places`, authored from real footprints
+  # via `author_campuses.py`) — they resolve there as priority campuses with a
+  # real shape, not a point. Don't re-add them here or they'd double up as
+  # lower-priority point candidates. See named-place-search.md.
   - name: Alex
     category: alias
     description: "Alias → Alexanderplatz."
