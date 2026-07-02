@@ -2,9 +2,11 @@
 #
 # This file is the HUMAN input to `python -m geo_context.author_campuses`, which
 # unions the real `world.landmarks` footprints matching each `name_pattern`
-# whose centroid falls inside `bbox`, convex-hulls them, and writes the frozen
-# geometry into `university_seed.yaml`. The loader (`_run_universities`) then
-# writes that into `world.curated_places`.
+# whose centroid falls inside `bbox` into ONE MultiPolygon of the actual
+# building shapes (ST_Union, deliberately NOT a convex hull — a hull would wrap
+# one fat blob around everything, swallowing streets and non-campus buildings),
+# and writes the frozen geometry into `university_seed.yaml`. The loader
+# (`_run_universities`) then writes that into `world.curated_places`.
 #
 # Why bbox + pattern (not clustering): a university's buildings are scattered
 # under one name (TU spans ~9 km incl. far institutes; HU spans Mitte↔Adlershof
