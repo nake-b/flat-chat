@@ -83,6 +83,41 @@ def test_resolve_measures_distance_to_geometry(async_db_url):
     assert out[on_id] < out[else_id]
 
 
+def test_distances_core_measures_to_geometry_without_a_lens(async_db_url):
+    # The neutral core `distances(markers, place_ref)` — what the proximity tools
+    # call — measures to the resolved SHAPE with no lens involved.
+    a = _listing_row(
+        latitude=52.501,
+        longitude=13.305,
+        location=WKTElement("POINT(13.305 52.501)", srid=4326),
+    )
+    seeds = [(a, _gold_row(a["id"]))]
+
+    async def body(session):
+        landmark_id = await session.scalar(
+            sa.text(
+                """
+                INSERT INTO world.landmarks (name, source, category, geom)
+                VALUES (
+                    'Spree', 'osm', 'river',
+                    ST_SetSRID(
+                        ST_GeomFromText('LINESTRING(13.30 52.50, 13.50 52.50)'),
+                        4326
+                    )
+                )
+                RETURNING id
+                """
+            )
+        )
+        return await DistanceService(session).distances(
+            [Marker(id=str(a["id"]), lat=52.501, lng=13.305)],
+            f"landmark:{landmark_id}",
+        )
+
+    out = _with_session(async_db_url, seeds, body)
+    assert out[str(a["id"])] < 300  # ~110 m to the LINE
+
+
 def test_resolve_malformed_ref_returns_empty(async_db_url):
     a = _listing_row(location=WKTElement("POINT(13.40 52.50)", srid=4326))
     seeds = [(a, _gold_row(a["id"]))]

@@ -8,10 +8,10 @@ the user has open (or a card by index) — against a single named destination:
 These are the point-to-point counterpart of the whole-set map LENSES
 (`chat/tools/lenses.py`): a lens colours/filters EVERY marker; these answer
 "how far is *this one* from X" in prose and touch nothing — no result set, no
-map, no active lens. That's why they reuse the same providers but build a
-TRANSIENT lens that is never stored in `deps.state`: both `DistanceService` and
-`RoutingService` expose `resolve(markers, lens) -> {id: value}`, so a
-single-listing query is just `resolve([one_marker], transient_lens)`.
+map, no active lens. They reuse the same providers but call the providers' NEUTRAL
+core methods directly — `DistanceService.distances(markers, place_ref)` and
+`RoutingService.travel_times(markers, anchor, mode)` — over a single marker. No
+lens is constructed: those are the lens layer's own vocabulary, not this tool's.
 
 The capability is `defer_loading=True` — it's a late-session, single-listing
 question many conversations never ask, so its tools + protocol prose stay OUT of
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import KW_ONLY, dataclass
+from typing import NamedTuple
 
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -35,7 +36,6 @@ from pydantic_ai.toolsets import AgentToolset
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.tools.emission import StateEmittingToolset
 from flat_chat.listings.context import Marker
-from flat_chat.listings.lenses import DistanceLens, TravelTimeLens
 from flat_chat.routing.errors import RoutingError
 
 logger = logging.getLogger(__name__)
@@ -93,39 +93,51 @@ def proximity_protocol_instructions() -> str:
     return _PROXIMITY_PROTOCOL
 
 
-def _resolve_origin(
-    ctx: RunContext[ChatDeps], from_index: int | None
-) -> tuple[Marker, str] | str:
-    """Resolve the origin listing to a `(marker, label)` pair, or guidance prose.
+class _OriginResult(NamedTuple):
+    """The resolved origin of a proximity query. `marker is None` signals a MISS —
+    `note` then holds guidance prose the caller returns verbatim so the agent can
+    steer the user. On a hit, `marker` is the origin listing and `note` is its
+    human label ("This apartment", "Listing #3") for the answer."""
+
+    marker: Marker | None
+    note: str
+
+
+def _resolve_origin(ctx: RunContext[ChatDeps], from_index: int | None) -> _OriginResult:
+    """Resolve the origin listing to an `_OriginResult` (marker + label), or a miss.
 
     `from_index` (1-based) picks a specific card; otherwise the origin is the
     listing the user has OPEN (`state.active_id`). If that listing isn't in the
     current markers (a later refinement dropped it) but its detail blob is still
-    open, fall back to the blob's own coordinates. Returns a plain string on any
-    miss — the caller returns it verbatim so the agent can guide the user."""
+    open, fall back to the blob's own coordinates. On any miss the marker is None
+    and `note` is guidance prose for the agent."""
     state = ctx.deps.state
     markers = state.result_markers
     if not markers:
-        return "No active search results yet. Run search_apartments first."
+        return _OriginResult(
+            None, "No active search results yet. Run search_apartments first."
+        )
 
     if from_index is not None:
         pos = from_index - 1
         if not (0 <= pos < len(markers)):
-            return (
+            return _OriginResult(
+                None,
                 f"There's no listing #{from_index} — the current result set has "
-                f"{len(markers)} listing(s) (1–{len(markers)})."
+                f"{len(markers)} listing(s) (1–{len(markers)}).",
             )
-        return markers[pos], f"Listing #{from_index}"
+        return _OriginResult(markers[pos], f"Listing #{from_index}")
 
     active_id = state.active_id
     if active_id is None:
-        return (
+        return _OriginResult(
+            None,
             "No listing is open right now, so I don't know which apartment you "
-            "mean. Open one first, or tell me which card by its number."
+            "mean. Open one first, or tell me which card by its number.",
         )
     for m in markers:
         if m.id == active_id:
-            return m, "This apartment"
+            return _OriginResult(m, "This apartment")
 
     # active_id set but not among the current markers — fall back to the open
     # listing's own coordinates (kept on the detail blob) so the query still
@@ -136,13 +148,14 @@ def _resolve_origin(
         and detail.latitude is not None
         and detail.longitude is not None
     ):
-        return (
+        return _OriginResult(
             Marker(id=active_id, lat=detail.latitude, lng=detail.longitude),
             "This apartment",
         )
-    return (
+    return _OriginResult(
+        None,
         "The listing you had open isn't in the current results anymore. Open one "
-        "from the current list (or give me a card number) and I'll measure from it."
+        "from the current list (or give me a card number) and I'll measure from it.",
     )
 
 
@@ -166,10 +179,9 @@ async def distance_to(
         from_index: Optional 1-based card number to measure FROM. Omit to use
             the listing the user currently has open (`active_id`).
     """
-    origin = _resolve_origin(ctx, from_index)
-    if isinstance(origin, str):
-        return origin
-    marker, origin_label = origin
+    marker, origin_label = _resolve_origin(ctx, from_index)
+    if marker is None:
+        return origin_label
 
     anchor = await ctx.deps.place_service.anchor_point(to_place_ref)
     if anchor is None:
@@ -178,15 +190,9 @@ async def distance_to(
             "first and pass one of the returned place_ref tokens."
         )
 
-    # Reuse the distance-lens provider with a TRANSIENT lens (never stored in
-    # state): it measures `marker` to the place's exact geometry via ST_Distance.
-    lens = DistanceLens(
-        anchor_label=anchor.label,
-        anchor_lat=anchor.lat,
-        anchor_lng=anchor.lon,
-        near_place_ref=to_place_ref,
-    )
-    values = await ctx.deps.distance_service.resolve([marker], lens)
+    # Neutral distance core (no lens): measure `marker` to the place's exact
+    # geometry via ST_Distance, resolved from the place_ref.
+    values = await ctx.deps.distance_service.distances([marker], to_place_ref)
     metres = values.get(marker.id)
     if metres is None:
         return (
@@ -220,10 +226,9 @@ async def travel_time_to(
         from_index: Optional 1-based card number to measure FROM. Omit to use
             the listing the user currently has open (`active_id`).
     """
-    origin = _resolve_origin(ctx, from_index)
-    if isinstance(origin, str):
-        return origin
-    marker, origin_label = origin
+    marker, origin_label = _resolve_origin(ctx, from_index)
+    if marker is None:
+        return origin_label
 
     anchor = await ctx.deps.place_service.anchor_point(to_place_ref)
     if anchor is None:
@@ -233,31 +238,26 @@ async def travel_time_to(
         )
 
     is_car = mode == "car"  # anything but "car" falls back to transit
-    lens_mode = "car" if is_car else "transit"
+    route_mode = "car" if is_car else "transit"
     how = "by car" if is_car else "by public transport"
 
-    # Reuse the travel-time provider with a TRANSIENT lens (never stored). One
-    # origin → one destination: for car a 1×1 OSRM matrix; for transit the MOTIS
-    # one-to-all + last-mile, same as the lens but over a single marker.
-    lens = TravelTimeLens(
-        anchor_label=anchor.label,
-        anchor_lat=anchor.lat,
-        anchor_lng=anchor.lon,
-        near_place_ref=to_place_ref,
-        mode=lens_mode,
-    )
+    # Neutral travel-time core (no lens). One origin → one destination: for car a
+    # 1×1 OSRM matrix; for transit the MOTIS one-to-all + last-mile over a single
+    # marker. Freshness comes back on the result, not by mutating an argument.
     try:
-        values = await ctx.deps.routing_service.resolve([marker], lens)
+        result = await ctx.deps.routing_service.travel_times(
+            [marker], anchor, route_mode
+        )
     except RoutingError as exc:
         # Routing is a fallible external dependency — answer gracefully rather
         # than failing the turn (mirrors the lens tool's degradation policy).
         logger.warning("travel_time_to failed: %s", exc)
         return (
-            f"I couldn't reach the {lens_mode} routing service to compute the "
+            f"I couldn't reach the {route_mode} routing service to compute the "
             f"travel time to {anchor.label}. Want me to try again in a moment?"
         )
 
-    minutes = values.get(marker.id)
+    minutes = result.values.get(marker.id)
     if minutes is None:
         return (
             f"{origin_label} has no reachable route to {anchor.label} {how} "
@@ -267,9 +267,9 @@ async def travel_time_to(
     # Transit only: if the MOTIS feed has lapsed the routing layer clamped the
     # departure and flagged the schedule's age — surface it like the lens tool.
     stale_note = ""
-    if lens.mode == "transit" and lens.schedule_stale and lens.schedule_as_of:
+    if not is_car and result.schedule_stale and result.schedule_as_of:
         stale_note = (
-            f" (Transit times reflect the timetable as of {lens.schedule_as_of}.)"
+            f" (Transit times reflect the timetable as of {result.schedule_as_of}.)"
         )
     return (
         f"{origin_label} is about {round(minutes)} min from {anchor.label} "

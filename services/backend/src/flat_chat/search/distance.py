@@ -1,15 +1,18 @@
 """DistanceService — straight-line distance from a place to each listing.
 
-The distance-LENS provider: given the active result-set markers and a
-`DistanceLens`, returns `{marker_id: metres}` measured geometry-precise to the
-place's exact shape (a line/polygon, not just its centroid) via PostGIS
-`ST_Distance`. Mirrors `SearchService`'s `near_place_ref` `ST_DWithin` path but
-returns the distance instead of filtering — no routing engine involved, which is
-what makes the lens abstraction demonstrably not coupled to travel-time.
+The neutral core is `distances(markers, place_ref)`: returns `{marker_id: metres}`
+measured geometry-precise to the place's exact shape (a line/polygon, not just its
+centroid) via PostGIS `ST_Distance`. Mirrors `SearchService`'s `near_place_ref`
+`ST_DWithin` path but returns the distance instead of filtering — no routing engine
+involved, which is what makes the lens abstraction demonstrably not coupled to
+travel-time.
 
-Agent-only (like `SearchService`/`PlaceService`). Same
-`resolve(markers, lens) -> {id: value}` shape as `RoutingService.resolve`, so the
-lens layer treats both as interchangeable providers.
+`resolve(markers, lens)` is a thin `LensValueProvider` adapter over it (unpacks the
+`DistanceLens`'s `near_place_ref`), so the lens layer treats this and
+`RoutingService` as interchangeable providers; the point-to-point proximity tools
+call `distances` directly without constructing a lens.
+
+Agent-only (like `SearchService`/`PlaceService`).
 """
 
 from __future__ import annotations
@@ -36,23 +39,19 @@ class DistanceService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def resolve(
-        self, markers: list[Marker], lens: ActiveLens
+    async def distances(
+        self, markers: list[Marker], place_ref: str
     ) -> dict[str, float]:
-        """`{marker_id: metres}` straight-line to the lens anchor's geometry.
+        """`{marker_id: metres}` straight-line to a named place's geometry — the
+        neutral core (a `place_ref`, no lens).
 
-        Implements the `LensValueProvider` Protocol (hence the `ActiveLens` param);
-        the lens layer only ever routes a `distance` lens here, so narrow to
-        `DistanceLens` up front. Distance is to the resolved SHAPE (correct for the
-        Spree LINE and the
+        Distance is to the resolved SHAPE (correct for the Spree LINE and the
         TU-campus POLYGON), matching the `near_place_ref` search filter. Markers
-        with no gold `location`, non-UUID ids, or an unknown/garbage
-        `near_place_ref` are simply absent from the dict. One query over the
-        result-set ids."""
-        assert isinstance(lens, DistanceLens)
-        if not markers or lens.near_place_ref is None:
+        with no gold `location`, non-UUID ids, or an unknown/garbage `place_ref`
+        are simply absent from the dict. One query over the marker ids."""
+        if not markers:
             return {}
-        parsed = _parse_place_ref(lens.near_place_ref)
+        parsed = _parse_place_ref(place_ref)
         if parsed is None:
             return {}
         kind, src_id = parsed
@@ -88,3 +87,16 @@ class DistanceService:
             )
         ).all()
         return {str(r.id): float(r.m) for r in rows if r.m is not None}
+
+    async def resolve(
+        self, markers: list[Marker], lens: ActiveLens
+    ) -> dict[str, float]:
+        """`LensValueProvider` adapter over `distances` — `{marker_id: metres}`.
+
+        The lens layer only ever routes a `distance` lens here, so narrow to
+        `DistanceLens` up front and unpack its `near_place_ref` into the core call
+        (a distance lens with no place_ref has nothing to measure to)."""
+        assert isinstance(lens, DistanceLens)
+        if lens.near_place_ref is None:
+            return {}
+        return await self.distances(markers, lens.near_place_ref)

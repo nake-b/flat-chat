@@ -24,22 +24,28 @@ from flat_chat.chat.tools import (
 )
 from flat_chat.listings.context import Anchor, ListingCard, ListingDetail, Marker
 from flat_chat.routing.errors import RoutingError
+from flat_chat.routing.service import TravelTimeResult
 from flat_chat.search.schemas import SearchParams
 
 
 class _StubDistance:
-    """Distance provider: `{id: metres}`. No routing, so it never errors."""
+    """Distance provider: `{id: metres}`. No routing, so it never errors. The tool
+    calls the neutral `distances(markers, place_ref)` core (no lens)."""
 
     def __init__(self, metres_by_id):
         self._m = metres_by_id
         self.calls: list[list[str]] = []
 
-    async def resolve(self, markers, lens):
+    async def distances(self, markers, place_ref):
         self.calls.append([m.id for m in markers])
         return dict(self._m)
 
 
 class _StubRouting:
+    """Travel-time provider. The tool calls the neutral `travel_times(markers,
+    anchor, mode, max_minutes)` core, which returns a `TravelTimeResult` carrying
+    the schedule freshness as DATA (no lens to mutate)."""
+
     def __init__(
         self, minutes_by_id, *, error=False, schedule_as_of=None, schedule_stale=False
     ):
@@ -47,17 +53,17 @@ class _StubRouting:
         self._error = error
         self._schedule_as_of = schedule_as_of
         self._schedule_stale = schedule_stale
-        self.last_lens = None
+        self.last_mode = None
+        self.last_anchor = None
 
-    async def resolve(self, markers, lens):
+    async def travel_times(self, markers, anchor, mode, max_minutes=None):
         if self._error:
             raise RoutingError("engine down")
-        # Mirror the real orchestrator: stamp the transit schedule freshness onto
-        # the (transient) lens so the tool can surface a stale-feed note.
-        lens.schedule_as_of = self._schedule_as_of
-        lens.schedule_stale = self._schedule_stale
-        self.last_lens = lens
-        return dict(self._m)
+        self.last_mode = mode
+        self.last_anchor = anchor
+        return TravelTimeResult(
+            dict(self._m), self._schedule_stale, self._schedule_as_of
+        )
 
 
 class _StubPlace:
@@ -208,7 +214,7 @@ def test_travel_time_to_transit():
 
     out = asyncio.run(travel_time_to(ctx, to_place_ref="place:x:1"))
 
-    assert routing.last_lens.mode == "transit"
+    assert routing.last_mode == "transit"
     assert "18 min" in out
     assert "public transport" in out
     assert "TU Berlin" in out
@@ -222,7 +228,7 @@ def test_travel_time_to_car():
 
     out = asyncio.run(travel_time_to(ctx, to_place_ref="place:x:1", mode="car"))
 
-    assert routing.last_lens.mode == "car"
+    assert routing.last_mode == "car"
     assert "25 min" in out
     assert "by car" in out
     _assert_untouched(state, markers_before=["id-0", "id-1"], total_before=2)
@@ -271,7 +277,7 @@ def test_travel_time_to_from_index_out_of_range_is_guidance():
     out = asyncio.run(travel_time_to(ctx, to_place_ref="place:x:1", from_index=5))
 
     assert "no listing #5" in out.lower()
-    assert routing.last_lens is None  # never reached the provider
+    assert routing.last_mode is None  # never reached the provider
 
 
 def test_travel_time_to_unresolvable_place_ref_retries():
