@@ -181,6 +181,27 @@ def _new_turn_messages(parsed: list[ModelMessage]) -> list[ModelMessage]:
     return parsed
 
 
+def _drop_trailing_unanswered_prompt(
+    history: list[ModelMessage],
+) -> list[ModelMessage]:
+    """Drop a trailing user prompt left by a previously CRASHED turn.
+
+    W3 persists this turn's user prompt BEFORE the run so a dropped stream doesn't
+    lose it. If that run never completes, the stored history ends with an
+    unanswered user `ModelRequest`. Feeding that as `message_history` for the next
+    turn would put two consecutive user messages in front of the model (Anthropic
+    requires alternating roles). The next turn supersedes the lost one, so drop a
+    trailing user-prompt request before using the history as the run's context.
+    (Display via `GET /messages` still shows it, so the user sees what was lost.)"""
+    if (
+        history
+        and isinstance(history[-1], ModelRequest)
+        and any(isinstance(p, UserPromptPart) for p in history[-1].parts)
+    ):
+        return history[:-1]
+    return history
+
+
 class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
     """AG-UI adapter wired to use the finish-shaping event stream and to be
     server-authoritative about history (see `messages`)."""
@@ -363,9 +384,21 @@ class ChatService:
         # this turn's new user input, which `run_stream` appends to the history we
         # pass here (`[*message_history, *new_turn]`). So we ALWAYS inject the
         # stored history — no `len(messages)` heuristic, and a client that echoes a
-        # stale/filtered thread can't diverge the agent's context. First turn:
-        # history is empty → None, and the new turn stands alone.
-        message_history = session.message_history or None
+        # stale/filtered thread can't diverge the agent's context. A trailing
+        # unanswered prompt from a crashed turn (W3) is dropped so the model never
+        # sees two user messages in a row. First turn: history empty → None.
+        prior_history = _drop_trailing_unanswered_prompt(session.message_history)
+        message_history = prior_history or None
+
+        # W3 (lightweight mid-stream resume): persist THIS turn's user prompt
+        # before the run so a dropped stream (engine stall / SSE drop) doesn't lose
+        # it — the user sees their message on reload and can re-ask. `on_complete`
+        # overwrites with the full authoritative history at stream end. Full
+        # resumable-streams (Redis) stays deferred — see session-persistence.md.
+        new_turn = adapter.messages
+        if new_turn:
+            session.message_history = [*prior_history, *new_turn]
+            await self.store.save(session)
 
         stream = adapter.run_stream(
             deps=deps,

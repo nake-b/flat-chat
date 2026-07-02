@@ -28,7 +28,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from starlette.requests import Request
 
 import flat_chat.chat.service as service_mod
-from flat_chat.chat.service import ChatService
+from flat_chat.chat.service import ChatService, _drop_trailing_unanswered_prompt
 from flat_chat.chat.sessions import InMemorySessionStore, SessionNotFoundError
 
 USER = "00000000-0000-0000-0000-000000000001"
@@ -161,6 +161,37 @@ def test_divergent_client_thread_is_ignored_db_wins():
     )
     # The tampered prefix is dropped; agent sees DB history + only the new turn.
     assert seen == ["2 rooms in Kreuzberg", "Found 3.", "under 1000 euros"]
+
+
+def test_crashed_turn_dangling_prompt_dropped_before_run():
+    """W3: a stored history ending in an unanswered user prompt (a crashed turn)
+    is dropped before the next run, so the model never sees two user turns."""
+    stored = [
+        ModelRequest(parts=[UserPromptPart(content="2 rooms in Kreuzberg")]),
+        ModelResponse(parts=[TextPart(content="Found 3.")]),
+        ModelRequest(parts=[UserPromptPart(content="LOST — stream crashed")]),
+    ]
+    seen = asyncio.run(
+        _messages_seen_by_model(
+            stored_history=stored,
+            envelope_messages=[
+                {"id": "m1", "role": "user", "content": "under 1000 euros"}
+            ],
+        )
+    )
+    # The dangling "LOST" prompt is gone; agent sees the answered turn + new one.
+    assert seen == ["2 rooms in Kreuzberg", "Found 3.", "under 1000 euros"]
+
+
+def test_drop_trailing_unanswered_prompt_helper():
+    user = ModelRequest(parts=[UserPromptPart(content="hi")])
+    asst = ModelResponse(parts=[TextPart(content="hello")])
+    # Ends with an unanswered user prompt → dropped.
+    assert _drop_trailing_unanswered_prompt([user, asst, user]) == [user, asst]
+    # Ends with an assistant response (normal) → unchanged.
+    assert _drop_trailing_unanswered_prompt([user, asst]) == [user, asst]
+    # Empty → unchanged.
+    assert _drop_trailing_unanswered_prompt([]) == []
 
 
 def test_first_turn_has_no_history_to_inject():
