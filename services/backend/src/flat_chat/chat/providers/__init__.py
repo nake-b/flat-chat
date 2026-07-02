@@ -1,9 +1,9 @@
 """Chat-model dispatch — the single LLM-provider seam.
 
 `build_chat_model()` returns a Pydantic AI `Model` assembled from whichever
-provider key is set in `Settings`. Two providers are wired: Anthropic-direct
-(preferred when its key is set, for native prompt caching) and Azure OpenAI.
-When both keys are set, Anthropic wins.
+provider key is set in `Settings`. Three providers are wired: OpenAI (standard,
+non-Azure), Anthropic-direct (native prompt caching), and Azure OpenAI.
+Preference order when multiple keys are set: **OpenAI > Anthropic > Azure**.
 
 # Layering
 
@@ -56,6 +56,7 @@ from pydantic_ai.models import Model
 
 from flat_chat.chat.providers.anthropic import build_anthropic_model
 from flat_chat.chat.providers.azure import build_azure_model
+from flat_chat.chat.providers.openai import build_openai_model
 from flat_chat.core.config import settings
 
 __all__ = ["build_chat_model", "build_title_model"]
@@ -65,22 +66,26 @@ logger = logging.getLogger(__name__)
 
 def _select(
     *,
+    openai: Callable[[], Model],
     anthropic: Callable[[], Model],
     azure: Callable[[], Model],
 ) -> Model:
     """Pick a provider by key presence and build via the supplied thunk.
 
-    Anthropic wins when both keys are set — its native prompt caching is the
-    reason that provider exists at all. To force Azure during local dev, unset
-    ANTHROPIC_API_KEY in your .env. The thunks defer the actual (model-id /
-    deployment-specific) construction so this helper stays provider-agnostic.
+    Preference order is OpenAI > Anthropic > Azure — the first provider whose
+    key is set wins. To fall through to a lower-preference provider during local
+    dev, unset the higher one's key in your .env. The thunks defer the actual
+    (model-id / deployment-specific) construction so this helper stays
+    provider-agnostic.
     """
+    if settings.openai_api_key:
+        return openai()
     if settings.anthropic_api_key:
         return anthropic()
     if settings.azure_openai_api_key:
         return azure()
     raise RuntimeError(
-        "No LLM provider configured. Set ANTHROPIC_API_KEY or "
+        "No LLM provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or "
         "AZURE_OPENAI_API_KEY (with AZURE_OPENAI_ENDPOINT, "
         "AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_API_VERSION) in .env."
     )
@@ -88,6 +93,10 @@ def _select(
 
 @lru_cache(maxsize=1)
 def build_chat_model() -> Model:
+    def openai() -> Model:
+        logger.info("LLM provider: openai (model=%s)", settings.openai_model)
+        return build_openai_model(settings, settings.openai_model)
+
     def anthropic() -> Model:
         logger.info(
             "LLM provider: anthropic-direct (model=%s)", settings.anthropic_model
@@ -101,20 +110,21 @@ def build_chat_model() -> Model:
         )
         return build_azure_model(settings, settings.azure_openai_deployment)
 
-    return _select(anthropic=anthropic, azure=azure)
+    return _select(openai=openai, anthropic=anthropic, azure=azure)
 
 
 @lru_cache(maxsize=1)
 def build_title_model() -> Model:
     """Cheap/fast model for one-shot conversation titling.
 
-    Shares provider selection with `build_chat_model` (Anthropic wins when both
-    keys are set), but uses a different model id and no prompt-caching
-    breakpoints — titling is a single ~50-token call per conversation and the
-    cache would never pay back. Azure falls back to the chat deployment when no
-    dedicated title deployment is configured.
+    Shares provider selection with `build_chat_model` (OpenAI > Anthropic >
+    Azure), but uses a different model id and no prompt-caching breakpoints —
+    titling is a single ~50-token call per conversation and the cache would
+    never pay back. Azure falls back to the chat deployment when no dedicated
+    title deployment is configured.
     """
     return _select(
+        openai=lambda: build_openai_model(settings, settings.openai_title_model),
         anthropic=lambda: build_anthropic_model(
             settings, settings.anthropic_title_model, cache=False
         ),

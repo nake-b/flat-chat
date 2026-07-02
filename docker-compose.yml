@@ -45,6 +45,10 @@ services:
       # compose service name `postgres` resolves correctly in both the
       # teammate (bridge) and host-overlay setups.
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4}
+      - OPENAI_TITLE_MODEL=${OPENAI_TITLE_MODEL:-gpt-5.4-nano}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
       - ANTHROPIC_TITLE_MODEL=${ANTHROPIC_TITLE_MODEL:-claude-haiku-4-5-20251001}

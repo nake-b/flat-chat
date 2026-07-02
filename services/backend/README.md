@@ -11,7 +11,7 @@ brew install just       # task runner (one-time)
 uv sync                 # install all dependencies
 ```
 
-Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` plus an LLM provider key — either `ANTHROPIC_API_KEY` (preferred, prompt caching) or the full Azure OpenAI quartet (`AZURE_OPENAI_API_KEY` + `_ENDPOINT` + `_DEPLOYMENT` + `_API_VERSION`). See the table below.
+Env vars are read from the project-root `.env` (justfile uses `set dotenv-load`). Required: `DATABASE_URL` plus an LLM provider key — `OPENAI_API_KEY` (preferred), `ANTHROPIC_API_KEY` (prompt caching), or the full Azure OpenAI quartet (`AZURE_OPENAI_API_KEY` + `_ENDPOINT` + `_DEPLOYMENT` + `_API_VERSION`). Preference order when several are set: OpenAI > Anthropic > Azure. See the table below.
 
 ## Running
 
@@ -133,10 +133,14 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | Variable                   | Description                                                                                                            | Default                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|------------------------------------|
 | `DATABASE_URL`             | PostgreSQL connection string                                                                                           | — (required)                       |
-| `ANTHROPIC_API_KEY`        | Anthropic API key (preferred provider — native prompt caching). One of Anthropic *or* the Azure quartet must be set.   | — (one provider required)          |
+| `OPENAI_API_KEY`           | OpenAI API key (standard, non-Azure). **Preferred provider** when set (order: OpenAI > Anthropic > Azure).             | — (one provider required)          |
+| `OPENAI_MODEL`             | OpenAI chat model id (e.g. `gpt-5.4`, `gpt-5.5`)                                                                       | `gpt-5.4`                          |
+| `OPENAI_TITLE_MODEL`       | Cheap/fast OpenAI model for one-shot sidebar title generation                                                          | `gpt-5.4-nano`                     |
+| `OPENAI_BASE_URL`          | Optional base-URL override for OpenAI-compatible endpoints/proxies. Empty = OpenAI default.                            | `""`                               |
+| `ANTHROPIC_API_KEY`        | Anthropic API key (native prompt caching). One LLM provider (OpenAI, Anthropic, or the Azure quartet) must be set.     | — (one provider required)          |
 | `ANTHROPIC_MODEL`          | Anthropic model id (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5`)                                                      | `claude-sonnet-4-6`                |
 | `ANTHROPIC_TITLE_MODEL`    | Cheap/fast model for one-shot sidebar title generation. Defaults to Haiku.                                             | `claude-haiku-4-5-20251001`        |
-| `AZURE_OPENAI_API_KEY`     | Azure OpenAI Service key. Used when Anthropic is unset.                                                                | —                                  |
+| `AZURE_OPENAI_API_KEY`     | Azure OpenAI Service key. Used when OpenAI and Anthropic are both unset.                                               | —                                  |
 | `AZURE_OPENAI_ENDPOINT`    | e.g. `https://<resource>.openai.azure.com/`                                                                            | —                                  |
 | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name from Foundry (often matches the model name)                                                            | —                                  |
 | `AZURE_OPENAI_API_VERSION` | API version — use a preview version for o-series reasoning models                                                      | `2024-12-01-preview`               |
