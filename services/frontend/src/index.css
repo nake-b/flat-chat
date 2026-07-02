@@ -192,6 +192,11 @@ body,
 }
 .copilotKitMessagesContainer > div:has(.fc-status-line) {
   display: block !important;
+  /* Match the assistant bubble's content inset (0.75rem 1rem padding + 1px
+     border, index.css:114) so the pill's text lines up with the message text
+     above it instead of overhanging ~1rem to the left. Also aligns the
+     Thinking-pill slot, which carries the same `.fc-status-line` marker. */
+  padding-left: calc(1rem + 1px);
 }
 
 /* "Powered by CopilotKit" — hide. We have our own footer story. */
