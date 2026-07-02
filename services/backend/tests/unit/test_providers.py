@@ -79,10 +79,12 @@ def test_anthropic_client_carries_stall_timeout_and_retries():
     """
     from flat_chat.chat.providers.anthropic import _MAX_RETRIES, _TIMEOUT
 
-    assert _MAX_RETRIES == 2
-    assert _TIMEOUT.read == 15.0
-    # Worst-case freeze on a persistent stall stays well under a minute.
-    assert _TIMEOUT.read * (1 + _MAX_RETRIES) <= 60.0
+    assert _MAX_RETRIES == 3
+    assert _TIMEOUT.read == 12.0
+    # The SDK self-heal budget must stay UNDER the SSE inactivity watchdog (60s)
+    # so retries complete/exhaust before the watchdog fires. See anthropic.py +
+    # chat/service.py:_SSE_INACTIVITY_TIMEOUT_S.
+    assert _TIMEOUT.read * (1 + _MAX_RETRIES) < 60.0
     model = build_anthropic_model(
         _settings(anthropic_api_key="sk-test"), "claude-sonnet-4-6", cache=True
     )

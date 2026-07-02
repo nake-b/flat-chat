@@ -32,17 +32,23 @@ _CACHE_SETTINGS = AnthropicModelSettings(
 #     failure rate, 3 attempts (1 + 2 retries) drive the user-visible failure
 #     rate to ~0.33**3 ≈ 3.7% — and each residual failure surfaces as a fast,
 #     retryable RUN_ERROR banner, not a freeze.
-# BUDGET MATTERS: read × (1 + max_retries) is the worst-case freeze on a
-# persistent stall. The original 45s × 5 ≈ 225s produced a ~4-minute "frozen
-# chat" before the error surfaced (measured). Tightened to 15s × 3 ≈ 45s so a
-# genuinely-broken egress fails fast → banner → the user retries (which, at a
-# ~1/3 rate, usually succeeds immediately). The SSE inactivity watchdog in
-# `chat/service.py` is the belt-and-braces hard backstop above this budget.
-# Applied to chat AND title clients. The real fix is the network path itself
-# (Docker Desktop's macOS stack — an ops fix); this keeps the app usable meanwhile.
-_STREAM_STALL_TIMEOUT_S = 15.0
+# BUDGET vs SELF-HEAL. `read × (1 + max_retries)` is the worst-case freeze on a
+# persistently-stalling call. The original 45s × 5 ≈ 225s froze the chat for ~4
+# minutes before surfacing (measured). We instead lean on FAST per-attempt
+# detection + MORE retries so most corruption self-heals INVISIBLY: a large
+# request that corrupts (~1/3) is re-issued transparently, and 4 attempts drive
+# the per-call visible-failure rate to ~0.33**4 ≈ 1.2% — so even a 5-LLM-call
+# turn succeeds ~94% of the time with no user action. read=12s detects a stall
+# in ~4× the typical first-token latency (~3s). The budget (12 × 4 = 48s) stays
+# UNDER the SSE inactivity watchdog in `chat/service.py` (60s), so the SDK's
+# self-heal completes (or exhausts → RUN_ERROR) before the watchdog fires; the
+# watchdog is the guaranteed backstop for a stall that trickles bytes and thus
+# never trips the per-read timeout at all. Applied to chat AND title clients.
+# The real fix is the network path itself (Docker Desktop's macOS stack — an ops
+# fix); this keeps the app usable meanwhile.
+_STREAM_STALL_TIMEOUT_S = 12.0
 _CONNECT_TIMEOUT_S = 10.0
-_MAX_RETRIES = 2
+_MAX_RETRIES = 3
 
 _TIMEOUT = httpx.Timeout(
     connect=_CONNECT_TIMEOUT_S,

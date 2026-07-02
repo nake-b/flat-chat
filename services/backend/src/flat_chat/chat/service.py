@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
@@ -56,15 +57,17 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
 
 # Hard backstop against a stalled agent run. The Anthropic client's per-read
-# timeout + SDK retries (providers/anthropic.py) bound a normal egress stall to
-# ~45s, but that path can't be fully trusted (a stall that never raises would
-# hang the SSE forever — the "agent stopped responding" symptom). This watchdog
-# is guaranteed: if NO AG-UI event flows for this long, the run is aborted and a
-# terminal RUN_ERROR is emitted. Set comfortably ABOVE the client retry budget
-# (~45s) so a self-healing retry isn't cut off, and FAR above any legitimate
-# inter-event gap (LLM first-token ~1-3s; the slowest tool — routing — a few
-# seconds), so it never false-trips on a healthy run.
-_SSE_INACTIVITY_TIMEOUT_S = 75.0
+# timeout + SDK retries (providers/anthropic.py) bound a clean no-bytes stall to
+# ~45s, but that can't be fully trusted: a corrupted stream can trickle garbage
+# bytes (resetting the read timeout so it never fires) yet never produce an
+# event — an infinite freeze. This watchdog is the guarantee: if NO AG-UI event
+# flows for this long, the run is aborted and a terminal RUN_ERROR is emitted
+# (via the queue-decoupled loop below, so it fires even when the stuck read
+# ignores cancellation). Set FAR above any legitimate inter-event gap (LLM
+# first-token ~1-3s; the slowest tool — routing — a few seconds) so it never
+# false-trips a healthy run, but low enough that a real freeze surfaces in ~1 min
+# instead of the multi-minute hang users were hitting.
+_SSE_INACTIVITY_TIMEOUT_S = 60.0
 
 
 class InvalidAgentRequestError(Exception):
@@ -567,33 +570,71 @@ async def _with_session_and_lock(
     agent run raises (e.g. the LLM provider errors after its retries are
     exhausted) OR goes silent (a stalled egress that never raises), the SSE would
     otherwise die or hang — no run-finished, no error, a frozen "thinking" /
-    "Searching…" pill. We drive the stream through an INACTIVITY WATCHDOG
-    (`asyncio.wait_for` per event): on a raise or a >_SSE_INACTIVITY_TIMEOUT_S
-    gap, we log it and emit a terminal `RUN_ERROR` so the frontend resolves the
-    pill and offers a retry, instead of hanging forever. `CancelledError` (client
-    disconnect) inherits `BaseException`, so it propagates untouched — we don't
-    turn a disconnect into a spurious error event.
+    "Searching…" pill.
+
+    An INACTIVITY WATCHDOG bounds it: if no AG-UI event arrives for
+    `_SSE_INACTIVITY_TIMEOUT_S`, we emit a terminal `RUN_ERROR` and return so the
+    frontend resolves the pill and offers a retry. Crucially the watchdog reads
+    from a QUEUE fed by a background producer task — NOT `wait_for(__anext__())`
+    directly. A stalled TLS read does not always honour cancellation, so
+    `wait_for(__anext__())` would itself hang waiting for the cancel to land
+    (observed: a stalled run froze for minutes despite the timeout). Reading a
+    queue is cleanly cancellable regardless of what the upstream read is doing, so
+    the timeout is guaranteed; a producer that won't die is abandoned (it errors
+    out on its own eventually) — the user is unblocked either way.
+    `CancelledError` (client disconnect) inherits `BaseException`, so it
+    propagates untouched rather than becoming a spurious error event.
     """
     _RETRY_MSG = "Sorry — I hit a problem reaching the model. Please try that again."
+    _EVENT, _DONE, _ERROR = "event", "done", "error"
+
+    async def _produce(q: asyncio.Queue[tuple[str, Any]]) -> None:
+        try:
+            async for ev in stream:
+                await q.put((_EVENT, ev))
+            await q.put((_DONE, None))
+        except asyncio.CancelledError:
+            raise  # cooperative cancellation (client disconnect / our cleanup)
+        except BaseException:  # noqa: BLE001
+            # Catch EVERYTHING else — not just `Exception`. The anthropic/httpx
+            # streaming path on 3.14 can surface a provider failure as a
+            # `BaseExceptionGroup` (from an anyio task group), which `except
+            # Exception` misses; it would then abort the SSE abruptly (a raw
+            # "connection error") instead of our clean, retryable RUN_ERROR.
+            logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
+            await q.put((_ERROR, None))
+
     async with lock:
         with using_session(session_id):
-            iterator = stream.__aiter__()
-            while True:
-                try:
-                    event = await asyncio.wait_for(
-                        iterator.__anext__(), timeout=_SSE_INACTIVITY_TIMEOUT_S
-                    )
-                except StopAsyncIteration:
-                    break
-                except TimeoutError:
-                    logger.error(
-                        "Agent run stalled — no events for %.0fs — emitting RUN_ERROR",
-                        _SSE_INACTIVITY_TIMEOUT_S,
-                    )
-                    yield RunErrorEvent(type=EventType.RUN_ERROR, message=_RETRY_MSG)
-                    break
-                except Exception:
-                    logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
-                    yield RunErrorEvent(type=EventType.RUN_ERROR, message=_RETRY_MSG)
-                    break
-                yield event
+            queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+            producer = asyncio.create_task(_produce(queue))
+            try:
+                while True:
+                    try:
+                        kind, payload = await asyncio.wait_for(
+                            queue.get(), timeout=_SSE_INACTIVITY_TIMEOUT_S
+                        )
+                    except TimeoutError:
+                        logger.error(
+                            "Agent run stalled — no events for %.0fs — RUN_ERROR",
+                            _SSE_INACTIVITY_TIMEOUT_S,
+                        )
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR, message=_RETRY_MSG
+                        )
+                        return
+                    if kind == _EVENT:
+                        yield payload
+                    elif kind == _DONE:
+                        return
+                    else:  # _ERROR (already logged with traceback in the producer)
+                        yield RunErrorEvent(
+                            type=EventType.RUN_ERROR, message=_RETRY_MSG
+                        )
+                        return
+            finally:
+                # Best-effort: request cancellation and give it a brief moment,
+                # but never block the response on a read that won't cancel.
+                producer.cancel()
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(producer, timeout=0.5)
