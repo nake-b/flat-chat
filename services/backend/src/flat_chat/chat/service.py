@@ -233,7 +233,15 @@ class _FlatChatAGUIAdapter(AGUIAdapter[ChatDeps, str]):
         Overrides the base (which parses the client's whole thread) so the agent's
         history is DB-authoritative: `dispatch_agent_request` always injects the
         stored history as `message_history`, and the envelope contributes only the
-        new user turn — no client/server divergence, no `len(messages)` heuristic."""
+        new user turn — no client/server divergence, no `len(messages)` heuristic.
+
+        Safe to narrow because `messages` has exactly ONE consumer in the base
+        adapter: `run_stream` does `message_history = [*message_history, *sanitize(
+        self.messages)]` — i.e. it treats `messages` as the frontend-contributed
+        TAIL appended after our injected history, which is precisely the new turn.
+        Sanitization still runs over the reduced set. (Verified against the
+        installed pydantic_ai `ui/_adapter.py`; re-check this invariant on upgrade
+        if a new internal path starts reading the full parsed thread.)"""
         parsed = self.load_messages(
             self.run_input.messages, preserve_file_data=self.preserve_file_data
         )

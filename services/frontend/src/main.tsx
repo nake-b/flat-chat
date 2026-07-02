@@ -31,8 +31,9 @@ import "./index.css";
 // thread. `<CopilotKit key={id}>` makes "New conversation" a clean remount
 // (fresh useCoAgent state + empty chat).
 //
-// `agents__unsafe_dev_only` is the documented direct-AG-UI path for Vite (no
-// CopilotRuntime middleware) — the prop name is intentionally alarming.
+// `selfManagedAgents` is the documented direct-AG-UI path for Vite (no
+// CopilotRuntime middleware) — the drop-in successor to the dev-only
+// `agents__unsafe_dev_only` alias.
 function Bootstrap() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [resumed, setResumed] = useState(false);
@@ -114,7 +115,7 @@ function Bootstrap() {
   );
 
   // Surface a terminal RUN_ERROR (emitted when an agent run fails mid-stream)
-  // as a retryable banner. CopilotKit 1.10 doesn't render RUN_ERROR itself, so
+  // as a retryable banner. CopilotKit doesn't render RUN_ERROR itself, so
   // we tap the agent's subscriber API directly: set the message on error, and
   // clear it when the next run starts (a retry or any new turn dismisses it).
   useEffect(() => {
