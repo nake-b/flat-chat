@@ -65,8 +65,9 @@ Core tools for finding and inspecting listings (the backbone rules — one resul
 set, 1-based indices, the place_ref flow — are in <tool_backbone>):
   - `search_apartments(...)` — run or REPLACE the active result set.
   - `locate_place(place_name=...)` — resolve a SPECIFIC named place (a landmark,
-    park, lake/river, school, kita, hospital, transit station) to candidate
-    references. Returns a numbered list, each with an opaque `place_ref`.
+    park, lake/river, school, university, kita, hospital, transit station) to
+    candidate references. Returns a numbered list, each labelled with its kind,
+    shape (area/line/point) and neighbourhood, plus an opaque `place_ref`.
   - `open_listing(indices=[k])` — open the detail panel for listing #k AND attach
     the neighbourhood-context blob (transit, schools, kitas, parks, landmarks,
     noise, hospitals). Pass `indices=[k, m, …]` for side-by-side comparison
@@ -77,10 +78,21 @@ set, 1-based indices, the place_ref flow — are in <tool_backbone>):
 
 Named-place search — the 2-tool flow. When the user names a SPECIFIC place
 ("near TU Berlin", "near the Spree", "by the Brandenburger Tor", "near
-Schlachtensee"): call `locate_place`, pick the best candidate (ask only if
-genuinely ambiguous), then `search_apartments(near_place_ref="<place_ref>",
-radius_km=…)` — this matches the place's EXACT shape (a river line, a campus
-polygon), which a coordinate radius cannot.
+Schlachtensee"): call `locate_place`, then `search_apartments(near_place_ref=
+"<place_ref>", radius_km=…)` — this matches the place's EXACT shape (a river
+line, a campus polygon), which a coordinate radius cannot.
+
+CHOOSE the right candidate from the menu — do NOT blindly take #1:
+  - Each candidate shows its shape (area/line/point) and neighbourhood. For
+    "near / within / biking distance to a park, lake or green space", prefer an
+    AREA (a park/water polygon) over a coincident POINT of the same name (e.g. a
+    bus stop called after the park) — you search WITHIN an area, not around a
+    dot.
+  - When a name resolves to several DISTINCT places/campuses (e.g. HU Berlin →
+    Campus Mitte / Nord / Adlershof, several km apart), don't guess — briefly
+    ASK the user which one they mean, then search. If the candidates are the
+    same place (a campus fragmented into near-identical rows) or one is the
+    obvious match, just use it.
 
 After `open_listing(indices=[k])`, ALWAYS write a 1–2 sentence highlight of what
 stands out (transit, noise, neighbourhood character) — the detail panel renders
@@ -120,10 +132,17 @@ Templates for translating user phrases into `search_apartments` arguments:
     i.e. the neighbourhood)     → districts: ["Tiergarten"]
   - "near the Tiergarten"
     (the park itself)           → locate_place("Tiergarten") → near_place_ref
+  - "biking distance to
+    Hasenheide" (the park)      → locate_place("Hasenheide") → pick the
+                                  [park · area] candidate (NOT the same-named
+                                  bus stop) → near_place_ref
   - "near TU Berlin" /
     "by the Spree" /
     "near Brandenburger Tor" /
     "near Schlachtensee"        → locate_place("…") → near_place_ref
+  - "near HU Berlin" /
+    "near Humboldt Uni"         → locate_place("HU Berlin") → if several
+                                  campuses, ask which → near_place_ref
   - "arty / queer-friendly /
     nightlife / loft vibe"      → query: "<the user's words>"
 </phrase_map>
@@ -402,24 +421,31 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
     """Resolve a SPECIFIC named place to candidate references.
 
     Use this ONLY when the user names a specific place — a landmark
-    ("Brandenburger Tor", "TU Berlin", "Siegessäule"), a named park
-    ("Tiergarten", "Görlitzer Park"), a named lake/river ("the Spree",
-    "Schlachtensee"), a named school/kita, or a named hospital ("Charité").
-    Do NOT use it for generic proximity ("near a park", "near a lake") —
-    those are category filters on `search_apartments` (`near_park`,
+    ("Brandenburger Tor", "Siegessäule"), a university ("TU Berlin", "HU"),
+    a named park ("Tiergarten", "Görlitzer Park"), a named lake/river ("the
+    Spree", "Schlachtensee"), a named school/kita, or a named hospital
+    ("Charité"). Do NOT use it for generic proximity ("near a park", "near a
+    lake") — those are category filters on `search_apartments` (`near_park`,
     `near_water`, `kita`, `school`).
 
-    Returns a short numbered list of candidates, each with an opaque
-    `place_ref`. Pick the best one and pass its `place_ref` to
-    `search_apartments(near_place_ref="…", radius_km=…)`, which matches
-    listings against that place's exact geometry. If several candidates fit
-    and the choice matters, ask the user which they meant.
+    Returns a short numbered list of candidates, each labelled with its kind,
+    shape (area/line/point) and neighbourhood, plus an opaque `place_ref`.
+    CHOOSE the one that matches what the user meant — don't just take #1:
+      - For "near/within/biking distance to a green space", prefer an `area`
+        (a park/water polygon) over a coincident `point` of the same name
+        (e.g. a bus stop named after the park).
+      - When the name resolves to several DISTINCT places/campuses (e.g. HU
+        Berlin → Mitte / Nord / Adlershof), ask the user which they meant
+        before searching.
+    Pass the chosen `place_ref` to `search_apartments(near_place_ref="…",
+    radius_km=…)`, which matches listings against that place's exact geometry.
 
     This is a PURE LOOKUP — it does not change the result set or the map.
 
     Args:
         place_name: The place name to look up, in the user's words (German
-            or English). Substring/fuzzy match — partial names are fine.
+            or English). Substring/fuzzy match — partial names and
+            abbreviations ("TU", "HU") are fine.
     """
     candidates = await ctx.deps.place_service.locate(place_name)
     if not candidates:
@@ -429,9 +455,17 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
             "or a generic category filter (near_park / near_water / kita)."
         )
 
-    lines = [f'Candidates for "{place_name}" (pick one place_ref):']
+    lines = [
+        "(internal — pick one and speak its NAME to the user; never show these "
+        "numbers or place_refs)",
+        f'Candidates for "{place_name}":',
+    ]
     for i, c in enumerate(candidates, start=1):
-        bits = [c.name or "(unnamed)", f"[{c.kind}]"]
+        # Label: kind · shape · neighbourhood — the signal the agent picks on.
+        tags = [c.kind, c.geom_kind]
+        if c.locality:
+            tags.append(c.locality)
+        bits = [c.name or "(unnamed)", f"[{' · '.join(tags)}]"]
         if c.description:
             bits.append(c.description)
         coords = (
@@ -440,7 +474,10 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
             else ""
         )
         lines.append(f"  {i}. {' — '.join(bits)}{coords}  place_ref={c.place_ref}")
-    lines.append('Then: search_apartments(near_place_ref="<place_ref>", radius_km=…).')
+    lines.append(
+        "Then: search_apartments(near_place_ref=\"<place_ref>\", radius_km=…). "
+        "If several candidates are distinct places, ask which before searching."
+    )
     return "\n".join(lines)
 
 

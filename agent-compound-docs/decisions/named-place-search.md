@@ -135,8 +135,38 @@ OSM is **ODbL**: the frontend keeps an explicit `© OpenStreetMap contributors` 
 | Frontend | `services/frontend/src/components/MapPane.tsx`, `state/toolStatus.ts` | ODbL `AttributionControl`; `locate_place` status pill (`Locating … / Found …`). |
 | Tests | `services/backend/tests/integration/test_place_service.py`, `test_search_service.py`, `tests/unit/test_place_ref_parse.py` | Trigram resolution; `near_place_ref` precise distance against an extended geometry; format-only token parsing incl. malformed input. |
 
+## Rich candidate menu + curated university campuses (July 2026, issue #38)
+
+Two related failures of "take rank #1" surfaced in live testing:
+
+1. **Area vs point (#38).** "biking distance to Hasenheide" resolved to the night-bus stop *Hasenheide (Berlin)* (trigram sim 0.611) instead of *Volkspark Hasenheide* (the park, sim 0.344, buried). The bare-named point out-scored the park, and the agent had no signal that one is a bikeable *area* and the other a *point*.
+2. **Universities.** "near TU/FU/HU" resolved to a random footprint among many same-named ALKIS rows (equal sim + equal `ST_Dimension` → arbitrary storage order → `ST_DWithin` against a random annex), and abbreviations fell below the 0.3 `%` threshold entirely (`similarity('HU','HU Berlin – Campus Mitte')=0.13`).
+
+**Fix — make `locate_place` a rich disambiguation menu; the agent chooses.**
+
+- **Rich candidates.** `PlaceCandidate` gains `geom_kind` (`area`/`line`/`point`, from `ST_Dimension`) and `locality` (containing Ortsteil, a correlated point-in-polygon against `world.ortsteile`). The tool renders `1. Volkspark Hasenheide — [park · area · Neukölln] place_ref=…`. Tool-protocol + docstring guidance tell the agent to pick the candidate matching intent (prefer an **area** for "near a green space"; **ask which** when several distinct campuses match) rather than taking #1.
+- **Matching split.** `locate()` WHERE widens `name % q` with `name %> q` (word similarity) so short abbreviations/multi-word queries reach the candidate set. Word similarity is used **only to admit rows, never to rank** — it flattens to 1.0 for any name containing the query as a word (incl. out-of-Berlin VBB stops "Bernau, Hasenheide"). Ranking is `priority DESC → round(greatest(sim,wsim),1) DESC (coarse bucket) → ST_Dimension DESC (area beats coincident point) → exact score`. (`round` needs a `::numeric` cast — `round(real,int)` doesn't exist in Postgres; an integration test caught this.)
+- **Curated universities (C + G5).** A new `world.curated_places` table (arm of `named_places`, `priority=1`; all other arms `priority=0`) holds editorially-curated campuses with **footprint-derived-but-frozen** geometry. `author_campuses.py` unions the real `landmarks` footprints matching a `name_pattern` ∩ `bbox` (editorial selectors in `campus_sources.yaml`) into a **MultiPolygon of the actual building footprints** (`ST_Union`, NOT a convex hull — a hull draws one fat blob that swallows streets/non-campus buildings and loosens `ST_DWithin`) and writes frozen WKT to `university_seed.yaml`; `_run_universities` loads it. Names embed both abbreviation and full form ("HU Berlin – Humboldt-Universität zu Berlin – Campus Nord") so word similarity matches "HU" *and* "Humboldt". **HU is authored as 3 campuses** (Mitte / Nord / Adlershof) so it stays a "which one?" question — geometry can't separate Nord from Mitte (~1.5 km apart) nor decide FU=Dahlem is "the campus"; that's editorial. Scope: TU, FU, HU×3, UdK, HTW, HWR, BHT, Charité (Mitte). ASH omitted — no footprint in `landmarks` to derive from.
+
+**Why frozen, not a live union view (G5 not G2):** `landmarks.id` is an autoincrement serial reassigned on every geo-context reload, so an id-mapping rots; a live union view re-inherits per-ingest OSM/ALKIS noise with no human in the loop. Freezing the WKT makes the editorial call reviewable as a diff and stable at runtime. `PlaceService` still just queries the view — no runtime `ST_Union`, no dependency on live ids. Disambiguation is plain conversational clarification (the agent asks), **not** Pydantic AI's `ApprovalRequired`/`DeferredToolRequests` HITL — that's an action-approval gate, the wrong shape for parameter clarification (kept in reserve for future side-effecting tools like "book a viewing").
+
+### What landed (July 2026)
+
+| Layer | File | Change |
+|---|---|---|
+| Migration | `services/ingestion/alembic/versions/0009_curated_places.py` | `world.curated_places` table (+GIST/GIN trgm); recreate `named_places` with a curated arm + `priority` on every arm. |
+| Authoring | `.../geo_context/campus_sources.yaml`, `author_campuses.py`, `university_seed.yaml` | Editorial selectors → footprint-union hull → frozen WKT (`python -m geo_context.author_campuses`). |
+| Loader | `.../geo_context/extract/curated.py`, `run.py` (`_run_universities`, `--skip-universities`) | Load frozen seed into `curated_places` (idempotent replace). |
+| Backend | `search/places.py`, `listings/models.py` | `geom_kind`+`locality` on `PlaceCandidate`; word-similarity WHERE; priority/bucket/dimension ORDER BY; `priority` column + `ortsteile` Table mapping. |
+| Tool | `chat/tools/core.py` | Rich candidate rendering; protocol/phrase-map "pick the right one / prefer area / ask which campus". |
+| Cleanup | `.../geo_context/landmark_seed.yaml` | Removed TU/FU/HU/Charité alias points (superseded by curated campuses). |
+| Agent prose | `chat/agent.py` (`<surface_contract>` block), `chat/tools/core.py` | Stop leaking tool internals into chat ("Candidate #1 … place_ref …"): the agent names places/listings and never surfaces tool names, arguments, `place_ref`/IDs, or the candidate-N numbering. Exceptions: the user-visible 1-based card index, and stating the current search filters in plain words. `locate_place`'s candidate menu is marked internal. Light process narration ("let me look near it") stays allowed. |
+| Lens anchor | `curated_places.anchor_lat/lon` → view `anchor_geom`; `search/places.py::anchor_point` | **Travel-time lens** routes to one point; the footprint centroid of a sprawling campus (FU spans 2.1 km) sat ~1 km from any building → surprising minutes. Curated campuses now carry a **main-building anchor** (`anchor_pattern` in `campus_sources.yaml` → `ST_PointOnSurface` frozen into the seed); `anchor_point` uses `COALESCE(anchor_geom, ST_Centroid(geom))` (FU routing point moves 878 m to the main building). **Distance lens unaffected** — `DistanceService` already measures `ST_Distance` to the full geometry (nearest point). |
+| Tests | `tests/integration/test_place_service.py` | area-over-higher-scoring-point, locality, curated priority, abbreviation-via-word-similarity, 3-campus ambiguity. Plus a pre-existing `test_geocode` bootstrap fix (missing `pg_trgm`) + teardown hygiene. |
+
 ## Deferred
 
 - **Pydantic AI deferred / on-demand tool loading** + a "skill" explainer for the `locate_place` → `search` flow — next PR.
 - **OSM ingestion robustness** — Overpass is flaky; a Geofabrik Berlin extract fallback is the next step.
 - **Materialised-view gazetteer** — only if the `named_places` UNION ever gets slow (it won't at Berlin scale).
+- **Out-of-Berlin transit noise** — `transit_stops` includes VBB stops in Brandenburg (word similarity surfaces "Bernau, Hasenheide"); a Berlin-bbox filter on the transit arm would cut it.

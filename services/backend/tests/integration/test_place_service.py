@@ -316,6 +316,207 @@ def test_overlay_geometry_alias_point_snaps_to_footprint(async_db_url):
     assert overlay.geojson["type"] == "Polygon"
 
 
+# ---------------------------------------------------------------------------
+# Rich candidate menu (issue #38) + curated university priority. Each seeds
+# rows behind the view and asserts the ranking / annotation `locate` now emits.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_park(session, name, wkt):
+    return await session.scalar(
+        sa.text(
+            "INSERT INTO world.parks (name, geom) "
+            "VALUES (:n, ST_SetSRID(ST_GeomFromText(:wkt), 4326)) RETURNING id"
+        ),
+        {"n": name, "wkt": wkt},
+    )
+
+
+async def _insert_curated(
+    session, name, wkt, *, kind="university", description=None, anchor=None
+):
+    """anchor: optional (lon, lat) main-building point stored as float columns."""
+    return await session.scalar(
+        sa.text(
+            "INSERT INTO world.curated_places "
+            "(kind, name, description, geom, anchor_lon, anchor_lat) "
+            "VALUES (:k, :n, :d, ST_SetSRID(ST_GeomFromText(:wkt), 4326), "
+            ":alon, :alat) RETURNING id"
+        ),
+        {
+            "k": kind,
+            "n": name,
+            "d": description,
+            "wkt": wkt,
+            "alon": anchor[0] if anchor else None,
+            "alat": anchor[1] if anchor else None,
+        },
+    )
+
+
+async def _insert_ortsteil(session, name, wkt):
+    await session.execute(
+        sa.text(
+            "INSERT INTO world.ortsteile (name, geom) "
+            "VALUES (:n, ST_SetSRID(ST_GeomFromText(:wkt), 4326))"
+        ),
+        {"n": name, "wkt": wkt},
+    )
+
+
+def test_locate_prefers_area_over_higher_scoring_point(async_db_url):
+    """Issue #38: a park POLYGON must rank above a coincident POINT that scores
+    HIGHER on raw similarity (the bare name), because the score bucket + the
+    ST_Dimension tiebreak promote the searchable area — not only at exact ties.
+    Also asserts `geom_kind` is populated (area vs point)."""
+
+    async def body(session: AsyncSession):
+        # Bare-named point → similarity 1.0 (would win under the old ORDER BY).
+        await _insert_landmark(
+            session,
+            "Wieselheide",
+            "POINT(13.42 52.48)",
+            category="alias",
+            source="seed",
+        )
+        # Park polygon whose longer name scores LOWER on plain similarity but is
+        # a word-match — the real "Volkspark Hasenheide vs the bus stop" shape.
+        park_id = await _insert_park(
+            session, "Volkspark Wieselheide-Grünanlage", _box(13.42, 52.48, 0.004)
+        )
+        return park_id, await PlaceService(session).locate("Wieselheide")
+
+    park_id, candidates = _run(async_db_url, body)
+    assert candidates
+    top = candidates[0]
+    assert top.place_ref == f"park:{park_id}"
+    assert top.kind == "park"
+    assert top.geom_kind == "area"
+    # The coincident point is still offered (rich menu), just not first.
+    assert any(c.geom_kind == "point" for c in candidates)
+
+
+def test_locate_populates_locality_from_ortsteil(async_db_url):
+    """A candidate's `locality` is the containing Ortsteil (point-in-polygon)."""
+
+    async def body(session: AsyncSession):
+        await _insert_ortsteil(
+            session, "Wieselkiez", _box(13.40, 52.50, 0.05)
+        )  # big enough to cover the landmark
+        await _insert_landmark(session, "Dachsplatz", "POINT(13.41 52.51)")
+        return await PlaceService(session).locate("Dachsplatz")
+
+    candidates = _run(async_db_url, body)
+    assert candidates
+    assert candidates[0].locality == "Wieselkiez"
+    assert candidates[0].geom_kind == "point"
+
+
+def test_locate_curated_priority_outranks_footprint(async_db_url):
+    """A curated_places row (priority 1) outranks a same-named raw landmark
+    footprint (priority 0) even though both match identically."""
+
+    async def body(session: AsyncSession):
+        await _insert_landmark(session, "Zeta Universität", _box(13.30, 52.50))
+        curated_id = await _insert_curated(
+            session, "Zeta Universität – Campus Test", _box(13.30, 52.50, 0.003)
+        )
+        return curated_id, await PlaceService(session).locate("Zeta Universität")
+
+    curated_id, candidates = _run(async_db_url, body)
+    assert candidates
+    top = candidates[0]
+    assert top.place_ref == f"university:{curated_id}"
+    assert top.kind == "university"
+
+
+def test_locate_abbreviation_matches_via_word_similarity(async_db_url):
+    """A short abbreviation ("ZQ") whose plain trigram similarity to the long
+    curated name is BELOW the 0.3 `%` threshold still resolves — the `%>`
+    word-similarity widening admits it (the whole point of the HU/TU fix)."""
+
+    async def body(session: AsyncSession):
+        name = "ZQ Berlin – Zeta-Quux-Universität – Campus Test"
+        # Guard: prove plain similarity would have dropped it.
+        sim = await session.scalar(
+            sa.text("SELECT similarity('ZQ', :n)"), {"n": name}
+        )
+        curated_id = await _insert_curated(session, name, _box(13.31, 52.51, 0.003))
+        return sim, curated_id, await PlaceService(session).locate("ZQ")
+
+    sim, curated_id, candidates = _run(async_db_url, body)
+    assert sim < 0.3, "test premise: bare abbreviation is below the % threshold"
+    assert any(c.place_ref == f"university:{curated_id}" for c in candidates)
+
+
+def test_locate_returns_multiple_distinct_campuses(async_db_url):
+    """When a name resolves to several distinct curated campuses (the HU case),
+    all are returned so the agent can ask which — none is silently collapsed."""
+
+    async def body(session: AsyncSession):
+        base = "ZW Berlin – Zeta-Wobble-Universität – Campus "
+        coords = [(13.30, 52.50), (13.40, 52.53), (13.52, 52.43)]
+        ids = []
+        for i, (lon, lat) in enumerate(coords):
+            ids.append(
+                await _insert_curated(session, f"{base}{i}", _box(lon, lat, 0.002))
+            )
+        return ids, await PlaceService(session).locate("ZW")
+
+    ids, candidates = _run(async_db_url, body)
+    refs = {c.place_ref for c in candidates}
+    for cid in ids:
+        assert f"university:{cid}" in refs, "every distinct campus must be offered"
+
+
+# ---------------------------------------------------------------------------
+# anchor_point — the single point the travel-time / distance lens routes to.
+# Prefers the curated main-building anchor; else the footprint centroid.
+# ---------------------------------------------------------------------------
+
+
+def test_anchor_point_uses_main_building_when_set(async_db_url):
+    """A curated campus with an `anchor` routes there — not the centroid of its
+    (wide-spread) footprint."""
+
+    async def body(session: AsyncSession):
+        # Two far-apart building blocks → centroid sits ~midway (~13.31).
+        wide = (
+            "MULTIPOLYGON("
+            f"({_box(13.30, 52.50).removeprefix('POLYGON(').removesuffix(')')}),"
+            f"({_box(13.32, 52.50).removeprefix('POLYGON(').removesuffix(')')}))"
+        )
+        # Anchor pinned to the WEST block corner, far from the centroid.
+        cid = await _insert_curated(
+            session, "Zeta Uni – Campus Wide", wide, anchor=(13.30, 52.50)
+        )
+        anchor = await PlaceService(session).anchor_point(f"university:{cid}")
+        return anchor
+
+    anchor = _run(async_db_url, body)
+    assert anchor is not None
+    # Routes to the pinned main building (13.30), not the ~13.31 centroid.
+    assert abs(anchor.lon - 13.30) < 1e-4
+    assert abs(anchor.lat - 52.50) < 1e-3
+
+
+def test_anchor_point_falls_back_to_centroid_without_anchor(async_db_url):
+    """No curated anchor → the footprint centroid, as before."""
+
+    async def body(session: AsyncSession):
+        landmark_id = await _insert_landmark(
+            session, "Zeta Solo Building", _box(13.40, 52.50, 0.002)
+        )
+        anchor = await PlaceService(session).anchor_point(f"landmark:{landmark_id}")
+        return anchor
+
+    anchor = _run(async_db_url, body)
+    assert anchor is not None
+    # Centroid of the ~200 m box ≈ its middle.
+    assert abs(anchor.lon - 13.401) < 5e-3
+    assert abs(anchor.lat - 52.501) < 5e-3
+
+
 def test_overlay_geometry_alias_point_no_footprint_nearby_stays_point(async_db_url):
     """An isolated alias point with nothing solid within snap range draws itself
     (a Point) rather than nothing."""

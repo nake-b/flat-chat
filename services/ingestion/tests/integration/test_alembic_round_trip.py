@@ -25,7 +25,7 @@ from alembic import command
 from alembic.config import Config
 
 # Bump when a new world migration is added; the round-trip should land here.
-LATEST_REVISION = "0008_transit_stops_gazetteer"
+LATEST_REVISION = "0009_curated_places"
 
 _TEST_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 
