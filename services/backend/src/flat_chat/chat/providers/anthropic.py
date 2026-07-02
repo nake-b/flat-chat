@@ -29,13 +29,20 @@ _CACHE_SETTINGS = AnthropicModelSettings(
 #     error instead of a frozen stream.
 #   - max_retries: the anthropic SDK re-issues connection errors / timeouts /
 #     5xx / 429 transparently (exponential backoff). At a ~1/3 per-request
-#     failure rate, 5 attempts drive the user-visible failure rate to
-#     ~0.33**5 ≈ 0.4%, so the corruption self-heals without the user seeing it.
+#     failure rate, 3 attempts (1 + 2 retries) drive the user-visible failure
+#     rate to ~0.33**3 ≈ 3.7% — and each residual failure surfaces as a fast,
+#     retryable RUN_ERROR banner, not a freeze.
+# BUDGET MATTERS: read × (1 + max_retries) is the worst-case freeze on a
+# persistent stall. The original 45s × 5 ≈ 225s produced a ~4-minute "frozen
+# chat" before the error surfaced (measured). Tightened to 15s × 3 ≈ 45s so a
+# genuinely-broken egress fails fast → banner → the user retries (which, at a
+# ~1/3 rate, usually succeeds immediately). The SSE inactivity watchdog in
+# `chat/service.py` is the belt-and-braces hard backstop above this budget.
 # Applied to chat AND title clients. The real fix is the network path itself
-# (see the infra section of the PR); this keeps the app usable meanwhile.
-_STREAM_STALL_TIMEOUT_S = 45.0
+# (Docker Desktop's macOS stack — an ops fix); this keeps the app usable meanwhile.
+_STREAM_STALL_TIMEOUT_S = 15.0
 _CONNECT_TIMEOUT_S = 10.0
-_MAX_RETRIES = 5
+_MAX_RETRIES = 2
 
 _TIMEOUT = httpx.Timeout(
     connect=_CONNECT_TIMEOUT_S,

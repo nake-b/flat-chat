@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from ag_ui.core import EventType, RunErrorEvent
 
+import flat_chat.chat.service as service_mod
 from flat_chat.chat.service import _with_session_and_lock
 
 
@@ -52,3 +53,24 @@ def test_passes_through_cleanly_on_success():
     # No failure → no synthetic RUN_ERROR appended.
     assert out == ["a", "b"]
     assert not any(isinstance(e, RunErrorEvent) for e in out)
+
+
+def test_watchdog_emits_run_error_when_stream_stalls(monkeypatch):
+    """A stream that goes SILENT (no events, never ends — the stall that the
+    per-read timeout can't be trusted to catch) must trip the inactivity watchdog
+    and surface a terminal RUN_ERROR instead of hanging forever."""
+    monkeypatch.setattr(service_mod, "_SSE_INACTIVITY_TIMEOUT_S", 0.05)
+
+    async def stalling():
+        yield "event-1"
+        await asyncio.Event().wait()  # hang forever — never yields again
+        yield "unreachable"  # pragma: no cover
+
+    out = asyncio.run(
+        _drain(_with_session_and_lock(stalling(), "sess-3", _noop_lock()))
+    )
+
+    assert out[0] == "event-1"
+    assert isinstance(out[-1], RunErrorEvent)
+    assert out[-1].type == EventType.RUN_ERROR
+    assert out[-1].message

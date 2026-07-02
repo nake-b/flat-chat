@@ -55,6 +55,17 @@ logger = logging.getLogger(__name__)
 # task removes itself via `add_done_callback(_background_tasks.discard)`.
 _background_tasks: set[asyncio.Task[None]] = set()
 
+# Hard backstop against a stalled agent run. The Anthropic client's per-read
+# timeout + SDK retries (providers/anthropic.py) bound a normal egress stall to
+# ~45s, but that path can't be fully trusted (a stall that never raises would
+# hang the SSE forever — the "agent stopped responding" symptom). This watchdog
+# is guaranteed: if NO AG-UI event flows for this long, the run is aborted and a
+# terminal RUN_ERROR is emitted. Set comfortably ABOVE the client retry budget
+# (~45s) so a self-healing retry isn't cut off, and FAR above any legitimate
+# inter-event gap (LLM first-token ~1-3s; the slowest tool — routing — a few
+# seconds), so it never false-trips on a healthy run.
+_SSE_INACTIVITY_TIMEOUT_S = 75.0
+
 
 class InvalidAgentRequestError(Exception):
     """The AG-UI request envelope failed validation."""
@@ -552,25 +563,37 @@ async def _with_session_and_lock(
     acquiring them at the call site would release before any events flow.
     Wrapping the generator keeps both active until the stream closes.
 
-    Also the last line of defence against a mid-run failure. If the agent run
-    raises (e.g. the LLM provider errors after its own retries are exhausted),
-    the exception would otherwise propagate into Starlette's SSE writer and the
-    stream would just die — no run-finished, no error, a frozen "thinking" pill.
-    We catch it, log it in full (this is where the provider exception class is
-    visible), and emit a terminal `RUN_ERROR` so the frontend resolves the pill
-    and can tell the user to retry, instead of hanging forever.
+    Also the last line of defence against a mid-run failure OR stall. If the
+    agent run raises (e.g. the LLM provider errors after its retries are
+    exhausted) OR goes silent (a stalled egress that never raises), the SSE would
+    otherwise die or hang — no run-finished, no error, a frozen "thinking" /
+    "Searching…" pill. We drive the stream through an INACTIVITY WATCHDOG
+    (`asyncio.wait_for` per event): on a raise or a >_SSE_INACTIVITY_TIMEOUT_S
+    gap, we log it and emit a terminal `RUN_ERROR` so the frontend resolves the
+    pill and offers a retry, instead of hanging forever. `CancelledError` (client
+    disconnect) inherits `BaseException`, so it propagates untouched — we don't
+    turn a disconnect into a spurious error event.
     """
+    _RETRY_MSG = "Sorry — I hit a problem reaching the model. Please try that again."
     async with lock:
         with using_session(session_id):
-            try:
-                async for event in stream:
-                    yield event
-            except Exception:
-                logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
-                yield RunErrorEvent(
-                    type=EventType.RUN_ERROR,
-                    message=(
-                        "Sorry — I hit a problem reaching the model. "
-                        "Please try that again."
-                    ),
-                )
+            iterator = stream.__aiter__()
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        iterator.__anext__(), timeout=_SSE_INACTIVITY_TIMEOUT_S
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    logger.error(
+                        "Agent run stalled — no events for %.0fs — emitting RUN_ERROR",
+                        _SSE_INACTIVITY_TIMEOUT_S,
+                    )
+                    yield RunErrorEvent(type=EventType.RUN_ERROR, message=_RETRY_MSG)
+                    break
+                except Exception:
+                    logger.exception("Agent run failed mid-stream — emitting RUN_ERROR")
+                    yield RunErrorEvent(type=EventType.RUN_ERROR, message=_RETRY_MSG)
+                    break
+                yield event

@@ -73,12 +73,16 @@ def test_anthropic_client_carries_stall_timeout_and_retries():
     """The custom AsyncAnthropic client keeps its read-stall timeout + retry
     budget — resilience against a flaky/corrupting egress that would otherwise
     freeze the SSE stream. Guards against a silent revert to the SDK defaults
-    (very long timeout, only 2 retries). See the module comment in anthropic.py.
+    (very long timeout). The budget (read × (1+retries)) is deliberately tight so
+    a persistent stall fails FAST → RUN_ERROR banner, not a multi-minute freeze;
+    the SSE inactivity watchdog is the hard backstop above it. See anthropic.py.
     """
     from flat_chat.chat.providers.anthropic import _MAX_RETRIES, _TIMEOUT
 
-    assert _MAX_RETRIES == 5
-    assert _TIMEOUT.read == 45.0
+    assert _MAX_RETRIES == 2
+    assert _TIMEOUT.read == 15.0
+    # Worst-case freeze on a persistent stall stays well under a minute.
+    assert _TIMEOUT.read * (1 + _MAX_RETRIES) <= 60.0
     model = build_anthropic_model(
         _settings(anthropic_api_key="sk-test"), "claude-sonnet-4-6", cache=True
     )
