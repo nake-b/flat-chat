@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { useCopilotChatInternal } from "@copilotkit/react-core";
 import { CopilotChat } from "@copilotkit/react-ui";
@@ -6,7 +7,11 @@ import { CopilotChat } from "@copilotkit/react-ui";
 import { AccountMenu } from "./AccountMenu";
 import { useBookmarkSidebarOpen } from "../hooks/useBookmarkSidebarOpen";
 import { useSidebarOpen } from "../hooks/useSidebarOpen";
-import { useToolStatusPills, useThinkingPillInStream } from "../hooks/useToolStatus";
+import {
+  useEndOfMessagesSlot,
+  useToolStatusPills,
+  useThinkingPillInStream,
+} from "../hooks/useToolStatus";
 import { useRecovery } from "../state/recovery";
 import { useRunError } from "../state/runError";
 import {
@@ -105,6 +110,10 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
       );
     }
   };
+  // Render the error banner at the END of the message stream (like a new
+  // message), not pinned to the top of the pane. Same portal-slot mechanism as
+  // the Thinking pill.
+  const errorSlot = useEndOfMessagesSlot(!!runErrorMessage, "data-fc-error-slot");
 
   // Show starters only while the thread is empty AND we already know the
   // history (`historyLoaded`). On a resumed thread CopilotKit mounts with
@@ -259,31 +268,34 @@ export function ChatPane({ onNewChat }: { onNewChat: () => void }) {
         </div>
       ) : null}
 
-      {runErrorMessage ? (
-        <div
-          role="alert"
-          className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm"
-        >
-          <span className="text-ink-soft">{runErrorMessage}</span>
-          <span className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={retryLastTurn}
-              className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
+      {errorSlot && runErrorMessage
+        ? createPortal(
+            <div
+              role="alert"
+              className="my-3 flex items-center justify-between gap-3 rounded-md border border-red bg-red/10 px-3 py-2 text-sm"
             >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={clearRunError}
-              aria-label="Dismiss error"
-              className="px-1 text-ink-ghost transition-colors hover:text-ink"
-            >
-              ×
-            </button>
-          </span>
-        </div>
-      ) : null}
+              <span className="text-ink-soft">{runErrorMessage}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={retryLastTurn}
+                  className="rounded border border-red px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-red transition-colors hover:bg-red hover:text-paper"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={clearRunError}
+                  aria-label="Dismiss error"
+                  className="px-1 text-ink-ghost transition-colors hover:text-ink"
+                >
+                  ×
+                </button>
+              </span>
+            </div>,
+            errorSlot,
+          )
+        : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <CopilotChat
