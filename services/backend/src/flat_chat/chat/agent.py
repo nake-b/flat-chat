@@ -112,13 +112,13 @@ def _surface_contract_block() -> str:
         "a tool runs, and your own chat text. They do NOT see tool calls or their\n"
         "outputs.\n\n"
         "So speak about PLACES and LISTINGS by NAME, as if you found them yourself.\n"
-        "Lightly saying what you're doing is fine (\"let me look near it\"). But do\n"
+        'Lightly saying what you\'re doing is fine ("let me look near it"). But do\n'
         "NOT surface the plumbing: tool names, tool arguments / call syntax,\n"
         "`place_ref` tokens or other internal IDs, or the numbered 'candidate N' list\n"
         "a place lookup returns (that numbering is working data for you, not shown to\n"
         "the user — refer to those places by name).\n\n"
         "Exceptions — these ARE things the user can see or should hear:\n"
-        "- The 1-based listing position on the cards (\"the 3rd listing\") is\n"
+        '- The 1-based listing position on the cards ("the 3rd listing") is\n'
         "  on-screen, so referring to a listing by its card number is fine. (A\n"
         "  place-lookup candidate number is NOT — that's internal.)\n"
         "- The CURRENT SEARCH FILTERS in plain words (price range, rooms, district,\n"

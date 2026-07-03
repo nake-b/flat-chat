@@ -475,7 +475,7 @@ async def locate_place(ctx: RunContext[ChatDeps], place_name: str) -> str:
         )
         lines.append(f"  {i}. {' — '.join(bits)}{coords}  place_ref={c.place_ref}")
     lines.append(
-        "Then: search_apartments(near_place_ref=\"<place_ref>\", radius_km=…). "
+        'Then: search_apartments(near_place_ref="<place_ref>", radius_km=…). '
         "If several candidates are distinct places, ask which before searching."
     )
     return "\n".join(lines)
