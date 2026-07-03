@@ -438,9 +438,7 @@ def test_locate_abbreviation_matches_via_word_similarity(async_db_url):
     async def body(session: AsyncSession):
         name = "ZQ Berlin – Zeta-Quux-Universität – Campus Test"
         # Guard: prove plain similarity would have dropped it.
-        sim = await session.scalar(
-            sa.text("SELECT similarity('ZQ', :n)"), {"n": name}
-        )
+        sim = await session.scalar(sa.text("SELECT similarity('ZQ', :n)"), {"n": name})
         curated_id = await _insert_curated(session, name, _box(13.31, 52.51, 0.003))
         return sim, curated_id, await PlaceService(session).locate("ZQ")
 
