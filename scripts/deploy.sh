@@ -66,8 +66,12 @@ docker compose up -d --build --remove-orphans
 
 # 5) Seed/rotate accounts (upsert — see scripts/seed_users.py). Runs against the
 # now-migrated DB with the app's env (DATABASE_URL etc. from the container).
+# The backend image contains only services/backend/, NOT the repo's top-level
+# scripts/, so bind-mount it in for this one-off run. seed_users.py imports the
+# installed flat_chat package from the image's venv; only the script file needs
+# to be present.
 log "Seeding / rotating accounts"
-docker compose run --rm --no-deps -w /app backend \
+docker compose run --rm --no-deps -v "$REPO_ROOT/scripts:/app/scripts:ro" -w /app backend \
   uv run python scripts/seed_users.py
 
 # 6) Health gate — retry a few times, then fail loudly if still unhealthy.
