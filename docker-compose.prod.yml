@@ -1,0 +1,62 @@
+# Production overlay. Layers on top of the base stack (and the host overlay, since
+# this project's single deploy target is also the tailnet DB host):
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml:docker-compose.prod.yml
+#
+# `scripts/deploy.sh` exports exactly that and is what the self-hosted GitHub
+# Actions runner invokes on a green `main`. Plain local dev (`docker compose up`)
+# does NOT load this file, so hot-reload etc. stay intact for development.
+#
+# What "prod" changes vs dev, and nothing more:
+#   - backend runs WITHOUT --reload (no filesystem watcher in production)
+#   - COOKIE_SECURE=true (browser<->Cloudflare leg is HTTPS, so the Secure flag
+#     is correct; the internal cloudflared->nginx->backend legs are plain HTTP)
+#   - nginx is published on loopback only — the public path is the Cloudflare
+#     tunnel (cloudflared reaches nginx over the compose network, not via the
+#     published port), so binding 127.0.0.1 stops the LAN bypassing Cloudflare
+#   - cloudflared is added: an OUTBOUND-only tunnel to Cloudflare's edge. No
+#     inbound ports, no public IP, works behind NAT/CGNAT/VPN. Free HTTPS is
+#     terminated at the edge; the home IP stays hidden.
+#   - restart: unless-stopped on the long-lived services so the deployment
+#     survives a reboot.
+#
+# See agent-compound-docs/decisions/deployment-guide.md.
+
+services:
+  backend:
+    # Production command: identical to the dev override MINUS --reload. A
+    # filesystem watcher has no place in prod and pins a whole inotify tree.
+    command: uv run --no-dev uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000
+    environment:
+      # Set the Secure flag on the login cookie. Correct here because every
+      # public request arrives over HTTPS (Cloudflare terminates TLS); the
+      # backend only ever sees it behind the tunnel.
+      - COOKIE_SECURE=true
+    restart: unless-stopped
+
+  nginx:
+    # Publish on loopback only. Public traffic arrives via the Cloudflare tunnel,
+    # and cloudflared talks to nginx over the compose network (service name), not
+    # through this published port — so loopback-only keeps LAN clients from
+    # reaching the app around Cloudflare while still allowing local health checks.
+    # `!override` REPLACES the base "80:80" (compose appends list entries by
+    # default, which would double-bind port 80).
+    ports: !override
+      - "127.0.0.1:80:80"
+    restart: unless-stopped
+
+  # Cloudflare Tunnel. Outbound connection to Cloudflare's edge; public visitors
+  # hit Cloudflare and it relays requests down this tunnel. The tunnel's public
+  # hostname is mapped to `http://nginx:80` in the Cloudflare dashboard (service
+  # host `nginx` resolves on the shared compose network). Token-based (remotely
+  # managed) config — ingress + DNS live in the dashboard, the token is the only
+  # secret and comes from the on-host .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN must be set — create a tunnel at Cloudflare Zero Trust > Networks > Tunnels and paste its token}
+    depends_on:
+      nginx:
+        condition: service_started
+    restart: unless-stopped

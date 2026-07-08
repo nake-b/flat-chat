@@ -2,9 +2,11 @@
 """Seed the application's accounts — the ONLY way users are created.
 
 There is no public registration endpoint (see AUTH.md), so this script is how the
-dev/admin and (optionally) a reviewer account come into existence. Idempotent:
-each account is created with an Argon2-hashed password via the fastapi-users
-`UserManager`, or skipped if its email already exists.
+dev/admin and (optionally) a reviewer account come into existence. Idempotent and
+an UPSERT: each account is created with an Argon2-hashed password via the
+fastapi-users `UserManager`, or — if the email already exists — its password and
+role are updated in place. The upsert is what lets a deploy rotate a weak/default
+credential (the dev `dev`/`dev` login) off its old value on a public host.
 
   - dev  — admin (superuser), from `DEV_USER_EMAIL` / `DEV_USER_PASSWORD`.
   - prof — regular user, created ONLY when both `PROF_USER_EMAIL` /
@@ -28,13 +30,14 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from flat_chat.core.config import settings
 from flat_chat.core.database import AsyncSessionLocal
-from flat_chat.users.auth import UserCreate, UserManager
+from flat_chat.users.auth import UserCreate, UserManager, UserUpdate
 from flat_chat.users.models import User
 
 
 async def _create(
     manager: UserManager, email: str, password: str, *, is_superuser: bool
 ) -> None:
+    role = "admin" if is_superuser else "user"
     try:
         user = await manager.create(
             UserCreate(
@@ -44,10 +47,19 @@ async def _create(
                 is_verified=True,
             )
         )
-        role = "admin" if is_superuser else "user"
         print(f"created {role} {user.email} ({user.id})")
     except UserAlreadyExists:
-        print(f"{email} already exists — skipping")
+        # Upsert the password instead of skipping. This is what lets a deploy
+        # rotate a weak/default credential (e.g. the dev `dev`/`dev` login) off
+        # its old value: the account already exists in the canonical DB, so
+        # create() raises — we update the hashed password in place. Idempotent:
+        # re-running with the same password is a no-op change.
+        existing = await manager.get_by_email(email)
+        await manager.update(
+            UserUpdate(password=password, is_superuser=is_superuser),
+            existing,
+        )
+        print(f"{email} already exists — password/role updated")
 
 
 async def seed_users() -> None:
