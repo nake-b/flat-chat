@@ -59,7 +59,13 @@ YAML
 
 echo "==> MOTIS: import"
 rm -rf "$MOTIS_DIR/data"
-docker run --rm -v "$MOTIS_DIR:/work" -w /work "$MOTIS_IMAGE" /motis import
+# Run as root: the motis image defaults to the unprivileged `motis` user (uid
+# 100), which cannot create files in this host-owned bind mount — the import
+# then dies with `basic_ios::clear: iostream error` when it tries to write its
+# mmap-backed output. Root writes fine; the output is world-readable (644), so
+# the `motis server` container (uid 100) still reads it. OSRM above already runs
+# as root by default, so this just makes the two consistent.
+docker run --rm --user root -v "$MOTIS_DIR:/work" -w /work "$MOTIS_IMAGE" /motis import
 
 # Re-running this script refreshes the loaded timetable window: `first_day:
 # TODAY` starts it at today and the freshly-downloaded VBB feed extends the

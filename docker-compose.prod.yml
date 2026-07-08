@@ -60,3 +60,21 @@ services:
       nginx:
         condition: service_started
     restart: unless-stopped
+
+  # Travel-time routing engines. In the base file these sit behind the `routing`
+  # profile so a plain dev `up` skips them (they need the one-time
+  # scripts/prep-routing.sh graph build first). In prod we always want them, so
+  # `profiles: !reset []` clears the gate and they join the default `up -d` set
+  # that deploy.sh brings up. Their ./data/routing bind mounts and commands come
+  # from the base file; here we only un-gate them and make them reboot-durable.
+  #
+  # NOTE: the graphs in ./data/routing are host-local (gitignored) — CD does NOT
+  # build them. Run scripts/prep-routing.sh on the host once (and periodically,
+  # since the VBB transit feed lapses) or these containers crash-loop.
+  osrm:
+    profiles: !reset []
+    restart: unless-stopped
+
+  motis:
+    profiles: !reset []
+    restart: unless-stopped
