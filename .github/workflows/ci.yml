@@ -101,3 +101,20 @@ jobs:
 
       - name: vitest
         run: npm run test:run
+
+  # Continuous deployment. Runs ONLY after both test jobs are green, ONLY on a
+  # push to main (never on PRs — `needs` + this `if` keep untrusted fork code off
+  # the self-hosted runner, which executes on the deploy host itself). The
+  # `flatchat-prod` label targets the runner installed on the host; the job reads
+  # the on-host repo + .env, so no GitHub secrets are needed. All logic lives in
+  # scripts/deploy.sh (sync → build → migrate → up → seed → health-gate).
+  deploy:
+    name: Deploy (self-hosted host)
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, flatchat-prod]
+    steps:
+      # No actions/checkout — deploy.sh operates on the pre-existing repo clone
+      # on the host (where the prod .env lives), not the runner's work dir.
+      - name: Run deploy script
+        run: /home/lukar/projects/flat-chat/scripts/deploy.sh

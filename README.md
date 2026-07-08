@@ -17,6 +17,14 @@ Manual data ingestion (cron-triggered in prod):
 docker compose --profile ingestion run --rm ingestion
 ```
 
+## Deploying
+
+Public exposure is via a **Cloudflare Tunnel** (outbound-only; free HTTPS, no
+port-forwarding) and CD is a **self-hosted GitHub Actions runner** that runs
+`scripts/deploy.sh` on a green `main`. Prod config lives in
+`docker-compose.prod.yml`. Full setup (domain, tunnel token, runner) is in
+[`agent-compound-docs/decisions/deployment-guide.md`](agent-compound-docs/decisions/deployment-guide.md).
+
 ## Architecture
 
 ![Architecture](architecture.png)
