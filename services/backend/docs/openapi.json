@@ -1,0 +1,3922 @@
+{
+  "components": {
+    "schemas": {
+      "Body_auth_cookie_login_api_auth_login_post": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "format": "password",
+            "title": "Client Secret"
+          },
+          "grant_type": {
+            "anyOf": [
+              {
+                "pattern": "^password$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "password": {
+            "format": "password",
+            "title": "Password",
+            "type": "string"
+          },
+          "scope": {
+            "default": "",
+            "title": "Scope",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "Body_auth_cookie_login_api_auth_login_post",
+        "type": "object"
+      },
+      "ColumnarMarkers": {
+        "description": "The wire form of `SessionState.result_markers` — four parallel columns.\n\n`SessionState` keeps markers as a `list[Marker]` in memory but serializes\nthem columnar (`{ids, lats, lngs, values}`) via a `@field_serializer` to\nhalve the payload at 5k markers. Index `i` across all four columns is one\nmarker. `values` is the single active-lens scalar (warm rent by default,\ncommute minutes under a travel lens — see `MarkerLens`). See\n`chat/session_state.py:_serialize_markers`.",
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          },
+          "lats": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lats",
+            "type": "array"
+          },
+          "lngs": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Lngs",
+            "type": "array"
+          },
+          "values": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "title": "ColumnarMarkers",
+        "type": "object"
+      },
+      "ConversationResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "ConversationResponse",
+        "type": "object"
+      },
+      "ConversationSummary": {
+        "description": "Sidebar list row — one conversation, lightweight.\n\n`title` is null briefly between first persistence and background title-gen\ncompletion; the frontend renders \"Untitled\" for that window. `updated_at`\ndrives both the sidebar's sort order (DESC) and its relative-time label.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationSummary",
+        "type": "object"
+      },
+      "DensityProfile": {
+        "properties": {
+          "age_10_to_18": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 10 To 18"
+          },
+          "age_18_to_65": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 18 To 65"
+          },
+          "age_65_to_70": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 65 To 70"
+          },
+          "age_6_to_10": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 6 To 10"
+          },
+          "age_70_to_75": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 70 To 75"
+          },
+          "age_75_to_80": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 75 To 80"
+          },
+          "age_80_plus": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age 80 Plus"
+          },
+          "age_under_6": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Under 6"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sparse",
+                  "moderate",
+                  "dense"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "persons_per_hectare": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persons Per Hectare"
+          },
+          "population": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Population"
+          }
+        },
+        "title": "DensityProfile",
+        "type": "object"
+      },
+      "DistanceLens": {
+        "description": "The active distance lens — straight-line (bird's-eye) distance from the\nanchor's exact geometry, computed with PostGIS `ST_Distance` (no routing\nengine). Consumed by `DistanceService.resolve`.\n\n`max_km` set → hard filter (drop listings farther than the limit); None →\nannotate + colour only. Values annotated onto markers are METRES (the\nfrontend formats km); the cutoff is expressed in km for natural agent args.",
+        "properties": {
+          "anchor_label": {
+            "title": "Anchor Label",
+            "type": "string"
+          },
+          "anchor_lat": {
+            "title": "Anchor Lat",
+            "type": "number"
+          },
+          "anchor_lng": {
+            "title": "Anchor Lng",
+            "type": "number"
+          },
+          "kind": {
+            "const": "distance",
+            "default": "distance",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_km": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Km"
+          },
+          "near_place_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Place Ref"
+          }
+        },
+        "required": [
+          "anchor_label",
+          "anchor_lat",
+          "anchor_lng"
+        ],
+        "title": "DistanceLens",
+        "type": "object"
+      },
+      "DistrictCount": {
+        "description": "One neighbourhood bucket of the result set. `district` holds the Ortsteil\n(ALKIS polygon assignment, e.g. \"Prenzlauer Berg\") — Berlin's neighbourhood\ngranularity, which is how users name areas. Listings without an Ortsteil\nassignment (no pin/polygon) are excluded, so counts can sum to < total.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "district": {
+            "title": "District",
+            "type": "string"
+          }
+        },
+        "required": [
+          "district",
+          "count"
+        ],
+        "title": "DistrictCount",
+        "type": "object"
+      },
+      "ErrorModel": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorModel",
+        "type": "object"
+      },
+      "GreeneryProfile": {
+        "description": "Greenery composite — cemeteries counted at 0.5 weight (gold ETL applies).",
+        "properties": {
+          "green_m2_within_300m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Green M2 Within 300M"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "concrete",
+                  "leafy",
+                  "very_leafy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "GreeneryProfile",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HospitalFilter": {
+        "description": "Filter listings by proximity to a hospital.\n\n`tier` defaults to `\"plan_hospital\"` for the filter — when the user\nsays \"near a hospital\" they usually mean emergency-care reachability,\nwhich is the Krankenhausplan network. The detail-enrichment path\nuses `\"any\"` so the user sees specialty clinics too.",
+        "properties": {
+          "distance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "near",
+            "title": "Distance"
+          },
+          "tier": {
+            "default": "plan_hospital",
+            "enum": [
+              "plan_hospital",
+              "any"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "title": "HospitalFilter",
+        "type": "object"
+      },
+      "KitaFilter": {
+        "description": "Filter listings by proximity to a daycare (Kita).\n\nA Kita has no sub-type to filter on (unlike schools, where\n`SchoolFilter.school_type` selects Grundschule / Gymnasium / …), so\nthis is purely a distance filter. \"near a kita\" → `{\"distance\": \"near\"}`.",
+        "properties": {
+          "distance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "near",
+            "title": "Distance"
+          }
+        },
+        "title": "KitaFilter",
+        "type": "object"
+      },
+      "ListingCard": {
+        "description": "One listing as the frontend renders it on the map and in cards.\n\nReturned as `SearchService.search()`'s preview slice and by the\n`?view=card` batch route; mirrored to the frontend as\n`SessionState.preview_cards[]` over the AG-UI stream. Labels are derived\nfrom raw gold values via `listings.labels` at projection time, so\nthreshold tweaks don't require a gold rebuild.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "area_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Sqm"
+          },
+          "available_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available From"
+          },
+          "bedrooms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bedrooms"
+          },
+          "density_label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sparse",
+                  "moderate",
+                  "dense"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density Label"
+          },
+          "district": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "District"
+          },
+          "energy_consumption_kwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Consumption Kwh"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "floors_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floors Total"
+          },
+          "has_balcony": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Balcony"
+          },
+          "has_elevator": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Elevator"
+          },
+          "has_garden": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Garden"
+          },
+          "has_kitchen": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Kitchen"
+          },
+          "heating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "inside_ring": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inside Ring"
+          },
+          "is_furnished": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Furnished"
+          },
+          "kaution_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kaution Eur"
+          },
+          "lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lat"
+          },
+          "lister_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lister Type"
+          },
+          "listing_bezirk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Bezirk"
+          },
+          "listing_ortsteil": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Ortsteil"
+          },
+          "listing_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Type"
+          },
+          "lng": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lng"
+          },
+          "nearest_park_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nearest Park M"
+          },
+          "nearest_park_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nearest Park Name"
+          },
+          "nearest_transit_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nearest Transit Line"
+          },
+          "nebenkosten_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nebenkosten Eur"
+          },
+          "noise_label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "quiet",
+                  "lively",
+                  "noisy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Label"
+          },
+          "price_cold_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Cold Eur"
+          },
+          "price_warm_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Warm Eur"
+          },
+          "rooms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rooms"
+          },
+          "similarity_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity Score"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "walk_min_to_transit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Walk Min To Transit"
+          },
+          "wbs_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wbs Required"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ListingCard",
+        "type": "object"
+      },
+      "ListingDetail": {
+        "description": "Full tier-3 detail for one listing — listing fields + geo-context.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "area_sqm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Sqm"
+          },
+          "available_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available From"
+          },
+          "bathrooms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bathrooms"
+          },
+          "bedrooms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bedrooms"
+          },
+          "construction_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Construction Year"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DensityProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "disabled_parking_count": {
+            "default": 0,
+            "title": "Disabled Parking Count",
+            "type": "integer"
+          },
+          "district": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "District"
+          },
+          "energy_consumption_kwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Consumption Kwh"
+          },
+          "features": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor"
+          },
+          "floors_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floors Total"
+          },
+          "greenery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GreeneryProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "has_balcony": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Balcony"
+          },
+          "has_elevator": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Elevator"
+          },
+          "has_garden": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Garden"
+          },
+          "has_kitchen": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Kitchen"
+          },
+          "heating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "images": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "inside_ring": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inside Ring"
+          },
+          "is_furnished": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Furnished"
+          },
+          "kaution_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kaution Eur"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "lister_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lister Type"
+          },
+          "listing_bezirk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Bezirk"
+          },
+          "listing_ortsteil": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Ortsteil"
+          },
+          "listing_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Type"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "nearest_hospitals": {
+            "items": {
+              "$ref": "#/components/schemas/NearestHospital"
+            },
+            "title": "Nearest Hospitals",
+            "type": "array"
+          },
+          "nearest_kitas": {
+            "items": {
+              "$ref": "#/components/schemas/NearestKita"
+            },
+            "title": "Nearest Kitas",
+            "type": "array"
+          },
+          "nearest_landmarks": {
+            "items": {
+              "$ref": "#/components/schemas/NearestLandmark"
+            },
+            "title": "Nearest Landmarks",
+            "type": "array"
+          },
+          "nearest_parks": {
+            "items": {
+              "$ref": "#/components/schemas/NearestPark"
+            },
+            "title": "Nearest Parks",
+            "type": "array"
+          },
+          "nearest_playground": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NearestPlayground"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nearest_schools": {
+            "items": {
+              "$ref": "#/components/schemas/NearestSchool"
+            },
+            "title": "Nearest Schools",
+            "type": "array"
+          },
+          "nearest_transit_stops": {
+            "items": {
+              "$ref": "#/components/schemas/NearestTransitStop"
+            },
+            "title": "Nearest Transit Stops",
+            "type": "array"
+          },
+          "nearest_water": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NearestWater"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nebenkosten_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nebenkosten Eur"
+          },
+          "noise": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoiseProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "postal_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postal Code"
+          },
+          "price_cold_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Cold Eur"
+          },
+          "price_warm_eur": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Warm Eur"
+          },
+          "rooms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rooms"
+          },
+          "school_catchment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchoolCatchmentInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "wbs_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wbs Required"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ListingDetail",
+        "type": "object"
+      },
+      "ListingView": {
+        "description": "Representation tier selected by `?view=` (AIP-157 view enum).",
+        "enum": [
+          "card",
+          "detail"
+        ],
+        "title": "ListingView",
+        "type": "string"
+      },
+      "MapOverlay": {
+        "description": "One geometry drawn on the map, mirrored to the frontend via SessionState.\n\n`id` is stable per logical overlay (e.g. `\"place:park:42\"`,\n`\"transit_line:U7\"`) so re-drawing replaces rather than duplicates, and the\nfrontend can dismiss by id. `origin` drives the clear policy:\n  - `\"search\"` overlays are derived from the active search's spatial anchors\n    (`near_place_ref` / `transit.lines`) and are REPLACED on the next search.\n  - `\"pinned\"` overlays come from an explicit `show_on_map` (or proactive\n    agent draw) and PERSIST across searches until removed/dismissed.\n`geojson` is a GeoJSON geometry or Feature — source-agnostic (a\n`named_places` shape or a transit route shape look identical here).\n`points` are optional decorations on the geometry — currently the served\nstations of a transit line (the frontend draws them as dots + line badges);\nempty for everything else.",
+        "properties": {
+          "geojson": {
+            "additionalProperties": true,
+            "title": "Geojson",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "place",
+              "transit_line",
+              "bezirk",
+              "ring",
+              "parks"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "origin": {
+            "default": "search",
+            "enum": [
+              "search",
+              "pinned",
+              "lens"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "points": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OverlayPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "geojson"
+        ],
+        "title": "MapOverlay",
+        "type": "object"
+      },
+      "MarkerLens": {
+        "description": "Names the single scalar every `Marker.lens_value` currently carries — the\nactive map visualization lens. Lives once in `SessionState`, not per marker.\nThe backend sets SEMANTICS (`key` + human `label`); the frontend owns\nAPPEARANCE (colour ramp / domain / number format) keyed off `key` in\n`state/lensStyles.ts` — same split as `MapOverlay`.\n\nDefault `price_warm` → the frontend renders the plain pin (no heatmap);\n`commute_min` → a travel-time ramp; `distance_m` → a distance ramp. Adding a\nfuture lens is one registry entry + the backend populating that scalar.",
+        "properties": {
+          "key": {
+            "default": "price_warm",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "MarkerLens",
+        "type": "object"
+      },
+      "NearestHospital": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "plan_hospital",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestHospital",
+        "type": "object"
+      },
+      "NearestKita": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestKita",
+        "type": "object"
+      },
+      "NearestLandmark": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestLandmark",
+        "type": "object"
+      },
+      "NearestPark": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestPark",
+        "type": "object"
+      },
+      "NearestPlayground": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestPlayground",
+        "type": "object"
+      },
+      "NearestSchool": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "school_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Type"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestSchool",
+        "type": "object"
+      },
+      "NearestTransitStop": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "modes": {
+            "items": {
+              "enum": [
+                "mainline",
+                "regional",
+                "s_bahn",
+                "u_bahn",
+                "bus",
+                "tram",
+                "ferry"
+              ],
+              "type": "string"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stop_id": {
+            "title": "Stop Id",
+            "type": "string"
+          },
+          "walk_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Walk Minutes"
+          }
+        },
+        "required": [
+          "stop_id",
+          "name",
+          "modes",
+          "lines",
+          "distance_m"
+        ],
+        "title": "NearestTransitStop",
+        "type": "object"
+      },
+      "NearestWater": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "water_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Water Kind"
+          }
+        },
+        "required": [
+          "distance_m"
+        ],
+        "title": "NearestWater",
+        "type": "object"
+      },
+      "NoiseProfile": {
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "enum": [
+                  "quiet",
+                  "lively",
+                  "noisy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "rail_lden": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rail Lden"
+          },
+          "street_lden": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Street Lden"
+          },
+          "total_lden": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Lden"
+          },
+          "total_lnight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Lnight"
+          }
+        },
+        "title": "NoiseProfile",
+        "type": "object"
+      },
+      "NumericFacet": {
+        "description": "min / median / max for a numeric column over the full result set.\n\nComputed in SQL (not from the in-memory markers) so it stays exact even\nwhen the MARKER_CAP truncation binds, and so it covers columns markers\ndon't carry (area). Any field is None when no matched row has a value.",
+        "properties": {
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "median": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          }
+        },
+        "title": "NumericFacet",
+        "type": "object"
+      },
+      "OverlayPoint": {
+        "description": "A labelled point that decorates an overlay — e.g. a transit line's\nstations. Semantics only (name + position); the frontend decides how to\ndraw it (dot + pulse), same division of labour as `MapOverlay` itself.\nCoordinates are rounded to `OVERLAY_COORD_DIGITS` to keep the state snapshot\nsmall (a 24-stop line is ~24 points).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "lon",
+          "lat"
+        ],
+        "title": "OverlayPoint",
+        "type": "object"
+      },
+      "ResultFacets": {
+        "description": "Aggregate stats over the entire filtered result set — NOT the preview.\n\nSurfaced to the agent (via `<result_facets>` in the per-turn prompt) so its\nwhole-set summaries (\"up to €1,950\", \"a mix of Prenzlauer Berg and Wedding\")\nare grounded in the full set rather than extrapolated from the top-N preview\ncards the LLM can see. Produced by `SearchService._facets`.",
+        "properties": {
+          "area_sqm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NumericFacet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "districts": {
+            "items": {
+              "$ref": "#/components/schemas/DistrictCount"
+            },
+            "title": "Districts",
+            "type": "array"
+          },
+          "price_warm_eur": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NumericFacet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ResultFacets",
+        "type": "object"
+      },
+      "SchoolCatchmentInfo": {
+        "description": "The primary-school catchment (Einschulungsbereich) the listing is inside.",
+        "properties": {
+          "catchment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catchment Id"
+          },
+          "school_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Name"
+          },
+          "school_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Number"
+          }
+        },
+        "title": "SchoolCatchmentInfo",
+        "type": "object"
+      },
+      "SchoolFilter": {
+        "description": "Filter listings by proximity to (or catchment of) a school.\n\nTwo intents this filter expresses:\n\n- **Proximity** (default): \"near a school within X meters\", optionally\n  filtered by `school_type`. `school_type` matches against the Berlin\n  Schulverzeichnis category (e.g. \"Grundschule\", \"Gymnasium\", \"ISS\",\n  \"Berufsschule\") via case-insensitive substring; the vocabulary is\n  open so we don't enumerate it.\n- **Catchment membership**: set `requires_catchment=True` for the\n  legal-attendance question (\"which primary school is this kid\n  assigned to?\"). Berlin tiles primary catchments across the whole\n  city, so this filter is usually combined with proximity for\n  meaningful narrowing.\n\nBoth checks AND together when both are requested.",
+        "properties": {
+          "distance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "near",
+            "title": "Distance"
+          },
+          "requires_catchment": {
+            "default": false,
+            "title": "Requires Catchment",
+            "type": "boolean"
+          },
+          "school_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Type"
+          }
+        },
+        "title": "SchoolFilter",
+        "type": "object"
+      },
+      "SearchParams": {
+        "description": "Structured search filters surfaced to the LLM as `search_apartments`\nkwargs. Strictly additive — all fields default to \"don't filter\".\n\nBoolean amenity fields use tri-state semantics: `None` means the user\ndidn't ask, `True` means must have, `False` means must not have. The\nSearchService translates `True/False` into the corresponding WHERE\nclause; `None` is a no-op.\n\nGeo-context fields (transit / school / hospital / kita / near_* /\nmax_noise / min_greenery / density / inside_ring) are bundled or flat\ndepending on whether they take multiple inputs. See\n`agent-compound-docs/decisions/geo-context-thresholds.md` for the\nthreshold spec.",
+        "properties": {
+          "area_sqm_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Sqm Max"
+          },
+          "area_sqm_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Sqm Min"
+          },
+          "available_by": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available By"
+          },
+          "bedrooms_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bedrooms Min"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sparse",
+                  "moderate",
+                  "dense"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density"
+          },
+          "districts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Districts"
+          },
+          "floor_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Max"
+          },
+          "floor_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Min"
+          },
+          "has_balcony": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Balcony"
+          },
+          "has_elevator": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Elevator"
+          },
+          "has_images": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Images"
+          },
+          "has_kitchen": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Kitchen"
+          },
+          "hospital": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HospitalFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inside_ring": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inside Ring"
+          },
+          "is_furnished": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Furnished"
+          },
+          "kita": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KitaFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "listing_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Type"
+          },
+          "max_noise": {
+            "anyOf": [
+              {
+                "enum": [
+                  "quiet",
+                  "lively",
+                  "noisy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Noise"
+          },
+          "min_greenery": {
+            "anyOf": [
+              {
+                "enum": [
+                  "concrete",
+                  "leafy",
+                  "very_leafy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Greenery"
+          },
+          "near_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Lat"
+          },
+          "near_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Lon"
+          },
+          "near_park": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Park"
+          },
+          "near_place_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Place Ref"
+          },
+          "near_playground": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Playground"
+          },
+          "near_water": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WaterFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "price_cold_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Cold Max"
+          },
+          "price_warm_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Warm Max"
+          },
+          "price_warm_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Warm Min"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "radius_km": {
+            "default": 2.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 50.0,
+            "title": "Radius Km",
+            "type": "number"
+          },
+          "rooms_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rooms Max"
+          },
+          "rooms_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rooms Min"
+          },
+          "school": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchoolFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sort_by": {
+            "default": "relevance",
+            "enum": [
+              "relevance",
+              "price",
+              "area",
+              "recent"
+            ],
+            "title": "Sort By",
+            "type": "string"
+          },
+          "transit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransitFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wbs_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wbs Required"
+          }
+        },
+        "title": "SearchParams",
+        "type": "object"
+      },
+      "SessionStateResponse": {
+        "description": "OpenAPI-accurate response shape for `GET /api/conversations/{id}/state`.\n\nMirrors `SessionState` field-for-field EXCEPT `result_markers`: that field\nserializes columnar (see `ColumnarMarkers`), so typing the endpoint as\n`SessionState` would publish a schema declaring `array<Marker>` while the\nactual bytes on the wire are the columnar object — the schema would lie.\nThis model declares the real wire shape so the OpenAPI schema matches what\nthe frontend receives.\n\nKept in lock-step with `SessionState` by\n`tests/unit/test_session_state_response.py` (a drift guard that fails if a\nfield is added to one and not the other).",
+        "properties": {
+          "active_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Id"
+          },
+          "active_lens": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "distance": "#/components/schemas/DistanceLens",
+                    "travel_time": "#/components/schemas/TravelTimeLens"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TravelTimeLens"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DistanceLens"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Lens"
+          },
+          "active_listing_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListingDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "facets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResultFacets"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "map_overlays": {
+            "items": {
+              "$ref": "#/components/schemas/MapOverlay"
+            },
+            "title": "Map Overlays",
+            "type": "array"
+          },
+          "marker_lens": {
+            "$ref": "#/components/schemas/MarkerLens"
+          },
+          "preview_cards": {
+            "items": {
+              "$ref": "#/components/schemas/ListingCard"
+            },
+            "title": "Preview Cards",
+            "type": "array"
+          },
+          "result_markers": {
+            "$ref": "#/components/schemas/ColumnarMarkers"
+          },
+          "search_params": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchParams"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total_results": {
+            "default": 0,
+            "title": "Total Results",
+            "type": "integer"
+          }
+        },
+        "title": "SessionStateResponse",
+        "type": "object"
+      },
+      "TransitFilter": {
+        "description": "Filter listings by proximity to a transit stop.\n\nUse `modes` to require a specific service type (`[\"u_bahn\"]` = U-Bahn\nnearby; `[\"u_bahn\", \"s_bahn\"]` = either nearby — OR semantics). Use\n`lines` to require a specific line name (`[\"U8\"]` = a stop served by\nU8). Use `stop_name` to match by name fragment (`\"Wittenau\"` matches\n\"S+U Wittenau\"). All three can combine.",
+        "properties": {
+          "distance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "near",
+            "title": "Distance"
+          },
+          "lines": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lines"
+          },
+          "modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "mainline",
+                    "regional",
+                    "s_bahn",
+                    "u_bahn",
+                    "bus",
+                    "tram",
+                    "ferry"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modes"
+          },
+          "stop_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Name"
+          }
+        },
+        "title": "TransitFilter",
+        "type": "object"
+      },
+      "TravelTimeLens": {
+        "description": "The active commute lens — travel time from the anchor, via a routing\nengine (OSRM car / MOTIS transit). Consumed by `RoutingService.resolve`.\n\n`max_minutes` set → hard filter (drop listings over the limit); None →\nannotate + colour only. `schedule_as_of` / `schedule_stale` describe the\nTRANSIT timetable the result was computed against — the routing layer stamps\nthem when a lapsed MOTIS feed forces the departure to be clamped, so the UI\ncan say \"schedule as of <date>\". Both stay defaulted for car mode.",
+        "properties": {
+          "anchor_label": {
+            "title": "Anchor Label",
+            "type": "string"
+          },
+          "anchor_lat": {
+            "title": "Anchor Lat",
+            "type": "number"
+          },
+          "anchor_lng": {
+            "title": "Anchor Lng",
+            "type": "number"
+          },
+          "kind": {
+            "const": "travel_time",
+            "default": "travel_time",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Minutes"
+          },
+          "mode": {
+            "default": "transit",
+            "enum": [
+              "transit",
+              "car"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "near_place_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Place Ref"
+          },
+          "schedule_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule As Of"
+          },
+          "schedule_stale": {
+            "default": false,
+            "title": "Schedule Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "anchor_label",
+          "anchor_lat",
+          "anchor_lng"
+        ],
+        "title": "TravelTimeLens",
+        "type": "object"
+      },
+      "UserRead": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_superuser": {
+            "default": false,
+            "title": "Is Superuser",
+            "type": "boolean"
+          },
+          "is_verified": {
+            "default": false,
+            "title": "Is Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "title": "UserRead",
+        "type": "object"
+      },
+      "UserUpdate": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "is_superuser": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Superuser"
+          },
+          "is_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Verified"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "title": "UserUpdate",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WaterFilter": {
+        "description": "Filter listings by proximity to a water body, optionally by kind.\n\n`kinds` narrows to specific water types — `[\"lake\"]` = standing water\n(Seen/Teiche), `[\"river\"]` = flowing water (rivers, canals, the Spree),\n`[\"harbor\"]` = Hafen. Omit `kinds` for \"near ANY water\". Multiple kinds\ncombine with OR (\"near a lake or river\"). The Berlin GDI source has no\ndistinct \"canal\" class — canals are flowing water, so map them to\n`\"river\"`. `kinds` resolve to raw German `water_kind` values via\n`listings.labels.WATER_KIND_TO_RAW`.",
+        "properties": {
+          "distance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "next_to",
+                  "very_near",
+                  "near",
+                  "walking_distance",
+                  "bike_distance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "near",
+            "title": "Distance"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "lake",
+                    "river",
+                    "harbor"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
+          }
+        },
+        "title": "WaterFilter",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyCookie": {
+        "in": "cookie",
+        "name": "flatchatauth",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "Backend for the **Berlin Apartment AI Assistant** — a conversational\napartment-search app.\n\nThis is an internal backend-for-frontend (BFF): the routes here are consumed by\nthe project's own React SPA, not published as a public API. The two channels:\n\n- **`POST /api/agent`** — AG-UI Protocol streaming (SSE). Owns *interpretation*:\n  natural language → structured search, tool calls, and `SessionState` deltas.\n  Not a JSON endpoint; it streams AG-UI events.\n- **HTTP REST** (`/api/listings`, `/api/conversations`, `/api/bookmarks`, ...) —\n  durable, cacheable reads and conversation/bookmark lifecycle.\n\nAuth is a signed httpOnly JWT cookie (fastapi-users); most routes are\nownership-checked (a foreign resource returns 404, not 403).\n",
+    "title": "flat-chat API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/agent": {
+      "post": {
+        "description": "AG-UI streaming endpoint.\n\nThe frontend (CopilotKit + `useCoAgent`) POSTs an AG-UI envelope here\nthat carries `thread_id` (= session id, created via POST /api/conversations),\nthe running message history, and the current UiState. The adapter streams\nSSE events back: text deltas, tool-call lifecycle, and JSON-Patch state\ndeltas that mutate the frontend's mirrored `UiState` slice.\n\nNote on CopilotKit's runtime-discovery probe: at boot the client POSTs\n`{\"method\":\"info\"}` to this URL to ask the runtime what agents exist.\nWe deliberately do NOT short-circuit that here — returning a synthetic\n`agents` list would make CopilotKit route messages via the runtime\nclient, bypassing the `agents__unsafe_dev_only` HttpAgent we wired on\nthe React side. The probe is allowed to flow into the AG-UI adapter\nand 422 (translated here at the API layer from\n`InvalidAgentRequestError` instead of crashing with a 500);\nCopilotKit logs a warning and falls back to the self-managed\nagent. The visible dev-console nag is suppressed by the\n`<cpk-web-inspector>` hider in `main.tsx`. The GET probe routes above\n(`/api/agent/info`, `/api/agent/threads`) cover the runtime queries\nthat CopilotKit issues over GET.",
+        "operationId": "run_agent_api_agent_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Run Agent",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/agent/info": {
+      "get": {
+        "operationId": "runtime_info_get_api_agent_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runtime Info Get Api Agent Info Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Info Get",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/agent/threads": {
+      "get": {
+        "description": "CopilotKit also queries threads at boot; return an empty list.",
+        "operationId": "runtime_threads_api_agent_threads_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {},
+                    "type": "array"
+                  },
+                  "title": "Response Runtime Threads Api Agent Threads Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Threads",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "auth_cookie_login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_auth_cookie_login_api_auth_login_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "LOGIN_BAD_CREDENTIALS": {
+                    "summary": "Bad credentials or the user is inactive.",
+                    "value": {
+                      "detail": "LOGIN_BAD_CREDENTIALS"
+                    }
+                  },
+                  "LOGIN_USER_NOT_VERIFIED": {
+                    "summary": "The user is not verified.",
+                    "value": {
+                      "detail": "LOGIN_USER_NOT_VERIFIED"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth:Cookie.Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "auth_cookie_logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Auth:Cookie.Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "users_current_user_api_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Users:Current User",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "users_patch_current_user_api_auth_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "UPDATE_USER_EMAIL_ALREADY_EXISTS": {
+                    "summary": "A user with this email already exists.",
+                    "value": {
+                      "detail": "UPDATE_USER_EMAIL_ALREADY_EXISTS"
+                    }
+                  },
+                  "UPDATE_USER_INVALID_PASSWORD": {
+                    "summary": "Password validation failed.",
+                    "value": {
+                      "detail": {
+                        "code": "UPDATE_USER_INVALID_PASSWORD",
+                        "reason": "Password should beat least 3 characters"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Users:Patch Current User",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/{id}": {
+      "delete": {
+        "operationId": "users_delete_user_api_auth__id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Users:Delete User",
+        "tags": [
+          "auth"
+        ]
+      },
+      "get": {
+        "operationId": "users_user_api_auth__id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Users:User",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "users_patch_user_api_auth__id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "UPDATE_USER_EMAIL_ALREADY_EXISTS": {
+                    "summary": "A user with this email already exists.",
+                    "value": {
+                      "detail": "UPDATE_USER_EMAIL_ALREADY_EXISTS"
+                    }
+                  },
+                  "UPDATE_USER_INVALID_PASSWORD": {
+                    "summary": "Password validation failed.",
+                    "value": {
+                      "detail": {
+                        "code": "UPDATE_USER_INVALID_PASSWORD",
+                        "reason": "Password should beat least 3 characters"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing token or inactive user."
+          },
+          "403": {
+            "description": "Not a superuser."
+          },
+          "404": {
+            "description": "The user does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Users:Patch User",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/bookmarks": {
+      "get": {
+        "description": "Hydrated tier-2 cards for the bookmark sidebar (and bookmark-mode map\npins). Newest first.",
+        "operationId": "list_bookmarks_api_bookmarks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ListingCard"
+                  },
+                  "title": "Response List Bookmarks Api Bookmarks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Bookmarks",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/api/bookmarks/ids": {
+      "get": {
+        "description": "Just the ids — fast mount-time hydration of star-state on every card.\n\nNewest-first by `created_at`, but the frontend only cares about set\nmembership; order is informational.",
+        "operationId": "list_bookmark_ids_api_bookmarks_ids_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Bookmark Ids Api Bookmarks Ids Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Bookmark Ids",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/api/bookmarks/{listing_id}": {
+      "delete": {
+        "description": "Remove a bookmark. 204 either way — idempotent for optimistic UI.",
+        "operationId": "remove_bookmark_api_bookmarks__listing_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listing_id",
+            "required": true,
+            "schema": {
+              "title": "Listing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Remove Bookmark",
+        "tags": [
+          "bookmarks"
+        ]
+      },
+      "post": {
+        "description": "Bookmark a listing. Idempotent — re-adding is 200, not 409.\n\nA well-formed but non-existent listing id → 404 (the listing FK can't be\nsatisfied) rather than a 500 from the raw IntegrityError.",
+        "operationId": "add_bookmark_api_bookmarks__listing_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listing_id",
+            "required": true,
+            "schema": {
+              "title": "Listing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Add Bookmark Api Bookmarks  Listing Id  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Add Bookmark",
+        "tags": [
+          "bookmarks"
+        ]
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "description": "Powers the conversation-list sidebar.\n\nReturns the calling user's conversations that have at least one message\n(empty threads from a \"+ New chat\" click that never sent a prompt are\nfiltered out). Newest-first by `updated_at`. Empty list when the user has\nno rows — never 404.",
+        "operationId": "list_conversations_api_conversations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationSummary"
+                  },
+                  "title": "Response List Conversations Api Conversations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Conversations",
+        "tags": [
+          "conversations"
+        ]
+      },
+      "post": {
+        "description": "Allocate a new conversation. The returned id is used as the AG-UI `thread_id`.",
+        "operationId": "create_conversation_api_conversations_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Conversation",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/conversations/{conversation_id}": {
+      "delete": {
+        "description": "Hard-delete a conversation owned by the caller.\n\nCascades to `app.messages` and `app.session_state` via FK\n`ON DELETE CASCADE`. Returns 204 on success; 404 (NOT 403) for missing\nOR foreign rows so existence doesn't leak across users.",
+        "operationId": "delete_conversation_api_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Conversation",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/conversations/{conversation_id}/messages": {
+      "get": {
+        "description": "History reload — used by the frontend after a page refresh.\n\nReturns the full AG-UI message stream (text + tool calls + tool results) so\nthe frontend restores the same transcript it rendered live — tool \"finishes\"\n(e.g. \"Found 12 apartments\") are messages and persist. Sending new messages\ngoes through the AG-UI streaming route at /api/agent; this endpoint is\nread-only.",
+        "operationId": "get_messages_api_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Get Messages Api Conversations  Conversation Id  Messages Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Messages",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/conversations/{conversation_id}/state": {
+      "get": {
+        "description": "Latest SessionState snapshot — the cross-reload recovery primitive.\n\nReturns the same shape the AG-UI `STATE_SNAPSHOT` event emits (markers in\ncolumnar form, preview cards, active listing), so the frontend mirror can\napply it directly via `useCoAgent().setState`. A conversation with no turns\nyet returns the default/empty SessionState.\n\nThe body is `SessionState.model_dump(mode=\"json\")` (already columnar via the\nfield serializer); `response_model=SessionStateResponse` types that exact\nwire shape so the OpenAPI schema is accurate rather than `object`.",
+        "operationId": "get_state_api_conversations__conversation_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get State",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "description": "Health check.\n\nBasic mode (no `?extended=true`): no DB hit. Returns `{\"status\": \"ok\"}`.\n\nExtended mode (`?extended=true`): includes a `gold_orphans` count —\nsilver listings with no `listings_geo_context` row. Non-zero means\nsilver landed but the gold ETL chain didn't (or failed for those\nrows); each orphan listing is invisible to every geo filter. Ops\ndecide whether to fail; we just surface the number.\n\nAlso reports `transit_feed` — the MOTIS timetable window ({first_day,\nlast_day, stale}) so ops can spot a lapsed VBB feed (stale=true → the\ntransit lens is clamping departures; re-run scripts/prep-routing.sh).\n`null` when MOTIS is unreachable / has no timetable loaded.",
+        "operationId": "health_api_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "extended",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Extended",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/listings": {
+      "get": {
+        "description": "Batch-read listings by id, in the requested order.\n\nThe lazy-hydrate path for the card strip. `view` selects the\nrepresentation; only `card` (tier-2) is implemented on the collection —\ntier-3 detail is the single-item route `GET /api/listings/{id}`. Returns\ncards in the same order as `ids`; ids with no matching listing are\nomitted. Cacheable (`view` is in the query string, so cache keys per\n`(ids, view)`).",
+        "operationId": "list_listings_api_listings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Ids",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListingView",
+              "default": "card"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ListingCard"
+                  },
+                  "title": "Response List Listings Api Listings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Listings",
+        "tags": [
+          "listings"
+        ]
+      }
+    },
+    "/api/listings/{listing_id}": {
+      "get": {
+        "description": "Return one listing's full tier-3 detail.\n\nCache-Control: 5 minutes — gold rebuilds on the daily listings ETL\ncadence, so a 5-minute browser cache covers re-clicks within a\nsingle user session without serving stale data across days.",
+        "operationId": "get_listing_api_listings__listing_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listing_id",
+            "required": true,
+            "schema": {
+              "title": "Listing Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Listing",
+        "tags": [
+          "listings"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Login/logout (cookie) and user (`/me`) routes.",
+      "name": "auth"
+    },
+    {
+      "description": "Conversation lifecycle: create, list (sidebar), history reload, `SessionState` snapshot (reload recovery), and hard delete.",
+      "name": "conversations"
+    },
+    {
+      "description": "The AG-UI Protocol SSE endpoint. Streams text, tool-call lifecycle, and JSON-Patch state deltas — not a plain JSON response.",
+      "name": "agent"
+    },
+    {
+      "description": "Direct listing reads: tier-3 detail by id and batch tier-2 card hydration (`?ids=&view=card`). Browser-cacheable.",
+      "name": "listings"
+    },
+    {
+      "description": "Per-user saved listings (idempotent add/remove).",
+      "name": "bookmarks"
+    },
+    {
+      "description": "Liveness + optional gold-drift / transit-feed checks.",
+      "name": "health"
+    }
+  ]
+}
