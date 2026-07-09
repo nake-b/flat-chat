@@ -41,6 +41,19 @@ green `just check` means green CI.
 
 ## API Endpoints
 
+**Interactive docs / machine-readable spec.** FastAPI auto-generates an OpenAPI
+3.1 schema. In local dev (backend on `:8000`) it's served at
+[`/docs`](http://localhost:8000/docs) (Swagger UI),
+[`/redoc`](http://localhost:8000/redoc), and `/openapi.json`. These are *not*
+exposed through Nginx — this is an internal BFF, so the docs stay a dev/demo
+convenience. A static copy of the spec is committed at
+[`docs/openapi.json`](docs/openapi.json) (the artifact to read without running
+the stack); regenerate it after changing any route with:
+
+```bash
+uv run python scripts/export_openapi.py   # no running server needed
+```
+
 | Endpoint                                  | Method | Description                                                                                                |
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |

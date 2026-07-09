@@ -1,6 +1,8 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 
 from fastapi import Depends, FastAPI
 from sqlalchemy import text
@@ -32,7 +34,68 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shutdown_observability()
 
 
-app = FastAPI(title="flat-chat API", lifespan=lifespan)
+try:
+    _API_VERSION = pkg_version("flat-chat-backend")
+except PackageNotFoundError:  # not installed (e.g. bare source checkout)
+    _API_VERSION = "0.0.0"
+
+_DESCRIPTION = """\
+Backend for the **Berlin Apartment AI Assistant** — a conversational
+apartment-search app.
+
+This is an internal backend-for-frontend (BFF): the routes here are consumed by
+the project's own React SPA, not published as a public API. The two channels:
+
+- **`POST /api/agent`** — AG-UI Protocol streaming (SSE). Owns *interpretation*:
+  natural language → structured search, tool calls, and `SessionState` deltas.
+  Not a JSON endpoint; it streams AG-UI events.
+- **HTTP REST** (`/api/listings`, `/api/conversations`, `/api/bookmarks`, ...) —
+  durable, cacheable reads and conversation/bookmark lifecycle.
+
+Auth is a signed httpOnly JWT cookie (fastapi-users); most routes are
+ownership-checked (a foreign resource returns 404, not 403).
+"""
+
+_OPENAPI_TAGS = [
+    {"name": "auth", "description": "Login/logout (cookie) and user (`/me`) routes."},
+    {
+        "name": "conversations",
+        "description": (
+            "Conversation lifecycle: create, list (sidebar), history reload, "
+            "`SessionState` snapshot (reload recovery), and hard delete."
+        ),
+    },
+    {
+        "name": "agent",
+        "description": (
+            "The AG-UI Protocol SSE endpoint. Streams text, tool-call lifecycle, "
+            "and JSON-Patch state deltas — not a plain JSON response."
+        ),
+    },
+    {
+        "name": "listings",
+        "description": (
+            "Direct listing reads: tier-3 detail by id and batch tier-2 card "
+            "hydration (`?ids=&view=card`). Browser-cacheable."
+        ),
+    },
+    {
+        "name": "bookmarks",
+        "description": "Per-user saved listings (idempotent add/remove).",
+    },
+    {
+        "name": "health",
+        "description": "Liveness + optional gold-drift / transit-feed checks.",
+    },
+]
+
+app = FastAPI(
+    title="flat-chat API",
+    version=_API_VERSION,
+    description=_DESCRIPTION,
+    openapi_tags=_OPENAPI_TAGS,
+    lifespan=lifespan,
+)
 
 # Auth (fastapi-users) — login/logout (cookie) + the user routes (/me), under
 # /api/auth. `get_user_id()` reads the cookie these set. No register router:
@@ -69,7 +132,7 @@ app.include_router(
 )
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["health"])
 async def health(
     extended: bool = False,
     db: AsyncSession = Depends(get_async_db),

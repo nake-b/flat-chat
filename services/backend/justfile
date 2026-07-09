@@ -31,6 +31,10 @@ check: lint format-check typecheck test
 dev:
     uv run uvicorn flat_chat.main:app --host 0.0.0.0 --port 8000 --reload
 
+# Regenerate the committed OpenAPI spec at docs/openapi.json (no server needed).
+openapi:
+    uv run python scripts/export_openapi.py
+
 # Recipes below expand $POSTGRES_USER / $POSTGRES_DB inside the postgres
 # container's shell (not the dev's host shell) so they always resolve from
 # the container env vars, regardless of whether the dev's shell has them.
