@@ -76,6 +76,56 @@ tree.write('/tmp/preview.drawio', xml_declaration=True, encoding='unicode')
 # Then pass content of /tmp/preview.drawio to mcp__drawio__open_drawio_xml
 ```
 
+## Rendering a preview WITHOUT the draw.io MCP (self-service render loop)
+
+If the draw.io MCP isn't available and `draw.io.app` can't export (its Electron CLI
+needs a GUI session — from an agent shell `--export` prints `Error: Export failed`
+and writes nothing), you can still SEE your edits. This loop was proven out in the
+v3 routing pass — **use it; never ship a blind edit again:**
+
+1. **Strip shadows** from a copy (`shadow="1"`→`shadow="0"` on the model + `shadow=1;`
+   in cell styles). Shadows crash the headless exporter. **Real images can stay** — the
+   SVG exporter + Chrome handle them fine (only the docker *PNG* exporter crashes on them).
+2. **Export to SVG via the headless docker image** (this is the reliable exporter;
+   the docker *PNG* exporter is GPU-flaky and often fails with `Empty export data`):
+   ```bash
+   docker run --rm -v "$PWD":/data rlespinasse/drawio-desktop-headless \
+     -x -f svg -o /data/preview.svg /data/preview.drawio
+   ```
+3. **Force a white background** in the SVG (replace `background: transparent` and
+   `color-scheme: light dark`, and inject a white `<rect>` as the first child) — else
+   pale-filled cards render dark/invisible.
+4. **Rasterize with headless Google Chrome** — this is the renderer that faithfully
+   draws the HTML labels (`foreignObject`). `qlmanage` works but **silently drops the
+   later `foreignObject` labels** (QuickLook caps them), so boxes render with no text —
+   don't trust it for text. Chrome:
+   ```bash
+   CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+   "$CHROME" --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
+     --window-size=2400,1090 --screenshot=/tmp/full.png "file:///tmp/full.svg"
+   ```
+   Set `--window-size` to the SVG's aspect ratio. Then `Read /tmp/full.png`.
+5. **To zoom a region:** do NOT crop by changing the SVG `viewBox` — that breaks
+   `foreignObject` positioning in Chrome (text disappears). Instead wrap the *inline*
+   SVG in an HTML file inside a scaled/translated `<div>` and screenshot that:
+   ```html
+   <div style="transform:scale(3.4) translate(-882px,-262px);transform-origin:0 0">…inline SVG…</div>
+   ```
+   `<img src=svg>` does NOT render foreignObject — the SVG must be inlined in the HTML.
+
+## Gotchas that cost a full blind-shipped revision
+
+- **New vertex cells MUST carry `vertex="1"`.** If you `ET.SubElement` a shape cell
+  and forget it, draw.io still resolves edges that target it (endpoints land in the
+  right place) but **never draws the box** — you get arrows pointing into empty space.
+  Edges likewise need `edge="1"`. This silently passed every geometry/overlap check
+  and only showed up on render.
+- **`shadow="1"` on `<mxGraphModel>` crashes the headless renderer** (`Export failed`).
+  Strip it (and per-cell `shadow=1`) for previews only; keep it in the real file.
+- **Pale fills vanish on a transparent/dark preview.** The exported SVG carries
+  `color-scheme: light dark`; render on a forced white background or near-white cards
+  (`#F0FDFA`, `#EEF2FF`) look empty.
+
 ### Verify horizontal line alignment
 
 The diagram's key constraint is that DB read/write arrows stay perfectly horizontal. This depends on absolute Y positions matching between connected cells. Use this script to verify:
