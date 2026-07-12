@@ -13,6 +13,7 @@ from pydantic_ai import Embedder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from flat_chat.chat.sessions import DbSessionStore, SessionStore
+from flat_chat.chat.usage import UsageService
 from flat_chat.core.config import settings
 from flat_chat.core.database import AsyncSessionLocal, get_async_db
 from flat_chat.core.embedder import get_embedder
@@ -36,6 +37,16 @@ _session_store: SessionStore = DbSessionStore(AsyncSessionLocal)
 
 def get_session_store() -> SessionStore:
     return _session_store
+
+
+# Process-lifetime singleton, same rationale as `_session_store`: it owns its own
+# DB sessions (via AsyncSessionLocal) because `record()` runs from `on_complete`
+# at the END of the SSE stream, after the request scope is gone.
+_usage_service = UsageService(AsyncSessionLocal)
+
+
+def get_usage_service() -> UsageService:
+    return _usage_service
 
 
 async def get_user_id(user: User = Depends(current_active_user)) -> str:
@@ -126,6 +137,7 @@ def get_chat_service(
     routing_service: RoutingService = Depends(get_routing_service),
     distance_service: DistanceService = Depends(get_distance_service),
     store: SessionStore = Depends(get_session_store),
+    usage_service: UsageService = Depends(get_usage_service),
 ):
     # Import here to break the import cycle: chat/service.py imports
     # ChatDeps from chat/state.py which imports from listings/.
@@ -139,4 +151,5 @@ def get_chat_service(
         routing_service=routing_service,
         distance_service=distance_service,
         store=store,
+        usage_service=usage_service,
     )

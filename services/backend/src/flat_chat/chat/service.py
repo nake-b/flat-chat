@@ -16,6 +16,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from pydantic import ValidationError
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -25,6 +26,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
+from pydantic_ai.usage import UsageLimits
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -35,6 +37,8 @@ from flat_chat.chat.sessions import SessionNotFoundError, SessionStore
 from flat_chat.chat.state import ChatDeps
 from flat_chat.chat.title_gen import TitleGenerationService, is_first_completed_turn
 from flat_chat.chat.tools import SEARCH_TOOL_NAME
+from flat_chat.chat.usage import QuotaExceededError, UsageService
+from flat_chat.core.config import settings
 from flat_chat.core.observability import run_id_var, session_id_var
 from flat_chat.listings.service import ListingService
 from flat_chat.routing.service import RoutingService
@@ -68,6 +72,25 @@ _background_tasks: set[asyncio.Task[None]] = set()
 # false-trips a healthy run, but low enough that a real freeze surfaces in ~1 min
 # instead of the multi-minute hang users were hitting.
 _SSE_INACTIVITY_TIMEOUT_S = 60.0
+
+# Per-run backstop (§4 in llm-rate-limit.md). A runaway agent loop (tool-call
+# ping-pong, oversized context) is a failure mode at a SINGLE user, independent
+# of auth or the per-user budget — so these caps ALWAYS apply. Sized well above a
+# legitimate complex turn (`locate_place → search_apartments → apply_*_lens →
+# show_on_map` is ~4 tool calls before retries, plus the deferred capability's
+# `load_capability`/`search_tools`) so a healthy run never trips them; they're
+# rails, not a tuning knob. A breach raises `UsageLimitExceeded` mid-run, which
+# truncates the SSE stream — `_with_session_and_lock` renders that as a graceful
+# notice rather than a raw error. Revisit the numbers against real Phoenix
+# transcripts if they ever false-trip.
+_PER_RUN_REQUEST_LIMIT = 12
+_PER_RUN_TOOL_CALLS_LIMIT = 24
+_PER_RUN_TOKEN_CAP = 300_000
+
+# Floor for the per-user gate: if a caller's remaining budget is below this, the
+# run would almost certainly abort mid-stream (truncated reply) — so reject
+# upfront (clean 429) instead of starting a doomed run. Roughly one minimal turn.
+_MIN_RUN_TOKENS = 8_000
 
 
 class InvalidAgentRequestError(Exception):
@@ -288,6 +311,7 @@ class ChatService:
         routing_service: RoutingService,
         distance_service: DistanceService,
         store: SessionStore,
+        usage_service: UsageService | None = None,
     ) -> None:
         self.search_service = search_service
         self.listing_service = listing_service
@@ -296,6 +320,12 @@ class ChatService:
         self.routing_service = routing_service
         self.distance_service = distance_service
         self.store = store
+        # Optional so unit tests can construct ChatService without it (same
+        # None-for-unused-collaborator convention as the services above);
+        # production always injects a real one via core/dependencies.py. When
+        # None, the per-user gate + accounting are skipped (the per-run backstop
+        # in run_stream still applies).
+        self.usage_service = usage_service
 
     async def dispatch_agent_request(self, request: Request, user_id: str) -> Response:
         # Parse the AG-UI request envelope first so we can resolve the
@@ -343,6 +373,31 @@ class ChatService:
             logger.warning("Agent request for foreign session — 404")
             raise SessionNotFoundError(session_id)
 
+        # Per-user budget gate (§3). Read the rolling-24h spend and reject a
+        # caller who's exhausted their budget BEFORE spending a token — a clean
+        # 429 (mapped in api/agent.py), not a truncated mid-stream abort. Also
+        # derive this run's `total_tokens_limit`: the smaller of the per-run cap
+        # and what's left, so a nearly-exhausted user can't overspend by one big
+        # run. `budget == 0` disables the per-user gate; the per-run backstop
+        # still applies. Runs BEFORE the W3 prompt-persist below so a rejected
+        # turn stores nothing.
+        run_token_cap = _PER_RUN_TOKEN_CAP
+        budget = settings.llm_daily_token_budget
+        if budget > 0 and self.usage_service is not None:
+            spent = await self.usage_service.spent_last_24h(user_id)
+            remaining = budget - spent
+            if remaining < _MIN_RUN_TOKENS:
+                logger.info(
+                    "Usage budget reached: user=%s spent=%d budget=%d",
+                    user_id,
+                    spent,
+                    budget,
+                )
+                raise QuotaExceededError(
+                    "Daily usage limit reached — please try again later."
+                )
+            run_token_cap = min(_PER_RUN_TOKEN_CAP, remaining)
+
         # Session exists, so lock() will not raise. Resolve the lock here so
         # the inner generator below holds a reference for the stream's
         # lifetime — the `async with` lives inside the generator because
@@ -377,6 +432,12 @@ class ChatService:
             session.state = deps.state
             await self.store.save(session)
             logger.info("Agent complete: messages=%d", len(session.message_history))
+
+            # Account this run's tokens against the user's budget (§3). Runs
+            # after persistence and is best-effort inside `record()` — a ledger
+            # failure must never break the turn (the reply already streamed).
+            if self.usage_service is not None:
+                await self.usage_service.record(user_id, result.usage, session_id)
 
             # Fire-and-forget title generation on the FIRST completed turn,
             # after persistence has returned. Background-task isolation keeps
@@ -428,6 +489,11 @@ class ChatService:
             model=model,
             message_history=message_history,
             on_complete=on_complete,
+            usage_limits=UsageLimits(
+                request_limit=_PER_RUN_REQUEST_LIMIT,
+                tool_calls_limit=_PER_RUN_TOOL_CALLS_LIMIT,
+                total_tokens_limit=run_token_cap,
+            ),
         )
         return adapter.streaming_response(
             _with_session_and_lock(stream, session_id, lock)
@@ -594,6 +660,15 @@ async def _with_session_and_lock(
     propagates untouched rather than becoming a spurious error event.
     """
     _RETRY_MSG = "Sorry — I hit a problem reaching the model. Please try that again."
+    # A per-run limit / budget breach is NOT a transient blip — retrying the same
+    # prompt hits the same wall — so the copy guides the user to narrow instead of
+    # implying "try again". Covers both the runaway backstop and the
+    # budget-edge (`min(cap, remaining)`) case; the frontend renders it the same
+    # as any RUN_ERROR (resolves the pill, shows the text).
+    _LIMIT_MSG = (
+        "I had to stop this response — it was getting too long or you've reached "
+        "your usage limit. Try a more specific question or start a new message."
+    )
     _EVENT, _DONE, _ERROR = "event", "done", "error"
 
     async def _produce(q: asyncio.Queue[tuple[str, Any]]) -> None:
@@ -603,6 +678,12 @@ async def _with_session_and_lock(
             await q.put((_DONE, None))
         except asyncio.CancelledError:
             raise  # cooperative cancellation (client disconnect / our cleanup)
+        except UsageLimitExceeded:
+            # Per-run backstop or budget-edge cap tripped mid-stream (§4). Distinct
+            # from a provider failure — emit the guiding message, not the generic
+            # "reaching the model" retry text.
+            logger.warning("Run hit usage limit mid-stream — emitting graceful notice")
+            await q.put((_ERROR, _LIMIT_MSG))
         except BaseException:  # noqa: BLE001
             # Catch EVERYTHING else — not just `Exception`. The anthropic/httpx
             # streaming path on 3.14 can surface a provider failure as a
@@ -635,9 +716,11 @@ async def _with_session_and_lock(
                         yield payload
                     elif kind == _DONE:
                         return
-                    else:  # _ERROR (already logged with traceback in the producer)
+                    else:  # _ERROR (already logged in the producer). `payload`
+                        # carries a specific message (e.g. the usage-limit notice)
+                        # or None → the generic provider-retry text.
                         yield RunErrorEvent(
-                            type=EventType.RUN_ERROR, message=_RETRY_MSG
+                            type=EventType.RUN_ERROR, message=payload or _RETRY_MSG
                         )
                         return
             finally:

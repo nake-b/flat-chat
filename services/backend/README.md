@@ -145,6 +145,7 @@ Values are read from environment variables (set via root `.env` or Docker Compos
 | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name from Foundry (often matches the model name)                                                            | —                                  |
 | `AZURE_OPENAI_API_VERSION` | API version — use a preview version for o-series reasoning models                                                      | `2024-12-01-preview`               |
 | `AZURE_OPENAI_TITLE_DEPLOYMENT` | Optional separate Azure deployment for title generation. Empty = reuse `AZURE_OPENAI_DEPLOYMENT`.                 | `""`                               |
+| `LLM_DAILY_TOKEN_BUDGET`   | Per-user rolling-24h `total_tokens` cap (pre-run 429 gate, keyed on `get_user_id()`). `0` disables the per-user gate (a per-run runaway backstop still applies). See `llm-rate-limit.md`. | `2000000`                          |
 | `JINA_API_KEY`             | Jina embeddings API key (optional — empty disables semantic search)                                                    | —                                  |
 | `JINA_BASE_URL`            | Jina API base URL                                                                                                      | `https://api.jina.ai/v1`           |
 | `PHOENIX_ENABLED`          | Enable Phoenix observability                                                                                           | `false`                            |

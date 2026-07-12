@@ -8,6 +8,7 @@ from flat_chat.chat.service import (
     LlmProviderUnavailableError,
 )
 from flat_chat.chat.sessions import SessionNotFoundError
+from flat_chat.chat.usage import QuotaExceededError
 from flat_chat.core.dependencies import get_chat_service, get_user_id
 
 router = APIRouter()
@@ -68,6 +69,12 @@ async def run_agent(
         response = await chat.dispatch_agent_request(request, user_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    except QuotaExceededError as exc:
+        # Pre-run budget gate rejected this turn — zero tokens spent. 429 is the
+        # rate-limit status; the frontend surfaces the detail as-is.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
+        ) from exc
     except InvalidAgentRequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

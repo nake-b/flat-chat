@@ -327,11 +327,16 @@ When adding a new search filter, add a test in the same change.
   (`core/dependencies.py`) resolves the authenticated user from a signed httpOnly
   JWT cookie — still the single seam, so call sites never change. Argon2 via
   `pwdlib`. Dev login seeded by `scripts/seed_users.py`. `JWT_SECRET` is
-  required. `POST /api/agent` is now ownership-checked (404-not-403). Per-user LLM
-  rate-limiting / cost-control gets its own service when built (not yet — no empty
-  placeholder). Logto is the
+  required. `POST /api/agent` is now ownership-checked (404-not-403). Logto is the
   documented future migration; Authlib (social) deferred. See
   [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+- LLM rate limiting / cost control shipped — three layers: a per-run `UsageLimits`
+  backstop on `run_stream`, nginx per-IP `limit_req`/`limit_conn` (keyed on
+  `CF-Connecting-IP` behind the tunnel), and a per-user rolling-24h token budget
+  (`chat/usage.py:UsageService` + `app.usage_ledger`, migration `0003`) gated in
+  `ChatService.dispatch_agent_request` (→ 429, zero tokens spent). Currency is
+  `total_tokens` (input+output). Config: `LLM_DAILY_TOKEN_BUDGET` (0 disables the
+  per-user gate). See [`llm-rate-limit.md`](../../agent-compound-docs/decisions/llm-rate-limit.md).
 - Bookmarks shipped — per-user saved listings via the `listings/bookmarks/`
   subpackage (`models.py` + `service.py`) + `api/bookmarks.py`. HTTP-only
   (idempotent POST/DELETE, GET /ids for fast star hydration, GET / for tier-2

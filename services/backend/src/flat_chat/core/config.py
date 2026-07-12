@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     jina_api_key: str = ""
     jina_base_url: str = "https://api.jina.ai/v1"
 
+    # Per-user LLM token budget — the §3 gate in llm-rate-limit.md. Rolling-24h
+    # cap on `total_tokens` (input + output) summed across a user's runs, keyed
+    # on `get_user_id()`. Checked BEFORE each run in
+    # `ChatService.dispatch_agent_request`: a caller over budget is rejected with
+    # 429 having spent zero tokens. `0` DISABLES the per-user gate (the per-run
+    # backstop in chat/service.py always applies regardless). Default is generous
+    # so normal chat + demos never hit it; lower it in a deployment to cap cost.
+    llm_daily_token_budget: int = 2_000_000
+
     # Routing engines (internal compose services; no public port). OSRM serves
     # car drive-time matrices; MOTIS serves public-transit travel times. Both
     # reached backend→service by hostname. See agent-compound-docs/decisions/
