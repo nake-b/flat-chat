@@ -46,7 +46,7 @@ removed in geo-context v2.)
 ```
 
 Cadence ≠ listings. WFS context refreshes **yearly to monthly** (mostly
-yearly); GTFS **weekly**. Listings refresh **daily**. So `geo_context`
+yearly); GTFS **biweekly**. Listings refresh **daily**. So `geo_context`
 runs as a **separate compose profile**, never alongside `silver.run`.
 
 ## Directory layout
@@ -126,7 +126,7 @@ There's **no compose-level scheduling** — this service is opt-in via the
 scheduling at the deployment layer (host cron, cloud scheduler, etc.).
 Suggested cadence:
 
-- **Weekly:** GTFS only
+- **Biweekly:** GTFS only
   `docker compose --profile geo-context run --rm geo-context python -m geo_context.run --only gtfs`
 - **Quarterly:** full run
 
@@ -149,7 +149,7 @@ Suggested cadence:
 | `ortsteile` | gdi.berlin.de/services/wfs/alkis_ortsteile | dl-de/zero-2-0 | rarely |
 | `inner_city_zone` (Umweltzone) | gdi.berlin.de/services/wfs/umweltzone | dl-de/zero-2-0 | rarely |
 | `water_bodies` | gdi.berlin.de/services/wfs/gewaesserkarte | dl-de/by-2-0 | rarely |
-| `transit_stops` + `transit_routes` + `transit_route_shapes` | vbb.de/vbbgtfs | CC BY 4.0 | weekly |
+| `transit_stops` + `transit_routes` + `transit_route_shapes` | vbb.de/vbbgtfs | CC BY 4.0 | biweekly |
 
 Berlin GDI data is published under Datenlizenz Deutschland — `by-2-0`
 (attribution required) or `zero-2-0` (no attribution). OSM is ODbL — keep
