@@ -154,10 +154,8 @@ async function scrapeCards(page) {
 
             const imageUrl =
               node.querySelector('.card_image img')?.getAttribute('src') || null;
-            const posterName =
-              clean(node.querySelector('.col-xs-9 .ml5')?.textContent) || null;
-            const onlineSince =
-              clean(node.querySelector('.col-xs-9 span[style*="218700"]')?.textContent) || null;
+            // PRIVACY: the poster's name and online-status are deliberately
+            // not collected. See services/ingestion/src/pii.py.
 
             return {
               card_index: index,
@@ -177,8 +175,6 @@ async function scrapeCards(page) {
               address,
               rooms,
               imageUrl,
-              posterName,
-              onlineSince,
               card_html_length: (node.outerHTML || '').length,
             };
           } catch (err) {

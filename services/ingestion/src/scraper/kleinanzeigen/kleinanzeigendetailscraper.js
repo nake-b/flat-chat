@@ -309,18 +309,13 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
       result.geo = lat && lng ? { lat: Number(lat), lng: Number(lng) } : null;
 
       // ---- Seller info ----------------------------------------------------
+      // PRIVACY: only the lister *type* (private/commercial) is kept — it feeds
+      // `lister_type` in silver. The poster's name, "active since" date, and
+      // phone number are deliberately NOT collected. See services/ingestion/src/pii.py.
       result.seller = (() => {
-        const nameEl = document.querySelector('.userprofile-vip');
-        const name = nameEl ? clean(nameEl.textContent) : null;
-
         const detailTexts = [...document.querySelectorAll('.userprofile-vip-details-text')];
         const type = detailTexts[0] ? clean(detailTexts[0].textContent) : null;
-        const activeSince = detailTexts[1] ? clean(detailTexts[1].textContent) : null;
-
-        const phoneEl = document.querySelector('#viewad-contact-phone');
-        const phone = phoneEl ? clean(phoneEl.textContent) : null;
-
-        return { name, type, activeSince, phone };
+        return { type };
       })();
 
       // ---- Scraped Ad ID --------------------------------------------------
@@ -350,11 +345,9 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
       };
 
       // ---- Embedded state -------------------------------------------------
-      const inlineScripts = [...document.querySelectorAll('script:not([src])')];
-      result.embeddedState = inlineScripts
-        .map((s) => s.textContent || '')
-        .filter((text) => /window\.__|dataLayer\s*=|liberty\.config/i.test(text))
-        .map((text) => text.slice(0, 8000));
+      // PRIVACY: the inline-<script> catch-all (dataLayer / liberty.config /
+      // window.__*) is NOT collected — it is an unbounded blob that can carry
+      // session/user data and nothing downstream consumes it.
 
       return result;
     },

@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from db import get_session, get_table
+from pii import strip_pii
 
 
 def _lookup_iron_card_id(
@@ -49,6 +50,9 @@ def load_json(path: Path, session: Session) -> int:
     for record in records:
         source_name = record.get("listing_source", "unknown")
         external_id = str(record["id"])
+        # Strip poster PII before it ever reaches the DB — the choke point all
+        # bronze-bound records (live + replayed) pass through. See pii.py.
+        record = strip_pii(record, source_name, "bronze")
         iron_card_id = _lookup_iron_card_id(session, source_name, external_id)
 
         values = {

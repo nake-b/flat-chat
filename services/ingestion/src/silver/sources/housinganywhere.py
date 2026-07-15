@@ -23,6 +23,7 @@ from .common import (
     parse_float_str,
     parse_int_str,
     parse_sqm,
+    redact_freetext,
 )
 
 
@@ -147,10 +148,12 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
         "title": ld.get("name") or og.get("og:title") or card.get("title"),
         "headline": None,
-        "description": entity.get("description")
-        or (entity.get("property") or {}).get("description")
-        or ld.get("description")
-        or og.get("og:description"),
+        "description": redact_freetext(
+            entity.get("description")
+            or (entity.get("property") or {}).get("description")
+            or ld.get("description")
+            or og.get("og:description")
+        ),
         "rooms": rooms,
         "bedrooms": bedrooms,
         "bathrooms": parse_int_str(fac.get("bathroom_count")),

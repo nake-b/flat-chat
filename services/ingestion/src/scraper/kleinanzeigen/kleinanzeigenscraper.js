@@ -183,7 +183,7 @@ async function scrapeCards(page) {
           const dataAdId = node.getAttribute('data-adid') || null;
           const dataHref = node.getAttribute('data-href') || null;
 
-          let titleAnchor, priceText, locationText, detailsText, descText, sellerName, tags;
+          let titleAnchor, priceText, locationText, detailsText, descText, tags;
 
           if (isOldLayout) {
             // --- old BEM layout ---
@@ -206,7 +206,6 @@ async function scrapeCards(page) {
 
             const tagListEl = node.querySelector('.simpletag-list, .aditem-main--bottom');
             tags = tagListEl ? [clean(tagListEl.textContent)].filter(Boolean) : [];
-            sellerName = null;
           } else {
             // --- new Tailwind layout ---
             titleAnchor =
@@ -220,7 +219,6 @@ async function scrapeCards(page) {
 
             detailsText = clean(node.querySelector('p.font-strong.text-onSurfaceSubdued')?.textContent) || null;
             descText = clean(node.querySelector('p.text-onSurfaceSubdued.text-bodyRegular')?.textContent) || null;
-            sellerName = clean(node.querySelector('span.text-bodyRegularStrong.text-onSurfaceSubdued')?.textContent) || null;
 
             const tagEls = node.querySelectorAll('span.rounded-xsmall.text-bodySmall.text-onSurfaceSubdued');
             tags = [...tagEls].map((el) => clean(el.textContent)).filter(Boolean);
@@ -242,7 +240,6 @@ async function scrapeCards(page) {
             details_text: detailsText,
             description_text: descText,
             tags,
-            seller_name: sellerName,
             images: collectImages(node),
             ld_json: parseLdJson(node),
             data_attributes: collectDataAttrs(node),
@@ -326,26 +323,15 @@ async function scrapeDetail(page) {
       ),
     ];
 
-    const seller =
-      clean(document.querySelector('.userprofile-vip-name')?.textContent) ||
-      clean(document.querySelector('#viewad-contact .userprofile-vip a')?.textContent) ||
-      null;
-    const sellerType =
-      clean(document.querySelector('.userprofile-details')?.textContent) ||
-      clean(document.querySelector('.userprofile-vip-details')?.textContent) ||
-      null;
-    const sellerProfileHref = safeAttr('.userprofile-vip-name a, #viewad-contact .userprofile-vip a', 'href');
-
+    // PRIVACY: the poster's name, lister-type text (may embed an "active since"
+    // date), profile URL, and the inline-<script> embedded-state catch-all are
+    // deliberately NOT collected. Kleinanzeigen's lister type is sourced
+    // downstream from the bronze detail payload (dump.seller.type), not from
+    // this card scraper. See services/ingestion/src/pii.py.
     const adIdNode = [...document.querySelectorAll('#viewad-ad-id-box, .l-container .text-light')].find((node) =>
       /Anzeigen-?ID/i.test(node.textContent || '')
     );
     const visibleAdId = clean(adIdNode?.textContent);
-
-    const inlineScripts = [...document.querySelectorAll('script:not([src])')];
-    const embeddedStateSnippets = inlineScripts
-      .map((s) => s.textContent || '')
-      .filter((text) => /window\.__|__INITIAL_STATE__|__NUXT__|dataLayer\s*=|liberty\.config|belen_conf/i.test(text))
-      .map((text) => text.slice(0, 8000));
 
     return {
       pageTitle: document.title || null,
@@ -363,12 +349,8 @@ async function scrapeDetail(page) {
       details,
       features,
       images,
-      seller,
-      sellerType,
-      sellerProfileHref,
       visibleAdId,
       ldJson,
-      embeddedStateSnippets,
     };
   });
 }
@@ -527,7 +509,6 @@ function buildBronzeRow({ card, detail, finalUrl, detailStatus, extractionNotes 
       detail,
       embedded_json: (detail && detail.ldJson) || [],
       images,
-      scripts_or_state: (detail && detail.embeddedStateSnippets) || [],
     },
   };
 }

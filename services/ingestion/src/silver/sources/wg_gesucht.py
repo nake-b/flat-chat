@@ -17,6 +17,7 @@ from .common import (
     parse_energy_label,
     parse_floor_label,
     parse_german_date,
+    redact_freetext,
 )
 
 
@@ -125,7 +126,7 @@ def to_listing_row(raw: dict[str, Any]) -> dict[str, Any]:
         "listing_url": dump.get("canonicalUrl") or dump.get("url"),
         "title": dump.get("title"),
         "headline": None,
-        "description": _description(dump.get("descriptions")),
+        "description": redact_freetext(_description(dump.get("descriptions"))),
         # WG-Gesucht's bronze blob often leaves the top-level `rooms` null and
         # carries the value under `dump.card.rooms` (the search-card payload
         # that came in via iron). Fall back so 60+ listings stop reading null.

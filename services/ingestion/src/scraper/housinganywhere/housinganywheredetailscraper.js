@@ -103,7 +103,10 @@ async function scrapeDetail(page, expectedId, canonicalUrl) {
         }
       };
       result.entity = listing?.entity?.id ? toPlain(listing.entity) : null;
-      result.advertiser = toPlain(listing?.advertiser?.data);
+      // PRIVACY: keep only the advertiser *type* (private/agency). The full
+      // advertiser object (name, photo, profile, contact) is not collected.
+      // See services/ingestion/src/pii.py.
+      result.advertiser = { type: toPlain(listing?.advertiser?.data)?.type ?? null };
       result.overallRating = toPlain(listing?.tenantReviews?.overallRating);
       result.extractionTier = result.entity ? 'preloaded_state' : 'fallback';
 

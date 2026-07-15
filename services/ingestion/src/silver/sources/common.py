@@ -53,6 +53,51 @@ def parse_german_month_year(s: str | None) -> datetime | None:
         return None
 
 
+# --- Poster-contact redaction (free-text descriptions) ---------------------
+# Posters frequently paste their own phone/email/WhatsApp into the listing
+# body. These patterns strip that contact PII from the served
+# `listings.description` while leaving the rest of the text intact.
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+# A number introduced by an explicit contact label — covers forms that don't
+# start with 0/+49 (e.g. "WhatsApp 49 151 …"). The label is consumed too.
+_LABELLED_CONTACT_RE = re.compile(
+    r"(?i)(?:tel\.?|telefon|handy|mobil|whats[\s-]?app|fon)\s*[:.]?\s*"
+    r"\+?[\d\s().\-/]{6,}\d"
+)
+
+# A bare German phone number: +49 / 0049 / 0 prefix, then a run of
+# digit-and-separator chars. The leading guard avoids matching mid-number; the
+# ≥8-digit count check (applied in the replacer) keeps postal codes (5 digits),
+# prices, m², years, and room counts from being redacted.
+_PHONE_CANDIDATE_RE = re.compile(r"(?<![\d/])(?:\+49|0049|0)[\d\s().\-/]{6,}\d")
+
+_REDACTION = "[redacted]"
+
+
+def redact_freetext(text: str | None) -> str | None:
+    """Redact poster contact info (email / phone / WhatsApp) from free text.
+
+    Replaces matches with ``[redacted]`` so a served listing description carries
+    no poster PII, while preserving the rest of the text. Conservative by
+    construction: phone matching requires a ``+49``/``0049``/``0`` prefix (or an
+    explicit Tel/Handy/WhatsApp label) plus ≥8 digits, so prices, areas, postal
+    codes, construction years, and room counts are left intact. None-safe.
+    """
+    if not text:
+        return text
+
+    def _redact_phone(match: re.Match) -> str:
+        digits = sum(c.isdigit() for c in match.group())
+        return _REDACTION if digits >= 8 else match.group()
+
+    text = _EMAIL_RE.sub(_REDACTION, text)
+    text = _LABELLED_CONTACT_RE.sub(_REDACTION, text)
+    text = _PHONE_CANDIDATE_RE.sub(_redact_phone, text)
+    return text
+
+
 def parse_sqm(s: str | int | float | None) -> float | None:
     """'72,50 m²' -> 72.5. Accepts ints/floats unchanged."""
     if s is None:
