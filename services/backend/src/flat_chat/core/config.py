@@ -64,13 +64,13 @@ class Settings(BaseSettings):
     # Auth (fastapi-users). `jwt_secret` signs the session cookie's JWT and is
     # REQUIRED — there is deliberately no insecure default that could ship. Tests
     # set a sentinel in conftest; dev/prod set it in `.env`. Rotating it logs
-    # everyone out (existing cookies fail to verify). See AUTH.md.
+    # everyone out (existing cookies fail to verify).
     jwt_secret: str = Field(...)
     jwt_lifetime_seconds: int = 60 * 60 * 24 * 7  # 7 days — generous for the MVP
 
     # Login cookie `Secure` attribute. FALSE for the local HTTP MVP; set TRUE in
     # any HTTPS deployment (the browser↔nginx leg is what matters — nginx may
-    # still talk plain HTTP to the backend). See AUTH.md.
+    # still talk plain HTTP to the backend).
     cookie_secure: bool = False
 
     # Seeded accounts (created by `scripts/seed_users.py`). There is NO

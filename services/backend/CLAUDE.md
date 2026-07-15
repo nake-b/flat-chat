@@ -329,7 +329,7 @@ When adding a new search filter, add a test in the same change.
   `pwdlib`. Dev login seeded by `scripts/seed_users.py`. `JWT_SECRET` is
   required. `POST /api/agent` is now ownership-checked (404-not-403). Logto is the
   documented future migration; Authlib (social) deferred. See
-  [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+  [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - LLM rate limiting / cost control shipped — three layers: a per-run `UsageLimits`
   backstop on `run_stream`, nginx per-IP `limit_req`/`limit_conn` (keyed on
   `CF-Connecting-IP` behind the tunnel), and a per-user rolling-24h token budget

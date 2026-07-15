@@ -41,68 +41,100 @@ green `just check` means green CI.
 
 ## API Endpoints
 
+**Interactive docs / machine-readable spec.** FastAPI auto-generates an OpenAPI
+3.1 schema. In local dev (backend on `:8000`) it's served at
+[`/docs`](http://localhost:8000/docs) (Swagger UI),
+[`/redoc`](http://localhost:8000/redoc), and `/openapi.json`. These are *not*
+exposed through Nginx — this is an internal BFF, so the docs stay a dev/demo
+convenience. A static copy of the spec is committed at
+[`docs/openapi.json`](docs/openapi.json) (the artifact to read without running
+the stack); regenerate it after changing any route with:
+
+```bash
+uv run python scripts/export_openapi.py   # no running server needed
+```
+
 | Endpoint                                  | Method | Description                                                                                                |
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
 | `/api/auth/login` · `/logout`             | POST   | fastapi-users cookie auth (login is an OAuth2 password form). Sets/clears the httpOnly session cookie       |
-| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only, see AUTH.md)                  |
+| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only)                  |
 | `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`. Auth required  |
 | `/api/conversations`                      | GET    | List the calling user's conversations with at least one persisted message — powers the sidebar             |
 | `/api/conversations/{id}`                 | DELETE | Hard-delete a conversation owned by the caller; cascades to messages + session_state; 204 on success       |
 | `/api/conversations/{id}/messages`        | GET    | Get message history (history reload after page refresh — read-only, ownership-checked)                     |
 | `/api/conversations/{id}/state`           | GET    | Latest `SessionState` snapshot — the reload-recovery primitive (map/cards/active listing), ownership-checked |
-| `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `UiState` deltas. Auth + ownership-checked (404-not-403) |
+| `/api/agent`                              | POST   | AG-UI Protocol streaming endpoint. SSE: text deltas, tool-call lifecycle, JSON-Patch `SessionState` deltas. Auth + ownership-checked (404-not-403) |
+| `/api/listings/{id}`                      | GET    | Tier-3 listing detail + image gallery (`Cache-Control: public, max-age=300`). Backs the card detail panel and the agent's `open_listing` tool. `422` on malformed id |
+| `/api/listings?ids=&view=card`            | GET    | Batch tier-2 card hydration in request order (≤100 ids, cacheable) — lazy-loads cards past the preview window |
+| `/api/bookmarks/{listing_id}`             | POST · DELETE | Add / remove a bookmark for the calling user (idempotent). `422` on malformed id                       |
+| `/api/bookmarks` · `/api/bookmarks/ids`   | GET    | List the user's bookmarks — tier-2 cards (`/`) or just ids (`/ids`, fast star hydration)                       |
 
 The frontend uses relative URLs (`/api/...`) so the same calls work via the Vite dev proxy and the production Nginx. Sending a new user message goes through `/api/agent` (AG-UI streaming). The legacy `POST /api/conversations/{id}/messages` REST endpoint was removed when the agent path landed.
 
 ## Project Layout
 
+See [`CLAUDE.md`](CLAUDE.md) for the annotated per-module breakdown; the high-level tree is:
+
 ```
 src/flat_chat/
 ├── main.py              # FastAPI app, lifespan, router registration
-├── core/
-│   ├── config.py        # Pydantic Settings (env vars; required fields use Field(...))
-│   ├── database.py      # SQLAlchemy engine, session, Base
-│   ├── embedder.py      # Jina embedder factory (singleton via app.state)
-│   ├── dependencies.py  # FastAPI Depends wiring (session store, services)
-│   └── observability.py # Logs (dictConfig) + traces (OpenTelemetry → Phoenix)
-├── api/
-│   ├── chat.py          # Conversation lifecycle: POST create + GET list + GET messages + GET state (no message-send)
-│   └── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
-├── users/
-│   └── models.py        # User ORM (app schema) + DUMMY_USER_ID (the get_user_id seam)
-├── chat/
-│   ├── agent.py         # Pydantic AI Agent + INSTRUCTIONS + dynamic-instruction injection
-│   ├── tools.py         # FunctionToolset[ChatDeps] + ListingsCapability: search / page / details; mirrors into UiState
-│   ├── state.py         # ChatSession (history + SessionState + user_id), ChatDeps (StateHandler-compatible)
-│   ├── models.py        # app-schema ORMs: Conversation, Message, SessionStateRow
-│   ├── sessions.py      # SessionStore Protocol + InMemory + DbSessionStore (Postgres, per-session asyncio.Lock)
+├── core/                # config, DB engines (sync + async), embedder, deps, observability
+├── api/                 # Thin HTTP routes
+│   ├── auth.py          # fastapi-users routers under /api/auth
+│   ├── chat.py          # POST/GET /api/conversations + DELETE /{id} + GET messages/state
+│   ├── agent.py         # POST /api/agent — AG-UI streaming via AGUIAdapter.dispatch_request
+│   ├── listings.py      # GET /api/listings/{id} (detail) + GET /api/listings?ids=&view=card (batch tier-2)
+│   └── bookmarks.py     # POST/DELETE /api/bookmarks/{listing_id} + GET /api/bookmarks(/ids)
+├── users/               # Identity domain (app schema)
+│   ├── models.py        # User ORM (fastapi-users columns)
+│   └── auth.py          # fastapi-users wiring (UserManager, cookie+JWT backend, current_active_user)
+├── chat/                # Agent orchestration domain
+│   ├── agent.py         # Pydantic AI Agent(capabilities=[...]) + static instructions
+│   ├── tools/           # FunctionToolset capabilities: core (search/open/page/locate), overlays,
+│   │                    #   lenses, proximity (deferred) + emission (auto STATE_SNAPSHOT) + backbone
+│   ├── providers/       # Provider dispatch — single seam (OpenAI / Anthropic / Azure)
+│   │   ├── __init__.py  # build_chat_model()/build_title_model() — @lru_cache; picks provider by key presence
+│   │   ├── openai.py    # standard (non-Azure) OpenAI model
+│   │   ├── anthropic.py # AnthropicModel + prompt-caching breakpoints
+│   │   └── azure.py     # Azure OpenAI Service model
+│   ├── llm_context.py   # LlmResultSetView (LLM-facing prose) + build_dynamic_state_prompt
+│   ├── session_state.py # SessionState — canonical per-conversation snapshot (markers/cards/facets)
+│   ├── state.py         # ChatSession (history + SessionState + user_id) + ChatDeps (StateHandler-compatible)
+│   ├── sessions.py      # SessionStore Protocol + InMemory + DbSessionStore (Postgres, per-session lock)
 │   ├── service.py       # ChatService — dispatches AG-UI runs, history-authoritative, persists state/history
-│   ├── schemas.py       # API response models
-│   └── providers/       # Chat-model dispatch — single provider seam
-│       ├── __init__.py  # build_chat_model() — @lru_cache; picks provider from settings
-│       └── anthropic.py # AnthropicModel + prompt caching settings
-└── search/
-    ├── models.py              # Listing SQLAlchemy model (HNSW + functional GIST indexes)
-    ├── geo_models.py          # SQLAlchemy mirrors of the 14 geo-context silver tables
-    ├── schemas.py             # SearchParams (Literal sort_by, Field-bounded limit/radius_km)
-    ├── geo_filters.py         # Pydantic filter schemas (TransitFilter/SchoolFilter/HospitalFilter/KitaFilter) + ListingContext shape
-    ├── places.py              # PlaceService — trigram resolution over the world.named_places gazetteer (locate_place)
-    ├── distances.py           # Distance bucket constants + walk-minute helper + per-dataset caps
-    ├── buckets.py             # Noise / density / greenery bucket classifiers (absolute WHO/EU thresholds)
-    ├── transit.py             # GTFS Extended mode codes ↔ English enum mapping
-    ├── service.py             # SearchService — structured + vector + geo; composes GeoContextService
-    └── geo_context_service.py # Internal seam owning all geo-context table access (predicates, chip LATERALs, context_for)
-tests/                         # Test suite (pytest)
+│   ├── title_gen.py     # TitleGenerationService (background sidebar-title task after first turn)
+│   ├── models.py        # app-schema ORMs: Conversation, Message, SessionStateRow
+│   └── schemas.py       # API response models
+├── search/              # Query-execution domain (agent-only)
+│   ├── service.py       # SearchService — async; returns (markers, preview_cards, total, facets)
+│   ├── schemas.py       # SearchParams + SortBy (near_place_ref, inside_ring, kita, …)
+│   ├── geo_filters.py   # Filter input shapes (TransitFilter/SchoolFilter/HospitalFilter/KitaFilter)
+│   ├── places.py        # PlaceService — locate_place trigram lookup over world.named_places + overlay geometry
+│   ├── distance.py      # DistanceService — {id: metres} via ST_Distance (the distance-lens provider)
+│   └── transit_overlays.py # TransitOverlayService — line → route-shape GeoJSON + served stations (display only)
+├── listings/            # Shared listing-domain primitives (leaf module)
+│   ├── models.py        # Listing + ListingGeoContext + ListingNearby* + named_places + transit ORMs (read-only world.*)
+│   ├── service.py       # ListingService — async get_detail(id) / get_cards(ids)
+│   ├── projection.py    # Shared tier-2 ListingCard projection (preview + get_cards)
+│   ├── context.py       # ListingDetail + ListingCard + Marker + Anchor
+│   ├── lenses.py        # MarkerLens + ActiveLens union (TravelTimeLens | DistanceLens)
+│   ├── overlays.py      # MapOverlay + OverlayPoint + OVERLAY_* consts
+│   ├── labels.py        # bucket_*, walk_minutes, encode_modes, …
+│   ├── thresholds.py    # Single source of truth for numeric constants
+│   ├── types.py         # Literal label types (NoiseLabel, DensityLabel, GreeneryLabel, …)
+│   ├── geo.py           # equirect_distance_m — cheap in-memory point math
+│   └── bookmarks/       # Bookmark subpackage (app schema): Bookmark ORM + BookmarkService
+tests/                   # Test suite (pytest) — unit + integration tiers
 ```
 
 Key idioms:
-- **`ResultSet` owns all LLM-facing listing formatting** — `summary` / `page` / `detail` / `describe_for_instructions`. Any new listing surface goes here, not in tools. See [`agent-compound-docs/decisions/llm-tool-result-design.md`](../../agent-compound-docs/decisions/llm-tool-result-design.md).
-- **`UiState` is the frontend-facing mirror** — a parallel projection of the same search results, *not* a replacement for `ResultSet`. Tools mutate both per call; the agent only ever reads `ResultSet`, the React app only ever reads `UiState` via AG-UI shared state. See [`agent-compound-docs/decisions/frontend-stack.md`](../../agent-compound-docs/decisions/frontend-stack.md).
-- **`ChatDeps` satisfies the AG-UI `StateHandler` protocol** by exposing a `state: UiState` dataclass field. The `AGUIAdapter` sets this from each incoming request and streams JSON Patch deltas of subsequent tool mutations back to the frontend.
-- **Domain services take `db: Session` in the constructor** — framework-agnostic; works in FastAPI, scripts, and tests.
+- **`LlmResultSetView` (in `chat/llm_context.py`) owns all LLM-facing listing prose** — `summary` / `page` / `detail`. Any new LLM-facing listing surface goes there, not in tools. See [`agent-compound-docs/decisions/llm-tool-result-design.md`](../../agent-compound-docs/decisions/llm-tool-result-design.md).
+- **`SessionState` (in `chat/session_state.py`) is the single per-conversation snapshot** — markers + preview cards + facets + active listing. It is read by three consumers: the LLM (via `build_dynamic_state_prompt`), the frontend (via AG-UI shared state), and the pagination tool. Tools mutate `deps.state`; `StateEmittingToolset` auto-emits a `STATE_SNAPSHOT` on any change. See [`agent-compound-docs/decisions/session-state-design.md`](../../agent-compound-docs/decisions/session-state-design.md).
+- **`ChatDeps` satisfies the AG-UI `StateHandler` protocol** by exposing a `state` field. The `AGUIAdapter` sets it from each incoming request and streams JSON Patch deltas of subsequent tool mutations back to the frontend.
+- **Domain services take `db` in the constructor** — framework-agnostic; work in FastAPI, scripts, and tests.
 - **All cross-layer wiring goes through FastAPI `Depends`** in `core/dependencies.py`. No module-level singletons in the request path beyond the session store.
-- **`GeoContextService` is the internal seam for the 14 geo-context silver tables.** `SearchService` is the agent-facing facade; it composes `GeoContextService` for (a) pre-filter SQL predicates (`filter_predicates(params)`), (b) always-on per-card chip `LATERAL` joins (`chip_joins()`), and (c) the fat per-listing context blob returned by `get_listing_details` (`context_for(location)`). The agent only ever sees `SearchService`. See [Geo-context interpretation defaults](#geo-context-interpretation-defaults).
+- **Search runs against the gold table.** `SearchService` joins `listings ⨝ listings_geo_context (⨝ listings_embeddings)` — all geo-context filters are B-tree predicates on gold's denormalised columns; POI filters are `EXISTS` against the `listings_nearby_*` junction tables. There is no separate `GeoContextService` seam. `SearchService` is agent-only; `ListingService` (shared) powers direct id reads. See [Geo-context interpretation defaults](#geo-context-interpretation-defaults).
 
 ## Geo-context interpretation defaults
 

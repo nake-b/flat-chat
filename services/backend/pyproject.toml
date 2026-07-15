@@ -14,10 +14,11 @@ dependencies = [
     "pgvector>=0.3",
     "pydantic-settings>=2.7",
     # Pydantic AI v2: use slim + explicit extras (v2's core no longer bundles
-    # every provider). We only need ag-ui (the AGUIAdapter), anthropic
-    # (AnthropicModel — preferred, native prompt caching), and openai
-    # (OpenAIChatModel — Azure fallback). See agent-compound-docs/decisions/
-    # pydantic-v2-migration.md.
+    # every provider). We need ag-ui (the AGUIAdapter), anthropic (AnthropicModel
+    # — native prompt caching), and openai (OpenAIChatModel — serves BOTH the
+    # standard OpenAI and Azure OpenAI providers). Provider preference order is
+    # OpenAI > Anthropic > Azure (see chat/providers/). See
+    # agent-compound-docs/decisions/pydantic-v2-migration.md.
     "pydantic-ai-slim[ag-ui,anthropic,openai]>=2.0,<3.0",
     "geoalchemy2>=0.17",
     "httpx>=0.28",
