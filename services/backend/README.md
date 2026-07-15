@@ -58,7 +58,7 @@ uv run python scripts/export_openapi.py   # no running server needed
 |-------------------------------------------|--------|------------------------------------------------------------------------------------------------------------|
 | `/api/health`                             | GET    | Health check                                                                                               |
 | `/api/auth/login` · `/logout`             | POST   | fastapi-users cookie auth (login is an OAuth2 password form). Sets/clears the httpOnly session cookie       |
-| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only, see AUTH.md)                  |
+| `/api/auth/me`                            | GET    | Current authenticated user. (No public `/register` — accounts are seed-only)                  |
 | `/api/conversations`                      | POST   | Create a conversation (persisted in `app.*`); returned id doubles as the AG-UI `thread_id`. Auth required  |
 | `/api/conversations`                      | GET    | List the calling user's conversations with at least one persisted message — powers the sidebar             |
 | `/api/conversations/{id}`                 | DELETE | Hard-delete a conversation owned by the caller; cascades to messages + session_state; 204 on success       |

@@ -164,7 +164,7 @@ def test_protected_app_route_gated_by_auth(async_db_url):
 
 
 def test_public_registration_is_closed(async_db_url):
-    """No register router is mounted — signup is seed-only (see AUTH.md)."""
+    """No register router is mounted — signup is seed-only."""
 
     async def body(client, factory):
         return await client.post(

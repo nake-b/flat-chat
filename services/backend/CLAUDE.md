@@ -331,7 +331,7 @@ When adding a new search filter, add a test in the same change.
   rate-limiting / cost-control gets its own service when built (not yet — no empty
   placeholder). Logto is the
   documented future migration; Authlib (social) deferred. See
-  [`AUTH.md`](../../AUTH.md) + [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
+  [`session-persistence.md`](../../agent-compound-docs/decisions/session-persistence.md).
 - Bookmarks shipped — per-user saved listings via the `listings/bookmarks/`
   subpackage (`models.py` + `service.py`) + `api/bookmarks.py`. HTTP-only
   (idempotent POST/DELETE, GET /ids for fast star hydration, GET / for tier-2

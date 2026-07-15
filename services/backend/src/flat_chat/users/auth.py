@@ -18,7 +18,7 @@ will get its own service when it's actually needed — it isn't built yet.
 Transport is a **cookie** (httpOnly, SameSite=Lax) carrying a JWT signed with
 `settings.jwt_secret`. Same-origin via nginx / the Vite proxy, so the browser
 sends it automatically. `cookie_secure=False` because the MVP is served over
-HTTP; flip it to True behind HTTPS. See AUTH.md.
+HTTP; flip it to True behind HTTPS.
 """
 
 from __future__ import annotations

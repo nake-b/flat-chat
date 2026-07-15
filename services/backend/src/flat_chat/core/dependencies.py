@@ -45,7 +45,7 @@ async def get_user_id(user: User = Depends(current_active_user)) -> str:
     ONE place auth is wired in, so call sites never change. Resolves the
     fastapi-users `current_active_user` (401 when there's no valid session cookie)
     and returns its id as a string — the shape the storage layer + ownership
-    checks expect. See AUTH.md.
+    checks expect.
 
     Tests override this dependency directly (`app.dependency_overrides[get_user_id]`)
     to run as an arbitrary user without minting a real cookie.
