@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Seed the application's accounts — the ONLY way users are created.
 
-There is no public registration endpoint (see AUTH.md), so this script is how the
+There is no public registration endpoint, so this script is how the
 dev/admin and (optionally) a reviewer account come into existence. Idempotent and
 an UPSERT: each account is created with an Argon2-hashed password via the
 fastapi-users `UserManager`, or — if the email already exists — its password and

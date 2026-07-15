@@ -14,7 +14,7 @@ Status: **implemented** (this is the as-built record; supersedes the former
   `users`, `conversations`, `messages`, `session_state`.
 - **`DbSessionStore`** behind the existing `SessionStore` Protocol (now async).
 - **`get_user_id()` seam** — now resolves the authenticated fastapi-users user
-  from the session cookie (real password auth; see [`AUTH.md`](../../AUTH.md)).
+  from the session cookie (real password auth).
 - **Backend is history-authoritative** — it can run the agent on DB-reconstructed
   history, so a reload preserves agent memory even if the frontend chat is empty.
 - **Endpoints**: `GET /api/conversations/{id}/state` (new recovery primitive),
@@ -119,8 +119,7 @@ Status: **implemented** (this is the as-built record; supersedes the former
   messages in a row.
 - **Linear history, no branching.** A goal-directed search assistant doesn't need
   it; adding a nullable `parent_id` later is additive. `seq` is display-order only.
-- **Auth: real password login via fastapi-users** (shipped — see
-  [`AUTH.md`](../../AUTH.md)). The single `get_user_id()` dependency is still the
+- **Auth: real password login via fastapi-users** (shipped). The single `get_user_id()` dependency is still the
   only identity seam, but it now resolves the authenticated fastapi-users
   `current_active_user` from a signed httpOnly JWT cookie instead of a constant.
   Passwords are Argon2-hashed via `pwdlib`. The planned stage 2 (anonymous cookie)

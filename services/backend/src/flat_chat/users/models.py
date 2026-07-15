@@ -15,7 +15,7 @@ reference a user that already exists. `DUMMY_USER_ID` survives solely as a fixed
 for `InMemorySessionStore` unit tests (no DB).
 
 NOTE: migration `0002` adds these NOT-NULL columns with no default, so it must run
-against an EMPTY `app.users` table (a fresh / refreshed dev DB). See AUTH.md.
+against an EMPTY `app.users` table (a fresh / refreshed dev DB).
 """
 
 from __future__ import annotations

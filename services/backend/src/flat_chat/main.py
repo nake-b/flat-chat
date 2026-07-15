@@ -99,7 +99,7 @@ app = FastAPI(
 
 # Auth (fastapi-users) — login/logout (cookie) + the user routes (/me), under
 # /api/auth. `get_user_id()` reads the cookie these set. No register router:
-# accounts are seed-only (`scripts/seed_users.py` — see AUTH.md). Router wiring
+# accounts are seed-only (`scripts/seed_users.py`). Router wiring
 # lives in `api/auth.py`, mirroring the other route modules.
 app.include_router(
     auth.router,

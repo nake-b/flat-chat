@@ -52,7 +52,7 @@ flat-chat/
 |------------------|-----------------------------------------------------------------------------------------------------|
 | Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
 | Backend          | FastAPI, SQLAlchemy, Alembic, **Pydantic AI with AG-UI Protocol adapter**                           |
-| Auth             | **fastapi-users** (password login, Argon2 via `pwdlib`, JWT cookie) — see [`AUTH.md`](AUTH.md)      |
+| Auth             | **fastapi-users** (password login, Argon2 via `pwdlib`, JWT cookie)      |
 | LLM              | Pydantic AI agent → OpenAI (preferred) · Anthropic-direct (native prompt caching) · Azure OpenAI (order: OpenAI > Anthropic > Azure) |
 | Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
 | Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |

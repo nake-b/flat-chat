@@ -7,7 +7,7 @@ factory-produced by fastapi-users; this module is the thin home that gives the
 auth surface an obvious place to live.
 
 There is deliberately NO register router — accounts are seed-only
-(`scripts/seed_users.py`; see AUTH.md). Add `fastapi_users.get_register_router`
+(`scripts/seed_users.py`). Add `fastapi_users.get_register_router`
 here (ideally gated) if self-service signup is ever wanted.
 """
 
