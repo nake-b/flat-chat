@@ -99,6 +99,19 @@ function LoginForm() {
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
+
+        <p className="mt-5 border-t border-paper-rule pt-4 text-center font-mono text-[10px] leading-relaxed uppercase tracking-[0.12em] text-ink-ghost">
+          By continuing you agree to our{" "}
+          <a
+            href="/privacy.html"
+            target="_blank"
+            rel="noopener"
+            className="text-ink-soft underline decoration-paper-rule underline-offset-2 transition-colors hover:text-red"
+          >
+            Privacy Notice
+          </a>
+          .
+        </p>
       </form>
     </div>
   );
