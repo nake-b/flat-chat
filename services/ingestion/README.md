@@ -28,19 +28,32 @@ Each tier is independently runnable and idempotent. The detail scraper uses an `
 
 ## Directory layout
 
+This README covers the listings path (iron → bronze → silver). Gold, platinum,
+and geo-context are documented in [`CLAUDE.md`](CLAUDE.md); the full tree is:
+
 ```
 services/ingestion/src/
 ├── iron/loader.py         # CLI: JSON-replay → iron_cards
 ├── bronze/loader.py       # CLI: JSON-replay → raw_listings (also flips iron cursor)
-├── silver/
-│   ├── run.py             # CLI: bronze → listings
-│   ├── transformer.py     # source dispatcher
-│   └── sources/
+├── silver/                # bronze → normalized listings
+│   ├── run.py             # CLI: bronze → listings; chains gold + platinum at the end
+│   ├── transformer.py     # source dispatcher + dedup + prune_stale + geocoding backfill
+│   ├── embed.py           # CLI: backfill listings.embedding (Jina v3)
+│   └── sources/           # per-source row mapping
 │       ├── common.py      # shared parsing helpers
-│       ├── wg_gesucht.py  # WG-gesucht-specific row mapping
-│       └── kleinanzeigen.py
+│       ├── wg_gesucht.py
+│       ├── kleinanzeigen.py
+│       ├── housinganywhere.py
+│       └── wohninberlin.py
+├── gold/                  # per-listing geo-context enrichment (listings_geo_context + listings_nearby_*)
+│   ├── enrich_listings.py # one bulk-SQL UPSERT per chip family
+│   └── run.py             # CLI with --only chip1,chip2
+├── platinum/              # vector embeddings (Jina v3, 1024 dims)
+│   ├── embed.py           # calls Jina API → listings_embeddings
+│   └── run.py             # CLI with --reembed / --since
+├── geo_context/           # SEPARATE pipeline: Berlin GDI WFS + VBB GTFS → silver geo tables
 ├── scraper/
-│   ├── _lib/              # shared Node DB helper (pg + dotenv)
+│   ├── _lib/              # shared Node DB helper + stealth (pg + dotenv)
 │   ├── kleinanzeigen/
 │   └── wg-gesucht/
 ├── db.py, config.py

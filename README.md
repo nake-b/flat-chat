@@ -5,7 +5,7 @@ Flat Chat — the Berlin Real Estate (AI) Agent. A chatbot to help Berliners fin
 ## Quick Start
 
 ```bash
-cp .env.example .env    # then fill in ANTHROPIC_API_KEY, JINA_API_KEY
+cp .env.example .env    # then set one LLM provider key (OPENAI_API_KEY / ANTHROPIC_API_KEY / Azure quartet) + JINA_API_KEY
 docker compose up --build
 ```
 
@@ -41,7 +41,7 @@ flat-chat/
 ├── services/
 │   ├── frontend/               # React + Vite + CopilotKit + MapLibre — see services/frontend/src/
 │   ├── backend/                # FastAPI + Pydantic AI agent (AG-UI streaming) — see services/backend/README.md
-│   ├── ingestion/              # Cron-triggered data ingestion (scrapers + iron/bronze/silver loaders)
+│   ├── ingestion/              # Cron-triggered ETL — medallion pipeline (iron→bronze→silver→gold→platinum) + geo-context
 │   └── postgres/               # Custom image: PostgreSQL + pgvector + PostGIS
 └── agent-compound-docs/        # Architecture decisions, plans, design conversations
 ```
@@ -53,7 +53,7 @@ flat-chat/
 | Frontend         | React, Vite, TypeScript, Tailwind, **CopilotKit (AG-UI)**, **MapLibre GL JS v5** + `@vis.gl/react-maplibre` |
 | Backend          | FastAPI, SQLAlchemy, Alembic, **Pydantic AI with AG-UI Protocol adapter**                           |
 | Auth             | **fastapi-users** (password login, Argon2 via `pwdlib`, JWT cookie) — see [`AUTH.md`](AUTH.md)      |
-| LLM              | Pydantic AI agent → Anthropic-direct (preferred, native prompt caching) or Azure OpenAI             |
+| LLM              | Pydantic AI agent → OpenAI (preferred) · Anthropic-direct (native prompt caching) · Azure OpenAI (order: OpenAI > Anthropic > Azure) |
 | Embeddings       | Jina v3 (`retrieval.query` task LoRA)                                                               |
 | Database         | PostgreSQL + pgvector (semantic search) + PostGIS (geo)                                             |
 | Map tiles        | Self-hosted **Protomaps** `.pmtiles` (Berlin extract) — served by nginx at `/tiles/`                |
@@ -62,7 +62,7 @@ flat-chat/
 
 ## Data Pipeline
 
-Listings flow through three Postgres tiers — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver. The silver `listings` table is what the search service queries.
+Listings flow through a medallion pipeline — **iron** (raw scraped cards) → **bronze** (raw scraped detail dumps) → **silver** (normalized `listings`) → **gold** (`listings_geo_context`, the per-listing geo enrichment the search service actually queries) → **platinum** (`listings_embeddings`, Jina vectors for semantic ranking). Node scrapers (puppeteer) write directly to iron and bronze; a Python transformer reads bronze and upserts silver, then chains gold + platinum. Geo-context (parks, schools, noise, transit, …) is a **separate** pipeline on its own cadence.
 
 See **[services/ingestion/README.md](services/ingestion/README.md)** for commands, JSON replay, and cursor-resume semantics.
 
