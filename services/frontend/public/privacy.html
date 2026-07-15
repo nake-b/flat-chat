@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Privacy Notice · FlatChat</title>
+    <!--
+      Self-contained static privacy notice, served at /privacy.html (Vite copies
+      public/ -> dist/; nginx serves it via the existing `location /`). It is the
+      user-facing rendering of the Art. 13 essentials; the engineering rationale
+      lives in agent-compound-docs/decisions/gdpr.md — keep the two in sync.
+    -->
+    <style>
+      :root {
+        --red: #e4003c;
+        --red-deep: #b00030;
+        --ink: #0a0a0a;
+        --ink-soft: #2a2a2a;
+        --ink-ghost: #8a8580;
+        --paper: #fafaf7;
+        --paper-dim: #f2f0ea;
+        --paper-rule: #e0dcd2;
+        --sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink-soft);
+        font-family: var(--sans);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+      .wrap { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+      header { border-bottom: 2px solid var(--red); padding-bottom: 20px; margin-bottom: 8px; }
+      .wordmark {
+        font-family: var(--sans);
+        font-weight: 800;
+        font-size: 2rem;
+        letter-spacing: -0.035em;
+        color: var(--ink);
+        margin: 0;
+        line-height: 1;
+      }
+      .wordmark .dot { color: var(--red); padding: 0 0.25rem; }
+      .kicker {
+        display: inline-block;
+        margin-top: 12px;
+        font-family: var(--mono);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--ink-ghost);
+      }
+      .updated { font-family: var(--mono); font-size: 11px; color: var(--ink-ghost); margin: 18px 0 34px; }
+      h2 {
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 1.15rem;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+        margin: 38px 0 10px;
+      }
+      p { margin: 0 0 14px; }
+      a { color: var(--red); text-decoration: none; border-bottom: 1px solid rgba(228, 0, 60, 0.35); }
+      a:hover { color: var(--red-deep); border-bottom-color: var(--red-deep); }
+      ul { margin: 0 0 14px; padding-left: 1.25rem; }
+      li { margin: 0 0 6px; }
+      strong { color: var(--ink); font-weight: 700; }
+      .note {
+        background: var(--paper-dim);
+        border-left: 3px solid var(--red);
+        padding: 14px 18px;
+        margin: 18px 0;
+        font-size: 14px;
+      }
+      .back { margin-top: 44px; font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; }
+      footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--paper-rule); font-family: var(--mono); font-size: 10px; color: var(--ink-ghost); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1 class="wordmark">Flat<span class="dot">·</span>Chat</h1>
+        <span class="kicker">Privacy Notice</span>
+      </header>
+      <p class="updated">Last updated: July 2026</p>
+
+      <p>
+        This notice explains what personal data FlatChat processes when you use the
+        assistant, why, and the choices you have. FlatChat helps you search for
+        apartments in Berlin through conversation.
+      </p>
+
+      <h2>Who is responsible</h2>
+      <p>
+        FlatChat is a student research project developed at Freie Universität Berlin.
+        The data controller for the purposes of the GDPR is Nadir Bašić, contactable
+        at <a href="mailto:basicnadir@gmail.com">basicnadir@gmail.com</a>.
+      </p>
+
+      <h2>What data we collect</h2>
+      <ul>
+        <li><strong>Account data</strong> — the email address you sign in with.</li>
+        <li>
+          <strong>Your conversations</strong> — the messages you send and the
+          assistant's replies, kept so you can reload and continue past chats.
+        </li>
+        <li>
+          <strong>Search context</strong> — the filters and results derived from
+          your messages, including any <strong>location you tell us</strong> (for
+          example, where you live or work) when you ask to search near a place.
+        </li>
+      </ul>
+
+      <h2>Why we use it, and our legal basis</h2>
+      <p>
+        We use this data solely to provide the service you asked for: to run your
+        apartment search — including searching near a location you give us — and to
+        keep a usable history of your conversations. Our legal basis is
+        <strong>performance of a contract</strong> (Art. 6(1)(b) GDPR): the assistant
+        cannot carry out a location-aware search or restore your history without
+        processing this data. We do not use it for advertising or profiling, and we
+        do not sell it.
+      </p>
+
+      <h2>Apartment listings</h2>
+      <div class="note">
+        The apartment listings we show are collected from public rental sites. We
+        deliberately do <strong>not</strong> store the personal details of whoever
+        posted a listing — names, phone numbers, email addresses and profiles are
+        removed before the data is saved. We keep only the property's own details
+        (location, size, rent, images, description with contact details redacted).
+      </div>
+
+      <h2>Who we share it with</h2>
+      <p>
+        To generate replies, your messages are processed by our AI model provider
+        acting as our processor. In production this runs on an
+        <strong>EU-resident deployment (Azure OpenAI, EU Data Zone)</strong>, so
+        processing and storage stay within the European Union, and your inputs are
+        <strong>not used to train models</strong>. We also use hosting infrastructure
+        to run the service. We do not share your data with anyone else.
+      </p>
+
+      <h2>How long we keep it</h2>
+      <p>
+        We keep your account, conversations and search context for as long as your
+        account is active, so your history stays available. You can delete any
+        conversation at any time, and deletion is immediate and permanent.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>Under the GDPR you have the right to:</p>
+      <ul>
+        <li>access the personal data we hold about you;</li>
+        <li>
+          have it erased — you can <strong>delete a conversation directly in the
+          app</strong> (this permanently removes its messages and search context),
+          and you may contact us to erase your account;
+        </li>
+        <li>rectify inaccurate data and object to processing;</li>
+        <li>
+          lodge a complaint with a supervisory authority — for Berlin, the
+          <em>Berliner Beauftragte für Datenschutz und Informationsfreiheit</em>
+          (<a href="https://www.datenschutz-berlin.de/" target="_blank" rel="noopener">datenschutz-berlin.de</a>).
+        </li>
+      </ul>
+      <p>To exercise any of these rights, contact <a href="mailto:basicnadir@gmail.com">basicnadir@gmail.com</a>.</p>
+
+      <p class="back"><a href="/">&larr; Back to FlatChat</a></p>
+
+      <footer>FlatChat — Berlin apartment assistant</footer>
+    </div>
+  </body>
+</html>

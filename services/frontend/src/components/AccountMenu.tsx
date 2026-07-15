@@ -80,6 +80,16 @@ export function AccountMenu() {
               (soon)
             </span>
           </div>
+          <a
+            role="menuitem"
+            href="/privacy.html"
+            target="_blank"
+            rel="noopener"
+            onClick={() => setOpen(false)}
+            className="block w-full px-4 py-2 text-left font-sans text-[13.5px] text-ink transition-colors hover:bg-paper-dim"
+          >
+            Privacy
+          </a>
           <button
             type="button"
             role="menuitem"

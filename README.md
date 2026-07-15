@@ -71,6 +71,7 @@ See **[services/ingestion/README.md](services/ingestion/README.md)** for command
 - **[`CLAUDE.md`](CLAUDE.md)** — project-wide conventions, architecture notes, Pydantic AI patterns.
 - **[`services/backend/README.md`](services/backend/README.md)** — backend dev workflow, API reference, config table.
 - **[`agent-compound-docs/decisions/`](agent-compound-docs/decisions/)** — what we chose and why (agent framework, LLM tool result design, deployment, …).
+- **[`agent-compound-docs/decisions/gdpr.md`](agent-compound-docs/decisions/gdpr.md)** — GDPR / personal-data handling (no poster PII stored; user data under contract necessity; EU-resident LLM). The user-facing privacy notice is served at `/privacy.html`.
 
 ## MVP Scope
 
