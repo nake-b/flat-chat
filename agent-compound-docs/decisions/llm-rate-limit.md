@@ -128,6 +128,10 @@ of prior runs. The per-user budget is three pieces, all keyed on `get_user_id()`
    The `_MIN_RUN_TOKENS` floor matters: if we let a nearly-exhausted user start a
    run with a tiny `total_tokens_limit`, it would abort mid-stream (the truncated
    SSE the caveat above warns about). Rejecting upfront keeps the failure clean.
+   Sized around a **realistic** turn (`30_000`), not a bare-minimal one — a floor
+   below a typical turn's `total_tokens` would let users in the band between the
+   floor and their real cost pass the gate and then truncate anyway, defeating its
+   purpose. Tune against the real `total_tokens` distribution in Phoenix.
 
 Config: `LLM_DAILY_TOKEN_BUDGET` (default 2,000,000; `0` disables the per-user
 gate). The per-run backstop (§4) applies regardless.
@@ -177,6 +181,11 @@ unlimited.
 - **Strict per-user concurrency** — two tabs can both pass the pre-check before
   either records usage (`SessionStore.lock` is per-session, not per-user). Minor
   overspend; not worth a per-user guard at this scale. Revisit only if real.
+- **Ledgering aborted runs** — `on_complete` (and thus `record()`) fires only on a
+  successful run, so a run killed mid-stream by `UsageLimitExceeded` spends real
+  provider tokens that never reach the ledger. Same minor-overspend class as the
+  concurrency race above, bounded by one run's cap; accepted, not worth capturing
+  partial usage off the abort path.
 - **Cost-weighted (cache-aware) budgeting** — deferred. We budget flat
   `total_tokens`; the cache columns are stored so this is a pure query change later.
 - **Redis token-bucket** — Postgres ledger is fine at this scale.

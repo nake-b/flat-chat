@@ -89,8 +89,13 @@ _PER_RUN_TOKEN_CAP = 300_000
 
 # Floor for the per-user gate: if a caller's remaining budget is below this, the
 # run would almost certainly abort mid-stream (truncated reply) — so reject
-# upfront (clean 429) instead of starting a doomed run. Roughly one minimal turn.
-_MIN_RUN_TOKENS = 8_000
+# upfront (clean 429) instead of starting a doomed run. Sized around a realistic
+# turn (growing history + tool results + output; the ~5600-token cached prefix is
+# excluded from `total_tokens`), NOT a bare minimal turn — otherwise a user in the
+# band between the floor and a real turn's cost would pass the gate and then
+# truncate mid-stream, defeating the floor's whole purpose. Revisit against the
+# real `total_tokens` distribution in Phoenix if it rejects too eagerly.
+_MIN_RUN_TOKENS = 30_000
 
 
 class InvalidAgentRequestError(Exception):
