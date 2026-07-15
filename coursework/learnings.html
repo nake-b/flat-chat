@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flat Chat — Learnings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Bricolage+Grotesque:opsz,wght@10..48,400;10..48,500;10..48,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --red:#E4003C; --red-deep:#B00030; --red-tint:#FBE9EE;
+    --ink:#0A0A0A; --ink-soft:#2A2A2A; --ink-ghost:#8A8580;
+    --paper:#FAFAF7; --paper-dim:#F2F0EA; --rule:#E0DCD2;
+    --display:"Fraunces",ui-serif,Georgia,serif;
+    --sans:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#111;color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+  #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  .deck{position:relative;width:1280px;height:720px;transform-origin:center center}
+
+  .slide{position:absolute;inset:0;background:var(--paper);display:none;
+    padding:64px 80px;flex-direction:column;overflow:hidden}
+  .slide.active{display:flex}
+  .slide::after{content:"";position:absolute;top:0;right:0;bottom:0;width:8px;background:var(--red)}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.34em;text-transform:uppercase;color:var(--ink-ghost)}
+  .kicker{display:flex;align-items:center;gap:14px}
+  .kicker .dot{width:7px;height:7px;background:var(--red)}
+  .foot{position:absolute;left:80px;bottom:34px;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-ghost)}
+  .pageno{position:absolute;right:34px;bottom:34px;font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--ink-ghost)}
+  .red{color:var(--red)}
+
+  /* ── MAIN SLIDE — minimal ── */
+  .main h1{font-family:var(--display);font-weight:600;letter-spacing:-0.03em;line-height:1;font-size:66px;margin-top:26px}
+  .items{margin-top:auto;margin-bottom:8px;display:flex;flex-direction:column;gap:0}
+  .item{display:flex;align-items:baseline;gap:26px;padding:26px 0;border-top:1px solid var(--rule)}
+  .item:last-child{border-bottom:1px solid var(--rule)}
+  .item .n{font-family:var(--mono);font-size:16px;color:var(--red);flex:0 0 auto;width:34px}
+  .item .h{font-family:var(--display);font-weight:600;font-size:34px;letter-spacing:-0.02em;color:var(--ink)}
+  .item .s{font-family:var(--sans);font-size:17px;color:var(--ink-ghost);margin-left:auto;text-align:right;flex:0 0 auto}
+
+  /* ── HELPER SLIDE — presenter notes ── */
+  .helper{background:#141414}
+  .helper::after{background:var(--red)}
+  .helper .eyebrow{color:#9A948B}
+  .helper h2{font-family:var(--display);font-weight:600;font-size:34px;color:var(--paper);margin-top:20px;letter-spacing:-0.02em}
+  .helper .notes{margin-top:26px;display:flex;flex-direction:column;gap:20px}
+  .note{display:flex;gap:22px;align-items:flex-start}
+  .note .tag{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--red);flex:0 0 210px;padding-top:5px;line-height:1.35}
+  .note .tag b{color:var(--paper);display:block;font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-0.01em}
+  .note .say{font-family:var(--sans);font-size:17.5px;line-height:1.5;color:#E6E3DD;max-width:70ch}
+  .note .say em{color:#fff;font-style:normal;font-weight:600}
+  .helper .foot,.helper .pageno{color:#6E6A63}
+
+  .hint{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);font-family:var(--mono);font-size:11px;color:#777;letter-spacing:.1em;z-index:10}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="deck" id="deck">
+
+    <!-- MAIN — the slide to show -->
+    <section class="slide main active">
+      <div class="kicker"><span class="dot"></span><span class="eyebrow">Learnings &nbsp;·&nbsp; SWP SS 2026</span></div>
+      <h1>What we <span class="red">learned.</span></h1>
+      <div class="items">
+        <div class="item"><span class="n">01</span><span class="h">Scraping is hard</span><span class="s">and staying prod-stable is harder</span></div>
+        <div class="item"><span class="n">02</span><span class="h">Data engineering carries search</span><span class="s">the gold layer keeps queries fast</span></div>
+        <div class="item"><span class="n">03</span><span class="h">Users are the ground truth</span><span class="s">testing reshaped the UX</span></div>
+      </div>
+      <div class="foot">Flat Chat — the Berlin real estate (AI) agent</div>
+      <div class="pageno">Slide</div>
+    </section>
+
+    <!-- HELPER — presenter talking points -->
+    <section class="slide helper">
+      <div class="kicker"><span class="dot"></span><span class="eyebrow">Presenter notes &nbsp;·&nbsp; not for the audience</span></div>
+      <h2>What to say for each point</h2>
+      <div class="notes">
+        <div class="note">
+          <div class="tag"><b>01 · Scraping</b>Ingestion</div>
+          <div class="say">Modern listing sites ship real anti-bot protection — it took real effort to get through. We manage it, but a reliable 24/7 pipeline against defenses that keep changing would be its own challenge. And we did it responsibly: <em>within each site's Terms of Service &amp; robots.txt</em>, minimal requests, polite crawl rates.</div>
+        </div>
+        <div class="note">
+          <div class="tag"><b>02 · Data engineering</b>Architecture</div>
+          <div class="say">We push the expensive work upstream. A pre-aggregating <em>gold layer</em> computes the heavy joins and geo/semantic enrichment once, inside the ETL. Search then reads precomputed rows — so <em>user queries stay fast</em> while the slow work runs offline in the pipeline, not on the request path.</div>
+        </div>
+        <div class="note">
+          <div class="tag"><b>03 · Users</b>Product</div>
+          <div class="say">However proud we were of the build, the <em>first user tests</em> revealed how it actually behaves in the real world. They surfaced UX issues we'd never have caught ourselves and drove concrete adjustments — real users, not internal confidence, are the ground truth.</div>
+        </div>
+      </div>
+      <div class="foot">Flat Chat — the Berlin real estate (AI) agent</div>
+      <div class="pageno">Notes</div>
+    </section>
+
+  </div>
+</div>
+<div class="hint" id="hint">← → to navigate &nbsp;·&nbsp; F for fullscreen</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function show(n){i=(n+slides.length)%slides.length;slides.forEach((s,k)=>s.classList.toggle('active',k===i));}
+  function fit(){const deck=document.getElementById('deck');const s=Math.min(window.innerWidth/1280,window.innerHeight/720);deck.style.transform='scale('+s+')';}
+  window.addEventListener('resize',fit); fit();
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')show(i+1);
+    else if(e.key==='ArrowLeft'||e.key==='PageUp')show(i-1);
+    else if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();}
+  });
+  document.addEventListener('click',e=>{if(!e.target.closest('#hint'))show(i+1);});
+  let t;window.addEventListener('mousemove',()=>{const h=document.getElementById('hint');h.style.opacity=1;clearTimeout(t);t=setTimeout(()=>h.style.opacity=0,1800);});
+</script>
+</body>
+</html>
