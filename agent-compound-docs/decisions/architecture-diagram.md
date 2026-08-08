@@ -3,7 +3,7 @@
 The system architecture diagram for this project lives at the repo root:
 
 - `architecture.drawio` — **the single source of truth**. Editable in [draw.io desktop](https://www.drawio.com/) or [app.diagrams.net](https://app.diagrams.net). Currently holds the v5 topology: frontend-as-column left→right flow, routing engines above the backend, container subtitles, schema-ownership bands, contained DB-zone text.
-- `architecture.png` — rendered PNG (~2400 px wide), for README / docs / Slack. **Do not hand-edit** — re-render from `architecture.drawio` via `./render.sh` (GUI) or the headless loop in [`editing-drawio-programmatically.md`](editing-drawio-programmatically.md).
+- `architecture.png` — rendered PNG (~2400 px wide), for README / docs / Slack. **Do not hand-edit** — re-render from `architecture.drawio` via `./scripts/render.sh` (GUI) or the headless loop in [`editing-drawio-programmatically.md`](editing-drawio-programmatically.md).
 
 The intermediate `architecture-v3/v4/v5.drawio` scratch files were **consolidated into `architecture.drawio` and deleted** (2026-07-09) — the evolution below is the record; the files themselves live in git history if ever needed.
 
@@ -24,7 +24,7 @@ This log tracks how the current `architecture.drawio` evolved. It is prose histo
     - **Routing engines moved above the backend** (into the space the frontend vacated), so `backend → engines` (`routing · travel-time`) points **up** while `chat → LLM` / `search → Jina` point **down** — the two arrow families no longer intersect below the backend. OSRM (car) and MOTIS (transit) now carry their **brand logos** inside the cards (alongside the Docker whale). The **Transit + street data** source was raised to the top of the right-hand source column so its green `prep-routing.sh` arrow feeds the engines as one straight horizontal line; the decorative docker-compose logo moved to the bottom-right corner to clear that corridor.
     - **`users` backend module → `app`** (subtitle `users · bookmarks · sessions · auth`) to mirror the `app` DB schema; the matching Postgres zone `1 · User data → 1 · App data`. `chat / agent` tool line updated to `search · overlays · lenses · proximity` (the four capabilities).
     - Reminder from this pass: `mxGeometry` uses `width`/`height`, **not** `w`/`h` — setting the wrong keys silently no-ops the resize (caught only on render: giant logos).
-  - Iterating further: edit the current `.drawio`, keep this changelog current, then `./render.sh <file>.drawio` (GUI) or the headless loop.
+  - Iterating further: edit the current `.drawio`, keep this changelog current, then `./scripts/render.sh <file>.drawio` (GUI) or the headless loop.
 - **v5** (2026-07-09, `architecture-v5.drawio`) — **polish pass on the v3-after-hand-edits state** (v4 is the frozen starting snapshot):
   - **Frontend ↔ backend arrow (re-added, dashed).** A light dashed `frontend → backend` edge labelled `/api/ · via nginx` (two-line label so it fits the short inter-box gap) now indicates the browser's API traffic. It's deliberately dashed to signal *logical, not a direct wire* (the real path is browser → nginx → backend). This reverses the v3-revision removal — the earlier "no FE→BE arrow" invariant is relaxed to "no *solid* FE→BE arrow"; a dashed indicator is wanted.
   - **Container subtitles.** `backend` moved `FastAPI` out of the title into a subtitle (`FastAPI · Pydantic AI · async`). `Ingestion worker` gained the medallion pipeline as a subtitle (`bronze → silver → gold → platinum` + `Puppeteer + Python · medallion ETL`); its title block was dropped below the top-left Python/Node icons (`spacingTop=34`, `spacingLeft=16`) instead of being squeezed to their right.
@@ -65,7 +65,7 @@ The layout below describes the shared structure. In **v2** (current) Web Users h
 Run from the repo root, after installing [draw.io Desktop](https://github.com/jgraph/drawio-desktop/releases/latest):
 
 ```bash
-./render.sh
+./scripts/render.sh
 ```
 
 That invokes draw.io Desktop's CLI and writes `architecture.png` at 2400 px wide.

@@ -29,7 +29,7 @@ port-forwarding) and CD is a **self-hosted GitHub Actions runner** that runs
 
 ![Architecture](architecture.png)
 
-Source: [`architecture.drawio`](architecture.drawio) — edit in draw.io Desktop or app.diagrams.net, then run `./render.sh` to regenerate the PNG.
+Source: [`architecture.drawio`](architecture.drawio) — edit in draw.io Desktop or app.diagrams.net, then run `./scripts/render.sh` to regenerate the PNG.
 
 ## Project Structure
 

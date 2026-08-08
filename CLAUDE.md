@@ -134,7 +134,7 @@ Architecture decisions and guides live in `agent-compound-docs/`. When making si
 
 ## Architecture diagram
 
-The architecture lives in `architecture.drawio` (source of truth, edit in draw.io Desktop or app.diagrams.net) and `architecture.png` (rendered output, regenerated via `./render.sh` which calls draw.io Desktop's CLI). **If asked to update or redo the diagram, edit the existing .drawio — do not start from scratch.** Layout, conventions, and the list of things the diagram must convey are documented in `agent-compound-docs/decisions/architecture-diagram.md` — read it first.
+The architecture lives in `architecture.drawio` (source of truth, edit in draw.io Desktop or app.diagrams.net) and `architecture.png` (rendered output, regenerated via `./scripts/render.sh` which calls draw.io Desktop's CLI). **If asked to update or redo the diagram, edit the existing .drawio — do not start from scratch.** Layout, conventions, and the list of things the diagram must convey are documented in `agent-compound-docs/decisions/architecture-diagram.md` — read it first.
 
 The .drawio file is ~900KB due to embedded SVG icons. **Read `agent-compound-docs/decisions/editing-drawio-programmatically.md` before editing** — it documents how to parse, modify, strip images for MCP preview, and verify horizontal line alignment via Python scripts.
 
@@ -158,7 +158,7 @@ Drift between these files causes painful onboarding and stale review feedback. W
 - `CLAUDE.md` — `Project Structure`, `Architecture Notes`
 - `README.md` (root) — tech stack, project structure
 - `services/backend/README.md` — project layout, API endpoints
-- `architecture.drawio` (then `./render.sh` to regenerate `architecture.png`)
+- `architecture.drawio` (then `./scripts/render.sh` to regenerate `architecture.png`)
 - `agent-compound-docs/decisions/` — if it's a significant choice, capture what was rejected and why
 
 When you finish a change, do a quick sweep: grep for the old name / removed file across the project so nothing references it stale.

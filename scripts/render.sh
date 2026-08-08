@@ -3,14 +3,14 @@
 # The .drawio is the source of truth; this script regenerates the PNG.
 #
 # Usage:
-#   ./render.sh                 # renders architecture.drawio → architecture.png
-#   ./render.sh some.drawio     # renders <name>.drawio → <name>.png
+#   ./scripts/render.sh                 # renders architecture.drawio → architecture.png
+#   ./scripts/render.sh some.drawio     # renders <name>.drawio → <name>.png
 
 set -euo pipefail
 
 DRAWIO="/Applications/draw.io.app/Contents/MacOS/draw.io"
-HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="${1:-$HERE/architecture.drawio}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="${1:-$ROOT/architecture.drawio}"
 OUT="${SRC%.drawio}.png"
 
 if [[ ! -x "$DRAWIO" ]]; then
