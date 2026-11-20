@@ -2,6 +2,8 @@
 
 Flat Chat — the Berlin Real Estate (AI) Agent. A chatbot to help Berliners find apartments quickly and make informed decisions through conversational search.
 
+Watch the [demo video](https://box.fu-berlin.de/s/AEQX57jKq7DpE52?dir=/&editing=false&openfile=true) to see Flat Chat in action.
+
 ## Quick Start
 
 ```bash
